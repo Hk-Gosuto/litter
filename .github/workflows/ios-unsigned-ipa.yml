@@ -2,12 +2,12 @@ name: iOS Unsigned IPA
 
 on:
   push:
-    branches:
-      - build/gpt56-unsigned-ipa
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ios-unsigned-ipa-${{ github.ref }}
@@ -90,12 +90,15 @@ jobs:
             clean archive
 
       - name: Package unsigned IPA
+        id: package
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/Litter.xcarchive/Products/Applications/Litter.app"
           OUTPUT_DIR="$GITHUB_WORKSPACE/artifacts/unsigned-ios"
           PAYLOAD_ROOT="$RUNNER_TEMP/unsigned-ipa"
-          IPA_PATH="$OUTPUT_DIR/Litter-gpt56-unsigned.ipa"
+          RELEASE_LABEL="${GITHUB_REF_NAME//\//-}"
+          IPA_RELATIVE_PATH="artifacts/unsigned-ios/Litter-${RELEASE_LABEL}-unsigned.ipa"
+          IPA_PATH="$GITHUB_WORKSPACE/$IPA_RELATIVE_PATH"
 
           test -d "$APP_PATH"
           rm -rf "$PAYLOAD_ROOT"
@@ -132,12 +135,24 @@ jobs:
             /usr/bin/zip -qry "$IPA_PATH" Payload
           )
           shasum -a 256 "$IPA_PATH" | tee "$IPA_PATH.sha256"
+          echo "ipa_path=$IPA_RELATIVE_PATH" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=$IPA_RELATIVE_PATH.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload unsigned IPA
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Litter-gpt56-unsigned
+          name: Litter-unsigned-${{ github.run_number }}
           path: artifacts/unsigned-ios/*
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish unsigned IPA to GitHub Release
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.ipa_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
