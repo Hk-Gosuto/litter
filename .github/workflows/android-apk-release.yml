@@ -83,7 +83,20 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Configure sccache
+        run: |
+          if [ -n "${SCCACHE_ENDPOINT:-}" ] && [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "SCCACHE_BUCKET=" >> "$GITHUB_ENV"
+            echo "SCCACHE_ENDPOINT=" >> "$GITHUB_ENV"
+            echo "SCCACHE_S3_KEY_PREFIX=" >> "$GITHUB_ENV"
+            echo "AWS_ACCESS_KEY_ID=" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=" >> "$GITHUB_ENV"
+          fi
+
       - name: Setup sccache
+        if: env.SCCACHE_ENDPOINT != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != ''
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Sync codex submodule
@@ -100,7 +113,6 @@ jobs:
       - name: Generate shared mobile bindings
         if: steps.mobile-bindings-cache.outputs.cache-hit != 'true'
         env:
-          RUSTC_WRAPPER: sccache
           CARGO_INCREMENTAL: "0"
         run: |
           cd shared/rust-bridge
@@ -169,10 +181,24 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
+      - name: Configure sccache
+        run: |
+          if [ -n "${SCCACHE_ENDPOINT:-}" ] && [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "SCCACHE_BUCKET=" >> "$GITHUB_ENV"
+            echo "SCCACHE_ENDPOINT=" >> "$GITHUB_ENV"
+            echo "SCCACHE_S3_KEY_PREFIX=" >> "$GITHUB_ENV"
+            echo "AWS_ACCESS_KEY_ID=" >> "$GITHUB_ENV"
+            echo "AWS_SECRET_ACCESS_KEY=" >> "$GITHUB_ENV"
+          fi
+
       - name: Setup sccache
+        if: env.SCCACHE_ENDPOINT != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != ''
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Prime sccache
+        if: env.SCCACHE_ENDPOINT != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != ''
         run: |
           export SCCACHE_ERROR_LOG="$RUNNER_TEMP/sccache-android.log"
           rm -f "$SCCACHE_ERROR_LOG"
@@ -205,26 +231,54 @@ jobs:
       - name: Build Rust JNI libs
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.14904198
-          RUSTC_WRAPPER: sccache
         run: make rust-android
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Resolve Android signing mode
+        id: signing
+        env:
+          ANDROID_UPLOAD_KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_B64 }}
+          LITTER_UPLOAD_STORE_PASSWORD: ${{ secrets.LITTER_UPLOAD_STORE_PASSWORD }}
+          LITTER_UPLOAD_KEY_ALIAS: ${{ secrets.LITTER_UPLOAD_KEY_ALIAS }}
+          LITTER_UPLOAD_KEY_PASSWORD: ${{ secrets.LITTER_UPLOAD_KEY_PASSWORD }}
+        run: |
+          values=(
+            "${ANDROID_UPLOAD_KEYSTORE_B64:-}"
+            "${LITTER_UPLOAD_STORE_PASSWORD:-}"
+            "${LITTER_UPLOAD_KEY_ALIAS:-}"
+            "${LITTER_UPLOAD_KEY_PASSWORD:-}"
+          )
+          present=0
+          for value in "${values[@]}"; do
+            if [ -n "$value" ]; then
+              present=$((present + 1))
+            fi
+          done
+
+          if [ "$present" -eq 0 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No Android signing secrets found; building an unsigned release APK."
+          elif [ "$present" -eq "${#values[@]}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Android signing secrets found; building a signed release APK."
+          else
+            echo "::error title=Incomplete Android signing configuration::Set all four Android signing secrets or remove the partial configuration."
+            exit 1
+          fi
+
       - name: Decode upload keystore
+        if: steps.signing.outputs.enabled == 'true'
         env:
           ANDROID_UPLOAD_KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_B64 }}
         run: |
-          if [ -z "${ANDROID_UPLOAD_KEYSTORE_B64:-}" ]; then
-            echo "Missing secret ANDROID_UPLOAD_KEYSTORE_B64"
-            exit 1
-          fi
           store_file="$RUNNER_TEMP/litter-upload.jks"
           echo "$ANDROID_UPLOAD_KEYSTORE_B64" | base64 --decode > "$store_file"
           echo "LITTER_UPLOAD_STORE_FILE=$store_file" >> "$GITHUB_ENV"
           ls -lh "$store_file"
 
-      - name: Build signed release APK
+      - name: Build release APK
         env:
           LITTER_UPLOAD_STORE_FILE: ${{ env.LITTER_UPLOAD_STORE_FILE }}
           LITTER_UPLOAD_STORE_PASSWORD: ${{ secrets.LITTER_UPLOAD_STORE_PASSWORD }}
@@ -232,26 +286,43 @@ jobs:
           LITTER_UPLOAD_KEY_PASSWORD: ${{ secrets.LITTER_UPLOAD_KEY_PASSWORD }}
         run: apps/android/gradlew -p apps/android :app:assembleRelease
 
-      - name: Generate checksums
+      - name: Package release APK
+        id: package
         run: |
-          APK_PATH="apps/android/app/build/outputs/apk/release/app-release.apk"
-          sha256sum "$APK_PATH" > "${APK_PATH}.sha256"
+          set -euo pipefail
+          RELEASE_LABEL="${GITHUB_REF_NAME//\//-}"
+          if [ "${{ steps.signing.outputs.enabled }}" = "true" ]; then
+            SOURCE_APK="apps/android/app/build/outputs/apk/release/app-release.apk"
+            SIGNING_LABEL="signed"
+          else
+            SOURCE_APK="apps/android/app/build/outputs/apk/release/app-release-unsigned.apk"
+            SIGNING_LABEL="unsigned"
+          fi
+
+          APK_PATH="artifacts/android/Litter-${RELEASE_LABEL}-android-${SIGNING_LABEL}.apk"
+          mkdir -p "$(dirname "$APK_PATH")"
+          test -f "$SOURCE_APK"
+          cp "$SOURCE_APK" "$APK_PATH"
+          sha256sum "$APK_PATH" | tee "${APK_PATH}.sha256"
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=$APK_PATH.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact (manual runs)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
+          name: Litter-android-${{ github.run_number }}
           path: |
-            apps/android/app/build/outputs/apk/release/app-release.apk
-            apps/android/app/build/outputs/apk/release/app-release.apk.sha256
+            ${{ steps.package.outputs.apk_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          if-no-files-found: error
 
       - name: Publish GitHub Release (tag runs)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            apps/android/app/build/outputs/apk/release/app-release.apk
-            apps/android/app/build/outputs/apk/release/app-release.apk.sha256
+            ${{ steps.package.outputs.apk_path }}
+            ${{ steps.package.outputs.checksum_path }}
           generate_release_notes: true
           fail_on_unmatched_files: true
