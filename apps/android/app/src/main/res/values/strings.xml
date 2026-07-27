@@ -85,6 +85,8 @@
     <!-- Common actions and accessibility -->
     <string name="common_ok">OK</string>
     <string name="common_cancel">Cancel</string>
+    <string name="common_start">Start</string>
+    <string name="common_stop">Stop</string>
     <string name="common_close">Close</string>
     <string name="common_clear">Clear</string>
     <string name="common_copy">Copy</string>

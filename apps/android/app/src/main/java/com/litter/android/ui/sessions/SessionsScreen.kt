@@ -408,7 +408,7 @@ fun SessionsScreen(
                 DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                     WorkspaceSortMode.entries.forEach { mode ->
                         DropdownMenuItem(
-                            text = { Text(mode.title) },
+                            text = { Text(stringResource(mode.titleRes)) },
                             onClick = {
                                 sessionsUiState.sortMode = mode
                                 showSortMenu = false

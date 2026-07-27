@@ -1376,6 +1376,7 @@ private fun ManualEntryDialog(
     onDismiss: () -> Unit,
     onSubmit: (ManualEntryAction) -> Unit,
 ) {
+    val context = LocalContext.current
     var mode by remember { mutableStateOf(ManualConnectionMode.SSH) }
     var codexUrl by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
@@ -1766,6 +1767,7 @@ private fun SSHAgentPickerDialog(
     onUseCodex: () -> Unit,
     onConnect: suspend (List<AgentRuntimeKind>) -> String?,
 ) {
+    val androidContext = LocalContext.current
     val scope = rememberCoroutineScope()
     val availableKinds = remember(context.sessionId) {
         availableSshBridgeKinds(context.availability)
@@ -1832,7 +1834,7 @@ private fun SSHAgentPickerDialog(
                                 }
                             }
                             Text(
-                                text = sshAgentStatusLabel(context, agent),
+                                text = sshAgentStatusLabel(androidContext, agent),
                                 color = LitterTheme.textSecondary,
                                 fontSize = 11.sp,
                             )

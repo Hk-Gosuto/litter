@@ -1982,6 +1982,7 @@ private fun DebugScreen(onBack: () -> Unit) {
                             } else {
                                 R.string.settings_message_recording
                             },
+                        ),
                         color = if (isRecording) LitterTheme.danger else LitterTheme.textPrimary,
                         fontSize = 14.sp,
                     )
@@ -1998,7 +1999,9 @@ private fun DebugScreen(onBack: () -> Unit) {
                     }
                 }) {
                     Text(
-                        if (isRecording) "Stop" else "Start",
+                        stringResource(
+                            if (isRecording) R.string.common_stop else R.string.common_start,
+                        ),
                         color = if (isRecording) LitterTheme.danger else LitterTheme.accent,
                     )
                 }

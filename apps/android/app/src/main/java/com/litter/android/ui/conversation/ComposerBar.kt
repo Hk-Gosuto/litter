@@ -1377,6 +1377,7 @@ private fun QueuedFollowUpCard(
     }
 }
 
+@Composable
 private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUiStyle =
     when (kind) {
         AppQueuedFollowUpKind.MESSAGE ->

@@ -34,7 +34,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import com.sigkitten.litter.android.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sigkitten.litter.android.R

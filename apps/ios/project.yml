@@ -279,6 +279,8 @@ targets:
       - path: Sources/Litter/Views/LockScreenCardView.swift
     resources:
       - path: Sources/LitterLiveActivity/Assets.xcassets
+      - path: Sources/Litter/en.lproj
+      - path: Sources/Litter/zh-Hans.lproj
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter.liveactivity

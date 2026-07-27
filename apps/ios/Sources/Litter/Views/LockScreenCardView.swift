@@ -92,10 +92,10 @@ struct LockScreenCardView: View {
     private var displayText: String {
         if let snippet = state.outputSnippet, !snippet.isEmpty { return snippet }
         switch state.phase {
-        case .thinking: return AppLanguage.localizedString("Thinking...")
-        case .toolCall: return state.toolName ?? AppLanguage.localizedString("Running tool...")
-        case .completed: return AppLanguage.localizedString("Done")
-        case .failed: return AppLanguage.localizedString("Failed")
+        case .thinking: return String(localized: "Thinking...")
+        case .toolCall: return state.toolName ?? String(localized: "Running tool...")
+        case .completed: return String(localized: "Done")
+        case .failed: return String(localized: "Failed")
         }
     }
 

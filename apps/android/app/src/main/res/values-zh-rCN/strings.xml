@@ -85,6 +85,8 @@
     <!-- 通用操作和无障碍说明 -->
     <string name="common_ok">确定</string>
     <string name="common_cancel">取消</string>
+    <string name="common_start">开始</string>
+    <string name="common_stop">停止</string>
     <string name="common_close">关闭</string>
     <string name="common_clear">清除</string>
     <string name="common_copy">复制</string>
