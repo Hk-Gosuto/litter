@@ -291,3 +291,15 @@ Replaces the prior WebSocket + base64-PCM audio pump with a platform-native WebR
 | Known non-blockers | Per-frame input/output meter animation no longer drives — requires `RTCRtpReceiver.stats` polling to restore (follow-up) | Same flat meter behavior; speaker toggle currently stubbed to a boolean — follow-up to honor runtime routing |
 | Regression: custom AEC path | Retired — `codex-ios-audio` crate + `AecBridge.swift` / `VoiceSessionAudioCodec.swift` were deleted; libwebrtc AEC3 handles echo cancellation natively | Retired — `AecBridge.kt` deleted; `JavaAudioDeviceModule` enables the hardware AEC + NS |
 | Regression: SSH-tunneled codex server | RPC still flows through SSH; WebRTC peer goes direct to OpenAI edge from device. If client runs in fully air-gapped network, realtime voice will not establish | Same |
+
+## English / Simplified Chinese localization
+
+| Area | Check |
+|---|---|
+| Initial language | A fresh install follows the device language for English and Simplified Chinese; other locales fall back to English. |
+| In-app switch | Settings > Language switches between English and Simplified Chinese, recreates the activity, and persists across a cold launch. |
+| Main workflows | Home, projects, sessions, directory picker, conversation composer/timeline/info, approvals, model and permission panels, discovery, account, saved apps, wallpaper, tip jar, voice, terminal, pet, experimental, and debug screens display the selected language. |
+| Accessibility | Icon content descriptions for navigation, composer actions, images, voice, models, wallpaper, and server actions use the selected language. |
+| Background surfaces | Firebase turn notifications, the active-turn widget, and the pet overlay menu use the persisted app language even when launched outside the main activity. |
+| Format strings | English and `values-zh-rCN` contain identical keys and positional format placeholders. Dynamic server/model/path/error values remain unchanged. |
+| Language change during work | Start a turn, switch language, and verify the active session remains intact after Activity recreation; newly posted notifications and refreshed widget content use the new language. |

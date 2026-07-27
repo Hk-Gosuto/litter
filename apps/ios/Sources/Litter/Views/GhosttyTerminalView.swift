@@ -758,23 +758,23 @@ final class LitterTerminalAccessoryBar: UIView {
 
     private func rebuildKeys() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        addRawKey(title: "Esc", payload: "\u{1B}")
-        addRawKey(title: "Tab", payload: "\t")
-        addRawKey(title: "Ctrl-C", payload: "\u{03}")
-        addRawKey(title: "Ctrl-D", payload: "\u{04}")
-        addRawKey(title: "Ctrl-Z", payload: "\u{1A}")
+        addRawKey(title: AppLanguage.localizedString("Esc"), payload: "\u{1B}")
+        addRawKey(title: AppLanguage.localizedString("Tab"), payload: "\t")
+        addRawKey(title: AppLanguage.localizedString("Ctrl-C"), payload: "\u{03}")
+        addRawKey(title: AppLanguage.localizedString("Ctrl-D"), payload: "\u{04}")
+        addRawKey(title: AppLanguage.localizedString("Ctrl-Z"), payload: "\u{1A}")
         addRawKey(title: "↑", payload: "\u{1B}[A")
         addRawKey(title: "↓", payload: "\u{1B}[B")
         addRawKey(title: "←", payload: "\u{1B}[D")
         addRawKey(title: "→", payload: "\u{1B}[C")
-        pasteButton = addActionKey(title: "Paste") { [weak self] in
+        pasteButton = addActionKey(title: AppLanguage.localizedString("Paste")) { [weak self] in
             self?.onPaste?()
         }
         updatePasteState()
-        _ = addActionKey(title: "Clear") { [weak self] in
+        _ = addActionKey(title: AppLanguage.localizedString("Clear")) { [weak self] in
             self?.onClear?()
         }
-        _ = addActionKey(title: "Send to AI") { [weak self] in
+        _ = addActionKey(title: AppLanguage.localizedString("Send to AI")) { [weak self] in
             self?.onSendToAssistant?()
         }
     }
@@ -1453,14 +1453,14 @@ final class GhosttyHostView: UIView, UIGestureRecognizerDelegate, UIEditMenuInte
         menuFor configuration: UIEditMenuConfiguration,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
-        let copy = UIAction(title: "Copy") { [weak self] _ in
+        let copy = UIAction(title: AppLanguage.localizedString("Copy")) { [weak self] _ in
             self?.copySelection()
         }
-        let paste = UIAction(title: "Paste") { [weak self] _ in
+        let paste = UIAction(title: AppLanguage.localizedString("Paste")) { [weak self] _ in
             self?.pasteFromClipboard()
         }
         paste.attributes = UIPasteboard.general.hasStrings ? [] : .disabled
-        let selectAll = UIAction(title: "Select All") { [weak self] _ in
+        let selectAll = UIAction(title: AppLanguage.localizedString("Select All")) { [weak self] _ in
             self?.selectAll()
         }
         return UIMenu(children: [copy, paste, selectAll])

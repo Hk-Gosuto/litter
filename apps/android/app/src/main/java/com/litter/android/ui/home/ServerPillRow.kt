@@ -35,9 +35,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.sigkitten.litter.android.R
 import com.litter.android.state.statusDotState
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -144,21 +146,21 @@ private fun ServerPill(
         }
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             DropdownMenuItem(
-                text = { Text("Reconnect") },
+                text = { Text(stringResource(R.string.home_reconnect)) },
                 onClick = { showMenu = false; onReconnect() },
             )
             DropdownMenuItem(
-                text = { Text("Restart app server") },
+                text = { Text(stringResource(R.string.home_restart_app_server)) },
                 onClick = { showMenu = false; onRestartAppServer() },
             )
             if (!server.isLocal) {
                 DropdownMenuItem(
-                    text = { Text("Rename") },
+                    text = { Text(stringResource(R.string.common_rename)) },
                     onClick = { showMenu = false; onRename() },
                 )
             }
             DropdownMenuItem(
-                text = { Text("Remove") },
+                text = { Text(stringResource(R.string.common_remove)) },
                 onClick = { showMenu = false; onRemove() },
             )
         }
@@ -256,12 +258,12 @@ private fun AddServerPill(
     ) {
         Icon(
             imageVector = Icons.Default.Add,
-            contentDescription = "Add server",
+            contentDescription = stringResource(R.string.a11y_add_server),
             tint = LitterTheme.accent,
             modifier = Modifier.size(14.dp),
         )
         Text(
-            text = "server",
+            text = stringResource(R.string.home_server),
             color = LitterTheme.accent,
             fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.SemiBold,

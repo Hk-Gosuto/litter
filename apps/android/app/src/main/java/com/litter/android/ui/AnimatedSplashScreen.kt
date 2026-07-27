@@ -31,8 +31,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import com.sigkitten.litter.android.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sigkitten.litter.android.R
@@ -94,7 +96,7 @@ fun AnimatedSplashScreen() {
         ) {
             SpinningProviderCarousel(elapsed = elapsed)
             Text(
-                text = " on your phone",
+                text = stringResource(R.string.splash_on_phone),
                 color = LitterTheme.textMuted,
                 style = TextStyle(
                     fontFamily = LitterTheme.monoFont,

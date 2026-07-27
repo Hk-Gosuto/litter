@@ -256,7 +256,7 @@ private struct ThemePickerRow: View {
                 accentHex: entry?.accentHex ?? "#00FF00"
             )
 
-            Text(entry?.name ?? "Unknown Theme")
+            Text(entry?.name ?? AppLanguage.localizedString("Unknown Theme"))
                 .litterFont(.subheadline)
                 .foregroundColor(LitterTheme.textPrimary)
                 .lineLimit(1)

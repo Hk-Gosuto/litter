@@ -58,9 +58,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.sigkitten.litter.android.R
 import com.litter.android.state.SavedAppsStore
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -106,7 +108,7 @@ fun SavedAppScreen(
                 loadState = LoadState.Ready
             }
         } catch (e: Exception) {
-            loadState = LoadState.Failed(e.message ?: "Couldn't load app.")
+            loadState = LoadState.Failed(e.message ?: context.getString(R.string.apps_load_failed))
         }
     }
 
@@ -139,14 +141,14 @@ fun SavedAppScreen(
         )
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             DropdownMenuItem(
-                text = { Text("Rename") },
+                text = { Text(stringResource(R.string.common_rename)) },
                 onClick = {
                     showMenu = false
                     renameDialogVisible = true
                 },
             )
             DropdownMenuItem(
-                text = { Text("Delete", color = LitterTheme.danger) },
+                text = { Text(stringResource(R.string.common_delete), color = LitterTheme.danger) },
                 onClick = {
                     showMenu = false
                     deleteConfirmVisible = true
@@ -198,7 +200,7 @@ fun SavedAppScreen(
                             try {
                                 if (serverId == null) {
                                     throw IllegalStateException(
-                                        "No connected server. Connect one and try again.",
+                                        context.getString(R.string.apps_no_connected_server),
                                     )
                                 }
                                 SavedAppsStore.requestUpdate(
@@ -211,13 +213,16 @@ fun SavedAppScreen(
                                 reloadTick += 1
                                 android.widget.Toast.makeText(
                                     context,
-                                    "App updated",
+                                    context.getString(R.string.apps_updated),
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             } catch (e: Exception) {
                                 android.widget.Toast.makeText(
                                     context,
-                                    "Update failed: ${e.message ?: "unknown error"}",
+                                    context.getString(
+                                        R.string.apps_update_failed,
+                                        e.message ?: context.getString(R.string.common_unknown_error),
+                                    ),
                                     android.widget.Toast.LENGTH_LONG,
                                 ).show()
                             } finally {
@@ -250,9 +255,9 @@ fun SavedAppScreen(
     if (deleteConfirmVisible) {
         AlertDialog(
             onDismissRequest = { deleteConfirmVisible = false },
-            title = { Text("Delete this app?") },
+            title = { Text(stringResource(R.string.apps_delete_question)) },
             text = {
-                Text("Its HTML and saved state will be removed from this device.")
+                Text(stringResource(R.string.apps_delete_explanation))
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -263,10 +268,10 @@ fun SavedAppScreen(
                         } catch (_: Exception) {}
                         onBack()
                     }
-                }) { Text("Delete", color = LitterTheme.danger) }
+                }) { Text(stringResource(R.string.common_delete), color = LitterTheme.danger) }
             },
             dismissButton = {
-                TextButton(onClick = { deleteConfirmVisible = false }) { Text("Cancel") }
+                TextButton(onClick = { deleteConfirmVisible = false }) { Text(stringResource(R.string.common_cancel)) }
             },
         )
     }
@@ -370,7 +375,7 @@ private fun TopBar(
         IconButton(onClick = onBack) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.common_back),
                 tint = LitterTheme.textPrimary,
             )
         }
@@ -388,7 +393,7 @@ private fun TopBar(
             IconButton(onClick = onViewConversation) {
                 Icon(
                     Icons.AutoMirrored.Filled.Chat,
-                    contentDescription = "View Conversation",
+                    contentDescription = stringResource(R.string.apps_view_conversation),
                     tint = LitterTheme.textSecondary,
                 )
             }
@@ -417,7 +422,7 @@ private fun TopBar(
                 modifier = Modifier.size(14.dp),
             )
             Text(
-                text = "Update",
+                text = stringResource(R.string.common_update),
                 color = LitterTheme.accent,
                 fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -426,7 +431,7 @@ private fun TopBar(
         IconButton(onClick = onOpenMenu) {
             Icon(
                 Icons.Default.MoreVert,
-                contentDescription = "More",
+                contentDescription = stringResource(R.string.common_more),
                 tint = LitterTheme.textSecondary,
             )
         }
@@ -645,18 +650,18 @@ private fun BrokenPlaceholder(onDelete: () -> Unit) {
                 modifier = Modifier.size(44.dp),
             )
             Text(
-                text = "This app's files are missing",
+                text = stringResource(R.string.apps_missing_files),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.headline.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Delete it to clear the entry.",
+                text = stringResource(R.string.apps_missing_files_helper),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.footnote.scaled,
             )
             TextButton(onClick = onDelete) {
-                Text("Delete App", color = LitterTheme.danger)
+                Text(stringResource(R.string.apps_delete), color = LitterTheme.danger)
             }
         }
     }
@@ -671,7 +676,7 @@ private fun FailurePlaceholder(message: String, onRetry: () -> Unit) {
             modifier = Modifier.padding(24.dp),
         ) {
             Text(
-                text = "Couldn't load this app.",
+                text = stringResource(R.string.apps_could_not_load),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.headline.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -684,7 +689,7 @@ private fun FailurePlaceholder(message: String, onRetry: () -> Unit) {
             TextButton(onClick = onRetry) {
                 Icon(Icons.Default.Refresh, contentDescription = null, tint = LitterTheme.accent)
                 Spacer(Modifier.width(6.dp))
-                Text("Retry", color = LitterTheme.accent)
+                Text(stringResource(R.string.common_retry), color = LitterTheme.accent)
             }
         }
     }
@@ -729,23 +734,23 @@ private fun RenameAppDialog(
     var newTitle by remember(currentTitle) { mutableStateOf(currentTitle) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename App") },
+        title = { Text(stringResource(R.string.apps_rename)) },
         text = {
             OutlinedTextField(
                 value = newTitle,
                 onValueChange = { newTitle = it },
                 singleLine = true,
-                label = { Text("Title") },
+                label = { Text(stringResource(R.string.apps_title)) },
             )
         },
         confirmButton = {
             TextButton(onClick = {
                 val trimmed = newTitle.trim().ifBlank { currentTitle }
                 onRename(trimmed)
-            }) { Text("Save") }
+            }) { Text(stringResource(R.string.common_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         },
     )
 }

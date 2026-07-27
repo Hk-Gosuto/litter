@@ -264,13 +264,14 @@ final class WatchCompanionBridge: NSObject {
         let detail: String
         switch approval.kind {
         case .command:
-            detail = approval.command ?? "Run command"
+            detail = approval.command ?? AppLanguage.localizedString("Run command")
         case .fileChange:
-            detail = approval.path.map { "Edit \($0)" } ?? "Apply file change"
+            detail = approval.path.map { AppLanguage.localizedString("Edit %@", $0) }
+                ?? AppLanguage.localizedString("Apply file change")
         case .permissions:
-            detail = approval.reason ?? "Grant permissions"
+            detail = approval.reason ?? AppLanguage.localizedString("Grant permissions")
         case .mcpElicitation:
-            detail = approval.reason ?? "Input requested"
+            detail = approval.reason ?? AppLanguage.localizedString("Input requested")
         }
         if let threadTitle, !threadTitle.isEmpty {
             return "\(threadTitle) — \(detail)"

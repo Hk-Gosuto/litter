@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.scaled
 import uniffi.codex_mobile_client.AppMessageRenderBlock
 
@@ -128,7 +130,7 @@ private fun StreamingRenderBlocks(
                         .data(block.data)
                         .crossfade(false)
                         .build(),
-                    contentDescription = "Assistant image",
+                    contentDescription = stringResource(R.string.a11y_assistant_image),
                     modifier = Modifier
                         .alpha(alpha)
                         .fillMaxWidth()

@@ -66,12 +66,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import com.litter.android.state.OpenAIApiKeyStore
 import com.litter.android.state.VoiceRuntimeController
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.rememberStickyFollowTail
+import com.sigkitten.litter.android.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.codex_mobile_client.Account
@@ -230,7 +232,11 @@ fun RealtimeVoiceScreen(
 
             Spacer(Modifier.weight(1f))
 
-            val footerError = voiceSession?.lastError ?: if (!hasMicPermission) "Microphone permission required" else null
+            val footerError = voiceSession?.lastError ?: if (!hasMicPermission) {
+                stringResource(R.string.voice_microphone_required)
+            } else {
+                null
+            }
             if (!footerError.isNullOrBlank()) {
                 Text(
                     text = footerError,
@@ -271,7 +277,7 @@ fun RealtimeVoiceScreen(
                     val trimmedKey = apiKey.trim()
                     if (trimmedKey.isEmpty() || isSavingKey) return@RealtimeApiKeyPrompt
                     if (server?.isLocal != true) {
-                        apiKeyError = "API keys are only saved on the local server."
+                        apiKeyError = context.getString(R.string.voice_api_key_local_only)
                         return@RealtimeApiKeyPrompt
                     }
 
@@ -290,7 +296,7 @@ fun RealtimeVoiceScreen(
                             hasStoredApiKey = apiKeyStore.hasStoredKey()
                             if (!hasStoredApiKey) {
                                 hasStartedRealtime = false
-                                apiKeyError = "API key did not persist locally."
+                                apiKeyError = context.getString(R.string.voice_api_key_not_persisted)
                                 return@launch
                             }
                             delay(150)
@@ -298,7 +304,8 @@ fun RealtimeVoiceScreen(
                             apiKey = ""
                         } catch (e: Exception) {
                             hasStartedRealtime = false
-                            apiKeyError = e.localizedMessage ?: "Failed to save API key"
+                            apiKeyError = e.localizedMessage
+                                ?: context.getString(R.string.voice_api_key_save_failed)
                         } finally {
                             isSavingKey = false
                         }
@@ -431,7 +438,7 @@ private fun BottomControls(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = "Speaker route",
+                    contentDescription = stringResource(R.string.voice_speaker_route),
                     tint = Color.White,
                 )
             }
@@ -452,7 +459,7 @@ private fun BottomControls(
         ) {
             Icon(
                 imageVector = Icons.Default.Close,
-                contentDescription = "End call",
+                contentDescription = stringResource(R.string.voice_end_call),
                 tint = Color.White,
                 modifier = Modifier.size(20.dp),
             )
@@ -485,14 +492,14 @@ private fun RealtimeApiKeyPrompt(
                 .padding(18.dp),
         ) {
             Text(
-                text = "Realtime needs an API key",
+                text = stringResource(R.string.voice_api_key_required),
                 color = Color.White,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
             )
 
             Text(
-                text = "Enter your OpenAI API key for this device. Litter will store it in the local Codex environment as OPENAI_API_KEY.",
+                text = stringResource(R.string.voice_api_key_helper),
                 color = Color.White.copy(alpha = 0.78f),
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
@@ -555,7 +562,7 @@ private fun RealtimeApiKeyPrompt(
                     )
                 } else {
                     Text(
-                        text = "Save API Key",
+                        text = stringResource(R.string.voice_save_api_key),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                     )

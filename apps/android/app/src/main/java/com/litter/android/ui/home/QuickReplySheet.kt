@@ -38,10 +38,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.displayTitle
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -63,6 +66,7 @@ fun QuickReplySheet(
     onDismiss: () -> Unit,
     onSend: suspend (ThreadKey, String) -> Result<Unit>,
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
@@ -125,7 +129,7 @@ fun QuickReplySheet(
                     onValueChange = { text = it },
                     placeholder = {
                         Text(
-                            text = "Reply\u2026",
+                            text = stringResource(R.string.composer_reply_placeholder),
                             color = LitterTheme.textMuted,
                         )
                     },
@@ -181,7 +185,7 @@ fun QuickReplySheet(
                             result.onSuccess {
                                 onDismiss()
                             }.onFailure { err ->
-                                errorMessage = err.message ?: "Failed to send"
+                                errorMessage = err.message ?: context.getString(R.string.composer_failed_send)
                             }
                         }
                     },
@@ -194,7 +198,7 @@ fun QuickReplySheet(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
+                        contentDescription = stringResource(R.string.common_send),
                         tint = if (canSend) Color.Black else LitterTheme.textMuted,
                         modifier = Modifier.size(18.dp),
                     )

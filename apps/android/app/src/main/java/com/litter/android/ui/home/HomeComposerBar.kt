@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.AppComposerPayload
 import com.litter.android.state.ComposerFileAttachment
 import com.litter.android.state.ComposerImageAttachment
@@ -194,7 +196,7 @@ fun HomeComposerBar(
     val sendCurrent: () -> Unit = {
         val currentProject = project
         if (currentProject == null) {
-            errorMessage = "Pick a project before sending."
+            errorMessage = context.getString(R.string.home_pick_project_before_send)
         } else {
             val payloadText = text.trim()
             val attachmentToSend = attachedImage
@@ -245,7 +247,7 @@ fun HomeComposerBar(
                     attachedImage = attachmentToSend
                     attachedFiles = filesToSend
                 } catch (e: Exception) {
-                    errorMessage = e.message ?: "Failed to start thread"
+                    errorMessage = e.message ?: context.getString(R.string.composer_failed_start_thread)
                     textFieldValue = TextFieldValue(
                         text = payloadText,
                         selection = TextRange(payloadText.length),
@@ -276,7 +278,7 @@ fun HomeComposerBar(
                 IconButton(onClick = { errorMessage = null }) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Dismiss",
+                        contentDescription = stringResource(R.string.common_dismiss),
                         tint = LitterTheme.textMuted,
                         modifier = Modifier.size(14.dp),
                     )
@@ -298,7 +300,7 @@ fun HomeComposerBar(
                     bitmap?.let { bmp ->
                         androidx.compose.foundation.Image(
                             bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Attached image",
+                            contentDescription = stringResource(R.string.a11y_attached_image),
                             modifier = Modifier
                                 .size(60.dp)
                                 .clip(RoundedCornerShape(8.dp)),
@@ -313,7 +315,7 @@ fun HomeComposerBar(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Remove attachment",
+                            contentDescription = stringResource(R.string.a11y_remove_attachment),
                             tint = Color.White,
                             modifier = Modifier.size(14.dp),
                         )
@@ -354,7 +356,7 @@ fun HomeComposerBar(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "Attach",
+                        contentDescription = stringResource(R.string.composer_attach),
                         tint = LitterTheme.textPrimary,
                     )
                 }
@@ -371,7 +373,7 @@ fun HomeComposerBar(
                 Box(modifier = Modifier.weight(1f)) {
                     if (text.isEmpty()) {
                         Text(
-                            text = "Message\u2026",
+                            text = stringResource(R.string.composer_message_placeholder),
                             color = LitterTheme.textMuted,
                             fontSize = LitterTextStyle.body.scaled,
                         )
@@ -403,7 +405,7 @@ fun HomeComposerBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.OpenInFull,
-                                contentDescription = "Expand composer",
+                                contentDescription = stringResource(R.string.a11y_expand_composer),
                                 tint = LitterTheme.textSecondary,
                                 modifier = Modifier.size(12.dp),
                             )
@@ -443,7 +445,7 @@ fun HomeComposerBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Stop,
-                                contentDescription = "Stop recording",
+                                contentDescription = stringResource(R.string.a11y_stop_recording),
                                 tint = LitterTheme.accentStrong,
                             )
                         }
@@ -468,7 +470,7 @@ fun HomeComposerBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
-                                contentDescription = "Record",
+                                contentDescription = stringResource(R.string.a11y_record),
                                 tint = LitterTheme.textSecondary,
                                 modifier = Modifier.size(18.dp),
                             )
@@ -496,7 +498,7 @@ fun HomeComposerBar(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
+                        contentDescription = stringResource(R.string.common_send),
                         tint = Color.Black,
                         modifier = Modifier.size(17.dp),
                     )
@@ -538,14 +540,14 @@ fun HomeComposerBar(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text(
-                        text = "Attach",
+                        text = stringResource(R.string.composer_attach),
                         color = LitterTheme.textPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
 
                     HomeAttachmentActionRow(
-                        title = "Photo Library",
+                        title = stringResource(R.string.composer_photo_library),
                         onClick = {
                             showAttachMenu = false
                             photoPicker.launch(
@@ -555,7 +557,7 @@ fun HomeComposerBar(
                     )
 
                     HomeAttachmentActionRow(
-                        title = "Choose File",
+                        title = stringResource(R.string.composer_choose_file),
                         onClick = {
                             showAttachMenu = false
                             filePicker.launch(ALL_FILE_MIME_TYPES)
@@ -603,7 +605,7 @@ private fun HomeFileAttachmentRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "FILE",
+            text = stringResource(R.string.composer_file_label),
             color = LitterTheme.accent,
             fontSize = LitterTextStyle.caption2.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -632,7 +634,7 @@ private fun HomeFileAttachmentRow(
         ) {
             Icon(
                 imageVector = Icons.Default.Close,
-                contentDescription = "Remove file",
+                contentDescription = stringResource(R.string.a11y_remove_file),
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(14.dp),
             )

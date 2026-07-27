@@ -33,11 +33,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.scaled
+import com.sigkitten.litter.android.R
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -95,7 +97,7 @@ fun SwipeToHideRow(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "hide",
+                    text = stringResource(R.string.home_hide),
                     color = Color.White,
                     fontSize = LitterTextStyle.footnote.scaled,
                 )

@@ -26,7 +26,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // (CarPlay kills the scene if no root template is set quickly).
         let placeholder = CPGridTemplate(title: "Litter", gridButtons: [Self.placeholderButton()])
         placeholder.tabImage = UIImage(systemName: "waveform")
-        placeholder.tabTitle = "Voice"
+        placeholder.tabTitle = AppLanguage.localizedString("Voice")
         interfaceController.setRootTemplate(placeholder, animated: false) { success, error in
             if success {
                 Self.log.info("CarPlay placeholder root set")

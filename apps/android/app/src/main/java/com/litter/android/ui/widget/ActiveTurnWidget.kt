@@ -30,6 +30,8 @@ import com.litter.android.state.contextPercent
 import com.litter.android.state.hasActiveTurn
 import com.litter.android.state.resolvedModel
 import com.litter.android.state.resolvedPreview
+import com.litter.android.ui.AppLanguagePreferences
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.AppThreadSnapshot
 import uniffi.codex_mobile_client.HydratedConversationItemContent
 
@@ -48,6 +50,7 @@ class ActiveTurnWidget : GlanceAppWidget() {
     }
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val localizedContext = AppLanguagePreferences.wrap(context)
         val appModel = runCatching { AppModel.init(context) }.getOrNull()
         val snapshot = appModel?.snapshot?.value
         val activeThreads = snapshot?.threads?.filter { it.hasActiveTurn } ?: emptyList()
@@ -61,13 +64,28 @@ class ActiveTurnWidget : GlanceAppWidget() {
 
         provideContent {
             GlanceTheme {
+                val strings = WidgetStrings(
+                    noActiveTurns = localizedContext.getString(R.string.widget_no_active_turns),
+                    unknownModel = localizedContext.getString(R.string.widget_unknown_model),
+                    toolCount = { count ->
+                        localizedContext.getString(R.string.widget_tool_count, count)
+                    },
+                    contextPercent = { percent ->
+                        localizedContext.getString(R.string.widget_context_percent, percent)
+                    },
+                    phaseThinking = localizedContext.getString(R.string.widget_phase_thinking),
+                    phaseTool = localizedContext.getString(R.string.widget_phase_tool),
+                    phaseDone = localizedContext.getString(R.string.widget_phase_done),
+                    phaseFailed = localizedContext.getString(R.string.widget_phase_failed),
+                )
                 if (best != null) {
                     ActiveTurnContent(
                         thread = best,
                         activeCount = activeThreads.size,
+                        strings = strings,
                     )
                 } else {
-                    IdlePlaceholder()
+                    IdlePlaceholder(strings)
                 }
             }
         }
@@ -85,6 +103,7 @@ private val DangerRed = ColorProvider(androidx.compose.ui.graphics.Color(0xFFFF6
 private fun ActiveTurnContent(
     thread: AppThreadSnapshot,
     activeCount: Int,
+    strings: WidgetStrings,
 ) {
     val model = thread.resolvedModel
     val prompt = thread.resolvedPreview
@@ -140,7 +159,7 @@ private fun ActiveTurnContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = phase.label,
+                text = phase.label(strings),
                 style = TextStyle(
                     color = phase.colorProvider,
                     fontSize = 11.sp,
@@ -149,7 +168,7 @@ private fun ActiveTurnContent(
             )
             Spacer(modifier = GlanceModifier.width(8.dp))
             Text(
-                text = model.ifEmpty { "unknown" },
+                text = model.ifEmpty { strings.unknownModel },
                 style = TextStyle(
                     color = SecondaryText,
                     fontSize = 10.sp,
@@ -159,7 +178,7 @@ private fun ActiveTurnContent(
             if (toolCount > 0) {
                 Spacer(modifier = GlanceModifier.width(8.dp))
                 Text(
-                    text = "$toolCount tools",
+                    text = strings.toolCount(toolCount),
                     style = TextStyle(
                         color = SecondaryText,
                         fontSize = 10.sp,
@@ -174,7 +193,7 @@ private fun ActiveTurnContent(
                     else -> SecondaryText
                 }
                 Text(
-                    text = "ctx $contextPct%",
+                    text = strings.contextPercent(contextPct),
                     style = TextStyle(
                         color = ctxColor,
                         fontSize = 10.sp,
@@ -187,7 +206,7 @@ private fun ActiveTurnContent(
 }
 
 @Composable
-private fun IdlePlaceholder() {
+private fun IdlePlaceholder(strings: WidgetStrings) {
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -206,7 +225,7 @@ private fun IdlePlaceholder() {
             )
             Spacer(modifier = GlanceModifier.height(4.dp))
             Text(
-                text = "No active turns",
+                text = strings.noActiveTurns,
                 style = TextStyle(
                     color = SecondaryText,
                     fontSize = 12.sp,
@@ -216,11 +235,29 @@ private fun IdlePlaceholder() {
     }
 }
 
-private enum class WidgetPhase(val label: String, val colorProvider: ColorProvider) {
-    THINKING("thinking", WarningOrange),
-    TOOL_CALL("running tool", WarningOrange),
-    COMPLETED("done", SecondaryText),
-    FAILED("failed", DangerRed),
+private data class WidgetStrings(
+    val noActiveTurns: String,
+    val unknownModel: String,
+    val toolCount: (Int) -> String,
+    val contextPercent: (Int) -> String,
+    val phaseThinking: String,
+    val phaseTool: String,
+    val phaseDone: String,
+    val phaseFailed: String,
+)
+
+private enum class WidgetPhase(val colorProvider: ColorProvider) {
+    THINKING(WarningOrange),
+    TOOL_CALL(WarningOrange),
+    COMPLETED(SecondaryText),
+    FAILED(DangerRed);
+
+    fun label(strings: WidgetStrings): String = when (this) {
+        THINKING -> strings.phaseThinking
+        TOOL_CALL -> strings.phaseTool
+        COMPLETED -> strings.phaseDone
+        FAILED -> strings.phaseFailed
+    }
 }
 
 private fun resolvePhase(thread: AppThreadSnapshot): WidgetPhase {

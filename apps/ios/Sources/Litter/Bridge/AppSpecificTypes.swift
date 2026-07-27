@@ -163,15 +163,15 @@ extension AppAskForApproval {
     var displayTitle: String {
         switch self {
         case .unlessTrusted:
-            return "Untrusted"
+            return AppLanguage.localizedString("Untrusted")
         case .onFailure:
-            return "On failure"
+            return AppLanguage.localizedString("On failure")
         case .onRequest:
-            return "On request"
+            return AppLanguage.localizedString("On request")
         case .granular:
-            return "Granular"
+            return AppLanguage.localizedString("Granular")
         case .never:
-            return "Never"
+            return AppLanguage.localizedString("Never")
         }
     }
 }
@@ -193,11 +193,11 @@ extension AppSandboxMode {
     var displayTitle: String {
         switch self {
         case .readOnly:
-            return "Read only"
+            return AppLanguage.localizedString("Read only")
         case .workspaceWrite:
-            return "Workspace write"
+            return AppLanguage.localizedString("Workspace write")
         case .dangerFullAccess:
-            return "Full access"
+            return AppLanguage.localizedString("Full access")
         }
     }
 }
@@ -223,13 +223,13 @@ extension AppSandboxPolicy {
     var displayTitle: String {
         switch self {
         case .dangerFullAccess:
-            return "Full access"
+            return AppLanguage.localizedString("Full access")
         case .readOnly:
-            return "Read only"
+            return AppLanguage.localizedString("Read only")
         case .workspaceWrite:
-            return "Workspace write"
+            return AppLanguage.localizedString("Workspace write")
         case .externalSandbox:
-            return "External sandbox"
+            return AppLanguage.localizedString("External sandbox")
         }
     }
 }
@@ -238,13 +238,13 @@ extension AppThreadPermissionPreset {
     var title: String {
         switch self {
         case .supervised:
-            return "Supervised"
+            return AppLanguage.localizedString("Supervised")
         case .fullAccess:
-            return "Full Access"
+            return AppLanguage.localizedString("Full Access")
         case .custom:
-            return "Custom"
+            return AppLanguage.localizedString("Custom")
         case .unknown:
-            return "Unknown"
+            return AppLanguage.localizedString("Unknown")
         }
     }
 }

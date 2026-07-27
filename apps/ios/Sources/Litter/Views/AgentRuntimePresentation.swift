@@ -118,7 +118,7 @@ extension AgentRuntimeKind {
     }
 
     private var titlecased: String {
-        guard !isEmpty else { return "Agent" }
+        guard !isEmpty else { return AppLanguage.localizedString("Agent") }
         return prefix(1).uppercased() + dropFirst()
     }
 }

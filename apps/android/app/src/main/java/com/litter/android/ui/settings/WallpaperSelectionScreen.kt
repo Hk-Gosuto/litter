@@ -62,11 +62,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LitterThemeIndexEntry
 import com.litter.android.ui.LitterThemeManager
@@ -172,12 +174,13 @@ fun WallpaperSelectionScreen(
         val brightnessAlpha = brightness.coerceIn(0f, 1f)
         val motion = rememberWallpaperMotionTransform(motionEnabled)
         val selectedLabel = when (previewConfig?.type) {
-            WallpaperType.CUSTOM_IMAGE -> "Photo"
-            WallpaperType.CUSTOM_VIDEO -> "Video"
-            WallpaperType.VIDEO_URL -> "Video URL"
-            WallpaperType.SOLID_COLOR -> "Color"
-            WallpaperType.THEME -> themes.firstOrNull { it.slug == previewConfig?.themeSlug }?.name ?: "Theme"
-            WallpaperType.NONE, null -> "No wallpaper"
+            WallpaperType.CUSTOM_IMAGE -> stringResource(R.string.wallpaper_photo)
+            WallpaperType.CUSTOM_VIDEO -> stringResource(R.string.wallpaper_video)
+            WallpaperType.VIDEO_URL -> stringResource(R.string.wallpaper_video_url)
+            WallpaperType.SOLID_COLOR -> stringResource(R.string.wallpaper_color)
+            WallpaperType.THEME -> themes.firstOrNull { it.slug == previewConfig?.themeSlug }?.name
+                ?: stringResource(R.string.wallpaper_theme)
+            WallpaperType.NONE, null -> stringResource(R.string.wallpaper_no_wallpaper)
         }
 
         if (previewConfig?.type in setOf(WallpaperType.CUSTOM_VIDEO, WallpaperType.VIDEO_URL) && previewVideoPath != null) {
@@ -225,11 +228,11 @@ fun WallpaperSelectionScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SampleBubble(
-                text = "Can you help me refactor this module?",
+                text = stringResource(R.string.wallpaper_sample_user),
                 isUser = true,
             )
             SampleBubble(
-                text = "Sure! I'll analyze the code structure and suggest improvements.",
+                text = stringResource(R.string.wallpaper_sample_assistant),
                 isUser = false,
             )
         }
@@ -246,14 +249,14 @@ fun WallpaperSelectionScreen(
             IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = LitterTheme.textPrimary,
                     modifier = Modifier.size(20.dp),
                 )
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "Select Wallpaper",
+                text = stringResource(R.string.wallpaper_select),
                 color = LitterTheme.textPrimary,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -288,7 +291,13 @@ fun WallpaperSelectionScreen(
                 IconButton(onClick = { sheetMinimized = !sheetMinimized }, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = if (sheetMinimized) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (sheetMinimized) "Expand controls" else "Minimize controls",
+                        contentDescription = stringResource(
+                            if (sheetMinimized) {
+                                R.string.wallpaper_expand_controls
+                            } else {
+                                R.string.wallpaper_minimize_controls
+                            },
+                        ),
                         tint = LitterTheme.textPrimary,
                     )
                 }
@@ -304,7 +313,7 @@ fun WallpaperSelectionScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Wallpaper Controls",
+                        text = stringResource(R.string.wallpaper_controls),
                         color = LitterTheme.textPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -323,7 +332,13 @@ fun WallpaperSelectionScreen(
                 }
                 Icon(
                     imageVector = if (sheetMinimized) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (sheetMinimized) "Expand controls" else "Minimize controls",
+                    contentDescription = stringResource(
+                        if (sheetMinimized) {
+                            R.string.wallpaper_expand_controls
+                        } else {
+                            R.string.wallpaper_minimize_controls
+                        },
+                    ),
                     tint = LitterTheme.textPrimary,
                 )
             }
@@ -351,7 +366,7 @@ fun WallpaperSelectionScreen(
                                 uncheckedColor = LitterTheme.textMuted,
                             ),
                         )
-                        Text("Blurred", color = LitterTheme.textPrimary, fontSize = 13.sp)
+                        Text(stringResource(R.string.wallpaper_blurred), color = LitterTheme.textPrimary, fontSize = 13.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
@@ -369,7 +384,7 @@ fun WallpaperSelectionScreen(
                                 uncheckedColor = LitterTheme.textMuted,
                             ),
                         )
-                        Text("Motion", color = LitterTheme.textPrimary, fontSize = 13.sp)
+                        Text(stringResource(R.string.wallpaper_motion), color = LitterTheme.textPrimary, fontSize = 13.sp)
                     }
                 }
 
@@ -433,7 +448,7 @@ fun WallpaperSelectionScreen(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Apply for This Thread", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.wallpaper_apply_thread), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -468,7 +483,7 @@ fun WallpaperSelectionScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "Apply for This Server",
+                            stringResource(R.string.wallpaper_apply_server),
                             fontSize = 13.sp,
                             fontWeight = if (isServerOnly) FontWeight.SemiBold else FontWeight.Normal,
                         )
@@ -488,20 +503,26 @@ fun WallpaperSelectionScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Choose a Different Wallpaper",
+                            text = stringResource(R.string.wallpaper_choose_different),
                             color = LitterTheme.textPrimary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            text = "Themes, photos, colors, videos, and URL sources",
+                            text = stringResource(R.string.wallpaper_sources_help),
                             color = LitterTheme.textMuted,
                             fontSize = 12.sp,
                         )
                     }
                     Icon(
                         imageVector = if (sourceOptionsExpanded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
-                        contentDescription = if (sourceOptionsExpanded) "Collapse wallpaper sources" else "Expand wallpaper sources",
+                        contentDescription = stringResource(
+                            if (sourceOptionsExpanded) {
+                                R.string.wallpaper_collapse_sources
+                            } else {
+                                R.string.wallpaper_expand_sources
+                            },
+                        ),
                         tint = LitterTheme.textPrimary,
                     )
                 }
@@ -516,7 +537,7 @@ fun WallpaperSelectionScreen(
                             .verticalScroll(rememberScrollState()),
                     ) {
                         Text(
-                            text = "Themes",
+                            text = stringResource(R.string.wallpaper_themes),
                             color = LitterTheme.textPrimary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -529,7 +550,7 @@ fun WallpaperSelectionScreen(
                         ) {
                             item {
                                 ThemeThumbnail(
-                                    label = "None",
+                                    label = stringResource(R.string.wallpaper_none),
                                     backgroundColor = LitterTheme.background,
                                     accentColor = null,
                                     isSelected = previewConfig == null || previewConfig?.type == WallpaperType.NONE,
@@ -587,7 +608,7 @@ fun WallpaperSelectionScreen(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    "Choose Photo",
+                                    stringResource(R.string.wallpaper_choose_photo),
                                     color = LitterTheme.accent,
                                     fontSize = 13.sp,
                                 )
@@ -616,7 +637,7 @@ fun WallpaperSelectionScreen(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    "Set a Color",
+                                    stringResource(R.string.wallpaper_set_color),
                                     color = LitterTheme.accent,
                                     fontSize = 13.sp,
                                 )
@@ -642,7 +663,7 @@ fun WallpaperSelectionScreen(
                                 modifier = Modifier.size(16.dp),
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("Choose Video", color = LitterTheme.accent, fontSize = 13.sp)
+                            Text(stringResource(R.string.wallpaper_choose_video), color = LitterTheme.accent, fontSize = 13.sp)
                         }
 
                         Row(
@@ -659,7 +680,7 @@ fun WallpaperSelectionScreen(
                             OutlinedTextField(
                                 value = videoUrlText,
                                 onValueChange = { videoUrlText = it },
-                                placeholder = { Text("Paste video URL", fontSize = 12.sp) },
+                                placeholder = { Text(stringResource(R.string.wallpaper_video_url_placeholder), fontSize = 12.sp) },
                                 singleLine = true,
                                 modifier = Modifier
                                     .weight(1f)
@@ -718,7 +739,7 @@ fun WallpaperSelectionScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = LitterTheme.accent)
                     Spacer(Modifier.height(12.dp))
-                    Text("Processing video...", color = LitterTheme.textPrimary, fontSize = 13.sp)
+                    Text(stringResource(R.string.wallpaper_processing_video), color = LitterTheme.textPrimary, fontSize = 13.sp)
                 }
             }
         }
@@ -757,7 +778,7 @@ private fun ThemeThumbnail(
             if (isNone) {
                 Icon(
                     Icons.Default.Close,
-                    contentDescription = "No wallpaper",
+                    contentDescription = stringResource(R.string.wallpaper_no_wallpaper),
                     tint = LitterTheme.textMuted,
                     modifier = Modifier.size(20.dp),
                 )

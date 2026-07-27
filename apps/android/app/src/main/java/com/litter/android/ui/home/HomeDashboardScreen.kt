@@ -90,6 +90,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -184,8 +185,9 @@ fun HomeDashboardScreen(
     // Home list = pinned first (preserving pin order). If nothing is pinned,
     // show the 10 most-recent sessions. Hidden threads are excluded from
     // both halves.
-    val homeSessions = remember(pinnedKeys, hiddenKeys, servers, allSessions) {
-        mergeHomeSessions(pinnedKeys, hiddenKeys, servers, allSessions)
+    val loadingThreadTitle = stringResource(R.string.home_loading_thread)
+    val homeSessions = remember(pinnedKeys, hiddenKeys, servers, allSessions, loadingThreadTitle) {
+        mergeHomeSessions(pinnedKeys, hiddenKeys, servers, allSessions, loadingThreadTitle)
     }
 
     val scopedServerId = selectedProject?.serverId ?: selectedServerId
@@ -530,7 +532,7 @@ fun HomeDashboardScreen(
                                         onOpenConversation(newKey)
                                     } catch (e: Exception) {
                                         confirmAction = ConfirmAction.ReplyError(
-                                            e.message ?: "Failed to fork thread",
+                                            e.message ?: context.getString(R.string.home_failed_fork_thread),
                                         )
                                     }
                                 }
@@ -591,7 +593,7 @@ fun HomeDashboardScreen(
                 IconButton(onClick = onShowSettings, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Default.Settings,
-                        contentDescription = "Settings",
+                        contentDescription = stringResource(R.string.a11y_settings),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(20.dp),
                     )
@@ -600,7 +602,7 @@ fun HomeDashboardScreen(
                     IconButton(onClick = onShowApps, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Outlined.GridView,
-                            contentDescription = "Apps",
+                            contentDescription = stringResource(R.string.a11y_apps),
                             tint = LitterTheme.textSecondary,
                             modifier = Modifier.size(20.dp),
                         )
@@ -610,7 +612,7 @@ fun HomeDashboardScreen(
                     IconButton(onClick = onOpenTerminal, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Outlined.Terminal,
-                            contentDescription = "Terminal",
+                            contentDescription = stringResource(R.string.a11y_terminal),
                             tint = LitterTheme.textSecondary,
                             modifier = Modifier.size(20.dp),
                         )
@@ -624,7 +626,7 @@ fun HomeDashboardScreen(
                     leftKitties.forEach { iconRes ->
                         androidx.compose.foundation.Image(
                             painter = androidx.compose.ui.res.painterResource(iconRes),
-                            contentDescription = "Supporter",
+                            contentDescription = stringResource(R.string.a11y_supporter),
                             modifier = Modifier
                                 .size(28.dp)
                                 .clickable { showTipJar = true },
@@ -636,7 +638,7 @@ fun HomeDashboardScreen(
                     rightKitties.forEach { iconRes ->
                         androidx.compose.foundation.Image(
                             painter = androidx.compose.ui.res.painterResource(iconRes),
-                            contentDescription = "Supporter",
+                            contentDescription = stringResource(R.string.a11y_supporter),
                             modifier = Modifier
                                 .size(28.dp)
                                 .clickable { showTipJar = true },
@@ -662,7 +664,7 @@ fun HomeDashboardScreen(
                 ) {
                     Icon(
                         imageVector = zoomIconFor(zoomLevel),
-                        contentDescription = "Dashboard zoom",
+                        contentDescription = stringResource(R.string.a11y_dashboard_zoom),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(20.dp),
                     )
@@ -691,7 +693,7 @@ fun HomeDashboardScreen(
                             appModel.refreshSnapshot()
                         } catch (error: Exception) {
                             confirmAction = ConfirmAction.ReplyError(
-                                error.message ?: "Unable to restart app server.",
+                                error.message ?: context.getString(R.string.home_failed_restart_server),
                             )
                         }
                     }
@@ -765,7 +767,7 @@ fun HomeDashboardScreen(
                     ) {
                         Icon(
                             imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                            contentDescription = "Close search",
+                            contentDescription = stringResource(R.string.a11y_close_search),
                             tint = LitterTheme.textSecondary,
                         )
                     }
@@ -956,7 +958,7 @@ fun HomeDashboardScreen(
                                 ) {
                                     Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Default.Mic,
-                                        contentDescription = "Start realtime voice",
+                                        contentDescription = stringResource(R.string.a11y_start_realtime_voice),
                                         tint = voiceIconTint,
                                         modifier = Modifier.size(20.dp),
                                     )
@@ -977,7 +979,7 @@ fun HomeDashboardScreen(
                             ) {
                                 Icon(
                                     imageVector = androidx.compose.material.icons.Icons.Default.Add,
-                                    contentDescription = "New message",
+                                    contentDescription = stringResource(R.string.a11y_new_message),
                                     tint = LitterTheme.textPrimary,
                                     modifier = Modifier.size(22.dp),
                                 )
@@ -997,7 +999,7 @@ fun HomeDashboardScreen(
                             ) {
                                 Icon(
                                     imageVector = androidx.compose.material.icons.Icons.Outlined.Search,
-                                    contentDescription = "Search threads",
+                                    contentDescription = stringResource(R.string.a11y_search_threads),
                                     tint = LitterTheme.textSecondary,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -1027,7 +1029,7 @@ fun HomeDashboardScreen(
                     sendQuickReplyTurn(appModel, threadKey, text)
                 }.onFailure { err ->
                     confirmAction = ConfirmAction.ReplyError(
-                        err.message ?: "Failed to send reply",
+                        err.message ?: context.getString(R.string.home_failed_send_reply),
                     )
                 }
             },
@@ -1035,10 +1037,22 @@ fun HomeDashboardScreen(
     }
 
     confirmAction?.let { action ->
+        val actionTitle = when (action) {
+            is ConfirmAction.ArchiveSession -> stringResource(R.string.home_delete_session)
+            is ConfirmAction.DisconnectServer -> stringResource(R.string.home_disconnect_server)
+            is ConfirmAction.ReplyError -> stringResource(R.string.home_reply_failed)
+        }
+        val actionMessage = when (action) {
+            is ConfirmAction.ArchiveSession ->
+                stringResource(R.string.home_delete_session_confirmation)
+            is ConfirmAction.DisconnectServer ->
+                stringResource(R.string.home_disconnect_server_confirmation, action.server.displayName)
+            is ConfirmAction.ReplyError -> action.reason
+        }
         AlertDialog(
             onDismissRequest = { confirmAction = null },
-            title = { Text(action.title) },
-            text = { Text(action.message) },
+            title = { Text(actionTitle) },
+            text = { Text(actionMessage) },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
@@ -1073,12 +1087,12 @@ fun HomeDashboardScreen(
                     }
                     confirmAction = null
                 }) {
-                    Text("Confirm", color = LitterTheme.danger)
+                    Text(stringResource(R.string.common_confirm), color = LitterTheme.danger)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmAction = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
         )
@@ -1086,12 +1100,12 @@ fun HomeDashboardScreen(
     renameTarget?.let { server ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename Server") },
+            title = { Text(stringResource(R.string.settings_rename_server)) },
             text = {
                 OutlinedTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.settings_name)) },
                     singleLine = true,
                 )
             },
@@ -1105,12 +1119,12 @@ fun HomeDashboardScreen(
                     }
                     renameTarget = null
                 }) {
-                    Text("Save")
+                    Text(stringResource(R.string.common_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { renameTarget = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
         )
@@ -1381,6 +1395,7 @@ private fun mergeHomeSessions(
     hidden: List<PinnedThreadKey>,
     servers: List<AppServerSnapshot>,
     allSessions: List<AppSessionSummary>,
+    loadingThreadTitle: String,
 ): List<AppSessionSummary> {
     val hiddenSet = hidden.toSet()
     val candidates = allSessions.filter {
@@ -1394,7 +1409,7 @@ private fun mergeHomeSessions(
         return pinned.mapNotNull { key ->
             if (key in hiddenSet) return@mapNotNull null
             byKey[key] ?: serversById[key.serverId]?.let { server ->
-                placeholderPinnedSession(key, server)
+                placeholderPinnedSession(key, server, loadingThreadTitle)
             }
         }
     }
@@ -1404,6 +1419,7 @@ private fun mergeHomeSessions(
 private fun placeholderPinnedSession(
     pinned: PinnedThreadKey,
     server: AppServerSnapshot,
+    loadingThreadTitle: String,
 ): AppSessionSummary = AppSessionSummary(
     key = uniffi.codex_mobile_client.ThreadKey(
         serverId = pinned.serverId,
@@ -1412,7 +1428,7 @@ private fun placeholderPinnedSession(
     agentRuntimeKind = "codex",
     serverDisplayName = server.displayName,
     serverHost = server.host,
-    title = "Loading thread",
+    title = loadingThreadTitle,
     preview = "",
     cwd = "",
     model = "",
@@ -1441,23 +1457,9 @@ private fun placeholderPinnedSession(
 )
 
 private sealed class ConfirmAction {
-    abstract val title: String
-    abstract val message: String
-
-    data class ArchiveSession(val session: AppSessionSummary) : ConfirmAction() {
-        override val title = "Delete Session"
-        override val message = "Are you sure you want to delete this session?"
-    }
-
-    data class DisconnectServer(val server: AppServerSnapshot) : ConfirmAction() {
-        override val title = "Disconnect Server"
-        override val message = "Disconnect from ${server.displayName}?"
-    }
-
-    data class ReplyError(val reason: String) : ConfirmAction() {
-        override val title = "Reply Failed"
-        override val message = reason
-    }
+    data class ArchiveSession(val session: AppSessionSummary) : ConfirmAction()
+    data class DisconnectServer(val server: AppServerSnapshot) : ConfirmAction()
+    data class ReplyError(val reason: String) : ConfirmAction()
 }
 
 private fun Rect.relativeTo(root: Rect): Rect {
@@ -1505,7 +1507,7 @@ private fun HomeAppTakeoverRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = app.title.ifBlank { "Saved App" },
+                text = app.title.ifBlank { stringResource(R.string.home_saved_app) },
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.callout.scaled,
                 fontWeight = FontWeight.Medium,

@@ -17,7 +17,7 @@ extension AppThreadSnapshot {
             return preview
         }
 
-        return "Untitled session"
+        return AppLanguage.localizedString("Untitled session")
     }
 
     var hasPreviewOrTitle: Bool {

@@ -24,9 +24,11 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTheme
 import uniffi.codex_mobile_client.AppVoiceSessionPhase
 import kotlin.math.abs
@@ -68,7 +70,7 @@ fun InlineVoiceStatusStrip(
                     ),
             )
             Text(
-                text = "YOU",
+                text = stringResource(R.string.voice_you),
                 color = if (isListening) LitterTheme.textPrimary else LitterTheme.textMuted,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -113,7 +115,7 @@ fun InlineVoiceStatusStrip(
         // Speaker toggle
         Icon(
             Icons.Default.VolumeUp,
-            contentDescription = "Toggle speaker",
+            contentDescription = stringResource(R.string.voice_toggle_speaker),
             tint = LitterTheme.textPrimary,
             modifier = Modifier
                 .size(16.dp)

@@ -16,12 +16,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.common.AgentIconView
 import com.litter.android.ui.common.runtimeLabel
 import com.litter.android.ui.scaled
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.AppSessionSummary
 
 /**
@@ -79,7 +81,10 @@ fun ModelBadgeLine(
             }
             if (session.isFork) {
                 SeparatorDot()
-                BadgeText(text = "fork", color = LitterTheme.warning.copy(alpha = 0.8f))
+                BadgeText(
+                    text = stringResource(R.string.sessions_fork),
+                    color = LitterTheme.warning.copy(alpha = 0.8f),
+                )
             }
             if (session.isSubagent && agentLabel != null) {
                 SeparatorDot()

@@ -94,7 +94,7 @@ struct RealtimeVoiceScreen: View {
 
         let speaker = session.transcriptSpeaker?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? session.transcriptSpeaker!
-            : (session.phase == .speaking ? "Codex" : "You")
+            : AppLanguage.localizedString(session.phase == .speaking ? "Codex" : "You")
         let liveId = session.transcriptLiveMessageID ?? "live-\(speaker.lowercased())"
         let timestamp = entries.first(where: { $0.id == liveId })?.timestamp ?? Date()
         let entry = VoiceSessionTranscriptEntry(
@@ -393,7 +393,7 @@ struct RealtimeVoiceScreen: View {
                 try await appModel.restartLocalServer()
                 let persisted = OpenAIApiKeyStore.shared.hasStoredKey
                 guard persisted else {
-                    authError = "API key did not persist locally."
+                    authError = AppLanguage.localizedString("API key did not persist locally.")
                     throw CancellationError()
                 }
                 apiKeySaved = true
@@ -430,7 +430,7 @@ struct RealtimeVoiceScreen: View {
                 }
                 if !apiKeySaved {
                     isRetryingAfterAuthSave = false
-                    apiKeyError = authError ?? "Failed to save API key"
+                    apiKeyError = authError ?? AppLanguage.localizedString("Failed to save API key")
                 }
             }
         }
@@ -463,7 +463,7 @@ struct RealtimeVoiceScreen: View {
                     .tint(primaryTextColor)
                     .scaleEffect(0.85)
             }
-            Text(isSavingApiKey ? "Saving…" : "Save API Key")
+            Text(AppLanguage.localizedString(isSavingApiKey ? "Saving…" : "Save API Key"))
                 .font(LitterFont.styled(.subheadline, weight: .semibold))
         }
         .foregroundColor(primaryTextColor)

@@ -771,7 +771,7 @@ struct InlineModelSelectorView: View {
                         HStack(spacing: 4) {
                             Image(systemName: isFullAccess ? "lock.open.fill" : "lock.fill")
                                 .litterFont(size: 9, weight: .semibold)
-                            Text(isFullAccess ? "Full Access" : "Supervised")
+                            Text(AppLanguage.localizedString(isFullAccess ? "Full Access" : "Supervised"))
                                 .litterFont(.caption2, weight: .medium)
                         }
                         .foregroundColor(isFullAccess ? LitterTheme.textOnAccent : LitterTheme.textPrimary)

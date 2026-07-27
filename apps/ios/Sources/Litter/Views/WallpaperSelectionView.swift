@@ -220,7 +220,7 @@ struct WallpaperSelectionView: View {
             // Tab picker
             Picker("", selection: $activeTab) {
                 ForEach(WallpaperTab.allCases) { tab in
-                    Text(tab.label).tag(tab)
+                    Text(LocalizedStringKey(tab.label)).tag(tab)
                 }
             }
             .pickerStyle(.segmented)

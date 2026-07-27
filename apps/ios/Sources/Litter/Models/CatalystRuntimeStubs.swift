@@ -172,7 +172,11 @@ final class VoiceRuntimeController {
         throw NSError(
             domain: "Litter",
             code: 9999,
-            userInfo: [NSLocalizedDescriptionKey: "Voice not available on Catalyst"]
+            userInfo: [
+                NSLocalizedDescriptionKey: AppLanguage.localizedString(
+                    "Voice not available on Catalyst"
+                )
+            ]
         )
     }
     func stopActiveVoiceSession() async {}

@@ -134,7 +134,7 @@ struct WidgetState: Equatable {
     static func fromArguments(_ args: [String: Any], callId: String, widgetHTML: String = "", isFinalized: Bool = false) -> WidgetState {
         WidgetState(
             callId: callId,
-            title: (args["title"] as? String) ?? "Widget",
+            title: (args["title"] as? String) ?? AppLanguage.localizedString("Widget"),
             widgetHTML: (args["widget_code"] as? String) ?? widgetHTML,
             width: CGFloat((args["width"] as? Double) ?? 800),
             height: CGFloat((args["height"] as? Double) ?? 600),

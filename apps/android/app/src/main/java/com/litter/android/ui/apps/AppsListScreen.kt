@@ -40,8 +40,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.SavedAppsStore
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -83,12 +85,12 @@ fun AppsListScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = LitterTheme.textPrimary,
                 )
             }
             Text(
-                text = "Apps",
+                text = stringResource(R.string.settings_apps_section),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.headline.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -99,12 +101,12 @@ fun AppsListScreen(
         renameTarget?.let { app ->
             AlertDialog(
                 onDismissRequest = { renameTarget = null },
-                title = { Text("Rename App") },
+                title = { Text(stringResource(R.string.apps_rename)) },
                 text = {
                     OutlinedTextField(
                         value = renameText,
                         onValueChange = { renameText = it },
-                        label = { Text("Title") },
+                        label = { Text(stringResource(R.string.apps_title)) },
                         singleLine = true,
                     )
                 },
@@ -119,12 +121,12 @@ fun AppsListScreen(
                         }
                         renameTarget = null
                     }) {
-                        Text("Save")
+                        Text(stringResource(R.string.common_save))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { renameTarget = null }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.common_cancel))
                     }
                 },
             )
@@ -206,7 +208,7 @@ private fun AppRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = app.title.ifBlank { "Untitled App" },
+                text = app.title.ifBlank { stringResource(R.string.apps_untitled) },
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.callout.scaled,
                 fontWeight = FontWeight.Medium,
@@ -239,13 +241,13 @@ private fun EmptyState() {
                 modifier = Modifier.size(44.dp),
             )
             Text(
-                text = "No apps yet",
+                text = stringResource(R.string.apps_empty),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.headline.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "When the AI generates an interactive widget with an app_id, it saves here automatically.",
+                text = stringResource(R.string.apps_empty_helper),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.footnote.scaled,
             )

@@ -215,9 +215,13 @@ struct MountedFoldersView: View {
     private func statusDetail(for status: MountStatus?) -> String? {
         switch status {
         case .resolutionFailed(let message):
-            return "Couldn't reach this folder: \(message)"
+                return AppLanguage.localizedString("Couldn't reach this folder: %@", message)
         case .mountFailed(let rc, let message):
-            return "Mount failed (rc=\(rc)): \(message)"
+            return AppLanguage.localizedString(
+                "Mount failed (rc=%lld): %@",
+                Int64(rc),
+                message
+            )
         case .mounted, nil:
             return nil
         }
@@ -232,9 +236,9 @@ struct MountedFoldersView: View {
 
     private var removalPrompt: String {
         if let pendingRemoval {
-            return "Remove \(pendingRemoval.name)?"
+            return AppLanguage.localizedString("Remove %@?", pendingRemoval.name)
         }
-        return "Remove mount?"
+        return AppLanguage.localizedString("Remove mount?")
     }
 }
 

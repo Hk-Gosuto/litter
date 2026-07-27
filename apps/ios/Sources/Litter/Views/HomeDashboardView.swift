@@ -246,7 +246,12 @@ struct HomeDashboardView: View {
                     deleteTargetThread = nil
                 }
             } message: {
-                Text("This will permanently delete \"\(deleteTargetThread?.sessionTitle ?? "this session")\".")
+                Text(
+                    AppLanguage.localizedString(
+                        "This will permanently delete \"%@\".",
+                        deleteTargetThread?.sessionTitle ?? AppLanguage.localizedString("this session")
+                    )
+                )
             }
             .alert("Rename server", isPresented: Binding(
                 get: { renameServerTarget != nil },
@@ -1194,12 +1199,12 @@ struct SessionCanvasLine: View {
 
     private func goalStatusLabel(_ status: AppThreadGoalStatus) -> String {
         switch status {
-        case .active: return "· ACTIVE"
-        case .paused: return "· PAUSED"
-        case .blocked: return "· BLOCKED"
-        case .usageLimited: return "· USAGE"
-        case .budgetLimited: return "· BUDGET"
-        case .complete: return "· COMPLETE"
+        case .active: return AppLanguage.localizedString("· ACTIVE")
+        case .paused: return AppLanguage.localizedString("· PAUSED")
+        case .blocked: return AppLanguage.localizedString("· BLOCKED")
+        case .usageLimited: return AppLanguage.localizedString("· USAGE")
+        case .budgetLimited: return AppLanguage.localizedString("· BUDGET")
+        case .complete: return AppLanguage.localizedString("· COMPLETE")
         }
     }
 
@@ -1228,7 +1233,7 @@ struct SessionCanvasLine: View {
                 }
                 RollingMetricText(value)
                     .foregroundStyle(valueColor)
-                Text(label)
+                Text(LocalizedStringKey(label))
                     .foregroundStyle(LitterTheme.textMuted.opacity(0.65))
                     .litterMonoFont(size: 11, weight: .regular)
                 Spacer(minLength: 0)
@@ -1462,7 +1467,10 @@ struct SessionCanvasLine: View {
     private func formatToolDetail(_ entry: AppToolLogEntry) -> String {
         switch entry.tool {
         case "Edit":
-            return "Edited \(workspaceTitle(for: entry.detail))"
+                return AppLanguage.localizedString(
+                    "Edited %@",
+                    workspaceTitle(for: entry.detail)
+                )
         default:
             return entry.detail
         }
@@ -1612,7 +1620,13 @@ struct SessionCanvasLine: View {
                 .stroke(LitterTheme.border.opacity(0.6), lineWidth: 1)
         )
         .clipShape(Capsule())
-        .accessibilityLabel("Branch \(lineage.branchIndex) of \(lineage.branchTotal)")
+        .accessibilityLabel(
+            AppLanguage.localizedString(
+                "Branch %lld of %lld",
+                Int64(lineage.branchIndex),
+                Int64(lineage.branchTotal)
+            )
+        )
     }
 
     /// Inline meta-line replacement for the old `fork` warning text. Carries
@@ -1623,7 +1637,13 @@ struct SessionCanvasLine: View {
         HStack(spacing: 3) {
             Image(systemName: "arrow.triangle.branch")
                 .litterFont(size: 7, weight: .semibold)
-            Text("branch \(lineage.branchIndex)/\(lineage.branchTotal)")
+            Text(
+                AppLanguage.localizedString(
+                    "branch %lld/%lld",
+                    Int64(lineage.branchIndex),
+                    Int64(lineage.branchTotal)
+                )
+            )
         }
         .foregroundStyle(LitterTheme.accent.opacity(0.85))
     }

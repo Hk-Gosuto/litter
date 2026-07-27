@@ -5,16 +5,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.TerminalConfig
 import uniffi.codex_mobile_client.TerminalCursorStyle
 import uniffi.codex_mobile_client.TerminalThemePreset
 
-enum class TerminalThemeChoice(val id: String, val title: String) {
-    LITTER_DARK("litter-dark", "Litter Dark"),
-    CATPPUCCIN_FRAPPE("catppuccin-frappe", "Catppuccin Frappé"),
-    CATPPUCCIN_FRAPPE_LIGHT("catppuccin-frappe-light", "Catppuccin Frappé Light"),
-    SOLARIZED_DARK("solarized-dark", "Solarized Dark"),
-    SOLARIZED_LIGHT("solarized-light", "Solarized Light");
+enum class TerminalThemeChoice(val id: String, val titleRes: Int) {
+    LITTER_DARK("litter-dark", R.string.terminal_theme_litter_dark),
+    CATPPUCCIN_FRAPPE("catppuccin-frappe", R.string.terminal_theme_catppuccin),
+    CATPPUCCIN_FRAPPE_LIGHT("catppuccin-frappe-light", R.string.terminal_theme_catppuccin_light),
+    SOLARIZED_DARK("solarized-dark", R.string.terminal_theme_solarized_dark),
+    SOLARIZED_LIGHT("solarized-light", R.string.terminal_theme_solarized_light);
 
     fun toPreset(): TerminalThemePreset = when (this) {
         LITTER_DARK -> TerminalThemePreset.LitterDark

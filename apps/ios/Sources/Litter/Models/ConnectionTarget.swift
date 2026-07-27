@@ -52,11 +52,11 @@ enum SSHCredentialStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .encodingFailed:
-            return "Failed to encode credentials"
+            return AppLanguage.localizedString("Failed to encode credentials")
         case .decodingFailed:
-            return "Failed to decode saved credentials"
+            return AppLanguage.localizedString("Failed to decode saved credentials")
         case .keychain(let status):
-            return "Keychain error (\(status))"
+            return AppLanguage.localizedString("Keychain error (%d)", status)
         }
     }
 }

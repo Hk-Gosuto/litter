@@ -180,7 +180,7 @@ struct SessionsScreen: View {
             )) {
                 Button("OK", role: .cancel) { sessionActionErrorMessage = nil }
             } message: {
-                Text(sessionActionErrorMessage ?? "Unknown error")
+                Text(sessionActionErrorMessage ?? AppLanguage.localizedString("Unknown error"))
             }
             .alert("Rename Session", isPresented: Binding(
                 get: { renamingThreadKey != nil },
@@ -200,7 +200,12 @@ struct SessionsScreen: View {
                     renameDraft = ""
                 }
             } message: {
-                Text("Current session title:\n\(renameCurrentTitle)")
+                Text(
+                    AppLanguage.localizedString(
+                        "Current session title:\n%@",
+                        renameCurrentTitle
+                    )
+                )
             }
             .confirmationDialog(
                 "Delete session?",
@@ -211,7 +216,10 @@ struct SessionsScreen: View {
                 titleVisibility: Visibility.visible,
                 presenting: archiveTargetThread
             ) { thread in
-                Button("Delete \"\(thread.sessionTitle)\"", role: .destructive) {
+                Button(
+                    AppLanguage.localizedString("Delete \"%@\"", thread.sessionTitle),
+                    role: .destructive
+                ) {
                     Task { await confirmArchiveSession() }
                 }
                 Button("Cancel", role: .cancel) { archiveTargetKey = nil }
@@ -259,7 +267,12 @@ struct SessionsScreen: View {
                 Divider().background(LitterTheme.separator)
                 if derived.filteredThreads.isEmpty {
                     Spacer()
-                    Text("No matches for \"\(trimmedSessionSearchQuery)\"")
+                    Text(
+                        AppLanguage.localizedString(
+                            "No matches for \"%@\"",
+                            trimmedSessionSearchQuery
+                        )
+                    )
                         .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textMuted)
                         .frame(maxWidth: .infinity)
@@ -455,7 +468,12 @@ struct SessionsScreen: View {
                 Image(systemName: "server.rack")
                     .foregroundColor(LitterTheme.accent)
                     .frame(width: 20)
-                Text("\(connected.count) server\(connected.count == 1 ? "" : "s")")
+                Text(
+                    AppLanguage.localizedString(
+                        connected.count == 1 ? "%lld server" : "%lld servers",
+                        Int64(connected.count)
+                    )
+                )
                     .litterFont(.footnote)
                     .foregroundColor(LitterTheme.textPrimary)
                     .fixedSize(horizontal: true, vertical: false)
@@ -521,7 +539,7 @@ struct SessionsScreen: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .litterFont(size: 10, weight: .semibold)
-                Text(label)
+                Text(LocalizedStringKey(label))
                     .lineLimit(1)
             }
             .litterFont(.caption)
@@ -645,15 +663,18 @@ struct SessionsScreen: View {
     }
 
     private var selectedServerFilterTitle: String {
-        guard let selectedServerFilterId else { return "All servers" }
-        return connectedServerOptions.first(where: { $0.id == selectedServerFilterId })?.name ?? "All servers"
+        guard let selectedServerFilterId else {
+            return AppLanguage.localizedString("All servers")
+        }
+        return connectedServerOptions.first(where: { $0.id == selectedServerFilterId })?.name
+            ?? AppLanguage.localizedString("All servers")
     }
 
     private func filterChip(title: String, isActive: Bool, icon: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .litterFont(size: 10, weight: .semibold)
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .lineLimit(1)
         }
         .litterFont(.caption)
@@ -883,7 +904,10 @@ struct SessionsScreen: View {
                                 HStack(spacing: 3) {
                                     Image(systemName: "person.2.fill")
                                         .litterFont(size: 8, weight: .semibold)
-                                    Text(thread.agentDisplayLabel ?? "Agent")
+                                    Text(
+                                        thread.agentDisplayLabel
+                                            ?? AppLanguage.localizedString("Agent")
+                                    )
                                         .litterFont(.caption2)
                                 }
                                 .foregroundColor(LitterTheme.textOnAccent)
@@ -922,7 +946,12 @@ struct SessionsScreen: View {
                             if let parent {
                                 Text("•")
                                     .foregroundColor(LitterTheme.textMuted)
-                                Text("from \(parent.sessionTitle)")
+                                Text(
+                                    AppLanguage.localizedString(
+                                        "from %@",
+                                        parent.sessionTitle
+                                    )
+                                )
                                     .foregroundColor(LitterTheme.textMuted)
                             }
                         }
@@ -1007,7 +1036,7 @@ struct SessionsScreen: View {
     }
 
     private func lineageChip(title: String, count: Int, isInteractive: Bool) -> some View {
-        Text("\(title) \(count)")
+        Text("\(AppLanguage.localizedString(title)) \(count)")
             .litterFont(.caption2)
             .foregroundColor(isInteractive ? LitterTheme.accent : LitterTheme.textMuted)
             .padding(.horizontal, 6)

@@ -10,11 +10,11 @@ enum LocalAccountLoginFlowError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .localServerUnavailable:
-            return "Local Codex isn't running. ChatGPT login requires the local bridge."
+            return AppLanguage.localizedString("Local Codex isn't running. ChatGPT login requires the local bridge.")
         case .remoteServer:
-            return "ChatGPT login is only available for the local server."
+            return AppLanguage.localizedString("ChatGPT login is only available for the local server.")
         case .loginDidNotAttach:
-            return "ChatGPT login completed, but the local account did not attach."
+            return AppLanguage.localizedString("ChatGPT login completed, but the local account did not attach.")
         }
     }
 }

@@ -45,10 +45,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.ampReasoningEffortLocked
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -207,7 +209,7 @@ fun ModelSelectorPanel(
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         Text(
-            text = "Model",
+            text = stringResource(R.string.model_title),
             color = LitterTheme.textSecondary,
             fontSize = LitterTextStyle.caption2.scaled,
         )
@@ -219,7 +221,7 @@ fun ModelSelectorPanel(
             ) {
                 item(key = "all") {
                     RuntimeFilterChip(
-                        label = "All",
+                        label = stringResource(R.string.common_all),
                         count = visibleModels.size,
                         selected = selectedRuntimeFilterName == null,
                         onClick = { selectedRuntimeFilterName = null },
@@ -250,7 +252,7 @@ fun ModelSelectorPanel(
             singleLine = true,
             label = {
                 Text(
-                    "Search models",
+                    stringResource(R.string.model_search),
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.caption2.scaled,
                 )
@@ -268,7 +270,7 @@ fun ModelSelectorPanel(
                     IconButton(onClick = { modelSearchQuery = "" }) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Clear model search",
+                            contentDescription = stringResource(R.string.conversation_clear_model_search),
                             tint = LitterTheme.textSecondary,
                             modifier = Modifier.size(16.dp),
                         )
@@ -308,14 +310,14 @@ fun ModelSelectorPanel(
 
         if (visibleModels.isEmpty()) {
             Text(
-                text = "Loading models...",
+                text = stringResource(R.string.model_loading),
                 color = LitterTheme.textMuted,
                 fontSize = LitterTextStyle.caption2.scaled,
                 modifier = Modifier.padding(vertical = 4.dp),
             )
         } else if (filteredModels.isEmpty()) {
             Text(
-                text = "No matching models",
+                text = stringResource(R.string.model_no_matches),
                 color = LitterTheme.textMuted,
                 fontSize = LitterTextStyle.caption2.scaled,
                 modifier = Modifier.padding(vertical = 4.dp),
@@ -324,7 +326,7 @@ fun ModelSelectorPanel(
 
         if (ampEffortLocked) {
             Text(
-                text = "Reasoning effort is locked after the first message.",
+                text = stringResource(R.string.model_effort_locked),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.caption2.scaled,
                 modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
@@ -336,7 +338,7 @@ fun ModelSelectorPanel(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "Effort",
+                        stringResource(R.string.model_effort),
                         color = LitterTheme.textSecondary,
                         fontSize = LitterTextStyle.caption2.scaled,
                     )
@@ -375,7 +377,7 @@ fun ModelSelectorPanel(
                         val next = if (isPlan) AppModeKind.DEFAULT else AppModeKind.PLAN
                         onToggleMode(next)
                     },
-                    label = { Text("Plan", fontSize = 10f.scaled) },
+                    label = { Text(stringResource(R.string.conversation_plan), fontSize = 10f.scaled) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = LitterTheme.accent,
                         selectedLabelColor = Color.Black,
@@ -645,7 +647,7 @@ private fun ModelOptionRow(
         if (selected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected model",
+                contentDescription = stringResource(R.string.conversation_selected_model),
                 tint = LitterTheme.accent,
                 modifier = Modifier.size(18.dp),
             )

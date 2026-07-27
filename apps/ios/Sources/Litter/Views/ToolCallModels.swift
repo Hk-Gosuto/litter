@@ -9,17 +9,17 @@ enum ConversationDetailDisplayMode: String, CaseIterable, Identifiable, Equatabl
 
     var displayName: String {
         switch self {
-        case .expanded: return "Show"
-        case .collapsed: return "Collapse"
-        case .hidden: return "Hide"
+        case .expanded: return AppLanguage.localizedString("Show")
+        case .collapsed: return AppLanguage.localizedString("Collapse")
+        case .hidden: return AppLanguage.localizedString("Hide")
         }
     }
 
     var detailText: String {
         switch self {
-        case .expanded: return "Details are open by default"
-        case .collapsed: return "Details stay behind a disclosure"
-        case .hidden: return "Details are removed from the transcript"
+        case .expanded: return AppLanguage.localizedString("Details are open by default")
+        case .collapsed: return AppLanguage.localizedString("Details stay behind a disclosure")
+        case .hidden: return AppLanguage.localizedString("Details are removed from the transcript")
         }
     }
 
@@ -61,16 +61,16 @@ enum ToolCallKind: String, Equatable {
 
     var title: String {
         switch self {
-        case .commandExecution: return "Command Execution"
-        case .commandOutput: return "Command Output"
-        case .fileChange: return "File Change"
-        case .fileDiff: return "File Diff"
-        case .mcpToolCall: return "MCP Tool Call"
-        case .mcpToolProgress: return "MCP Tool Progress"
-        case .webSearch: return "Web Search"
-        case .collaboration: return "Collaboration"
-        case .imageView: return "Image View"
-        case .widget: return "Widget"
+        case .commandExecution: return AppLanguage.localizedString("Command Execution")
+        case .commandOutput: return AppLanguage.localizedString("Command Output")
+        case .fileChange: return AppLanguage.localizedString("File Change")
+        case .fileDiff: return AppLanguage.localizedString("File Diff")
+        case .mcpToolCall: return AppLanguage.localizedString("MCP Tool Call")
+        case .mcpToolProgress: return AppLanguage.localizedString("MCP Tool Progress")
+        case .webSearch: return AppLanguage.localizedString("Web Search")
+        case .collaboration: return AppLanguage.localizedString("Collaboration")
+        case .imageView: return AppLanguage.localizedString("Image View")
+        case .widget: return AppLanguage.localizedString("Widget")
         }
     }
 
@@ -130,10 +130,10 @@ enum ToolCallKind: String, Equatable {
 extension ToolCallStatus {
     var label: String {
         switch self {
-        case .inProgress: return "In Progress"
-        case .completed: return "Completed"
-        case .failed: return "Failed"
-        case .unknown: return "Unknown"
+        case .inProgress: return AppLanguage.localizedString("In Progress")
+        case .completed: return AppLanguage.localizedString("Completed")
+        case .failed: return AppLanguage.localizedString("Failed")
+        case .unknown: return AppLanguage.localizedString("Unknown")
         }
     }
 }
@@ -155,17 +155,17 @@ extension AppOperationStatus {
     var displayLabel: String {
         switch self {
         case .unknown:
-            return "Unknown"
+            return AppLanguage.localizedString("Unknown")
         case .pending:
-            return "Pending"
+            return AppLanguage.localizedString("Pending")
         case .inProgress:
-            return "In Progress"
+            return AppLanguage.localizedString("In Progress")
         case .completed:
-            return "Completed"
+            return AppLanguage.localizedString("Completed")
         case .failed:
-            return "Failed"
+            return AppLanguage.localizedString("Failed")
         case .declined:
-            return "Declined"
+            return AppLanguage.localizedString("Declined")
         }
     }
 }

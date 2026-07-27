@@ -147,7 +147,7 @@ struct VoiceCallView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "phone.down.fill")
                         .font(.system(size: 16, weight: .semibold))
-                    Text(session.phase == .error ? "Close" : "Hang Up")
+                    Text(AppLanguage.localizedString(session.phase == .error ? "Close" : "Hang Up"))
                         .font(LitterFont.styled(.callout, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -404,7 +404,7 @@ private struct VoiceTranscriptEntry: Identifiable, Equatable {
     ) {
         self.id = id
         self.kind = kind
-        self.title = title
+        self.title = AppLanguage.localizedString(title)
         self.body = body
         self.media = media
     }
@@ -586,9 +586,9 @@ private struct VoiceTranscriptEntry: Identifiable, Equatable {
         case .imageGeneration(let data):
             let statusWord: String = {
                 switch data.status {
-                case .completed: return "Completed"
-                case .failed: return "Failed"
-                default: return "Generating"
+                case .completed: return AppLanguage.localizedString("Completed")
+                case .failed: return AppLanguage.localizedString("Failed")
+                default: return AppLanguage.localizedString("Generating")
                 }
             }()
             let body = [statusWord, data.revisedPrompt ?? ""]
@@ -608,7 +608,10 @@ private struct VoiceTranscriptEntry: Identifiable, Equatable {
                 id: item.id,
                 kind: .tool,
                 title: "WIDGET",
-                body: "Interactive widget rendered: \(data.widgetState.title)"
+                body: AppLanguage.localizedString(
+                    "Interactive widget rendered: %@",
+                    data.widgetState.title
+                )
             )
 
         case .userInputResponse(let data):
@@ -661,9 +664,10 @@ private struct VoiceTranscriptEntry: Identifiable, Equatable {
         guard !text.isEmpty else { return nil }
         let speaker = session.transcriptSpeaker?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? session.transcriptSpeaker!
-            : (session.phase == .speaking ? "Codex" : "You")
-        let kind: VoiceTranscriptEntryKind = speaker == "Codex" ? .liveAssistant : .liveUser
-        let title = speaker == "Codex" ? "CODEX LIVE" : "YOU LIVE"
+            : AppLanguage.localizedString(session.phase == .speaking ? "Codex" : "You")
+        let codexLabel = AppLanguage.localizedString("Codex")
+        let kind: VoiceTranscriptEntryKind = speaker == codexLabel ? .liveAssistant : .liveUser
+        let title = speaker == codexLabel ? "CODEX LIVE" : "YOU LIVE"
         return VoiceTranscriptEntry(
             id: "live-\(speaker.lowercased())",
             kind: kind,
@@ -675,7 +679,11 @@ private struct VoiceTranscriptEntry: Identifiable, Equatable {
     private static func dividerText(_ kind: ConversationDividerKind) -> String {
         switch kind {
         case .contextCompaction(let isComplete):
-            return isComplete ? "Context compaction completed." : "Context compaction in progress."
+            return AppLanguage.localizedString(
+                isComplete
+                    ? "Context compaction completed."
+                    : "Context compaction in progress."
+            )
         case .modelRerouted(let fromModel, let toModel, let reason):
             return [fromModel, toModel, reason].compactMap { $0 }.joined(separator: " -> ")
         case .reviewEntered(let detail),
@@ -691,11 +699,11 @@ private struct VoiceTranscriptEntry: Identifiable, Equatable {
 private func planStepLabel(_ status: HydratedPlanStepStatus) -> String {
     switch status {
     case .pending:
-        return "pending"
+        return AppLanguage.localizedString("pending")
     case .inProgress:
-        return "in_progress"
+        return AppLanguage.localizedString("in progress")
     case .completed:
-        return "completed"
+        return AppLanguage.localizedString("completed")
     }
 }
 
@@ -735,7 +743,7 @@ private struct VoiceCreditsEntryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(entry.title)
+            Text(LocalizedStringKey(entry.title))
                 .font(LitterFont.monospaced(.caption, weight: .bold, scale: textScale))
                 .foregroundColor(titleColor)
 

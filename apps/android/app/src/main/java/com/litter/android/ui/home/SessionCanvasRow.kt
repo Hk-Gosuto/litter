@@ -37,9 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.ThreadKey
 import com.litter.android.state.displayTitle
 import com.litter.android.ui.LitterTheme
@@ -293,7 +295,7 @@ fun SessionCanvasRow(
             ) {
                 if (onReply != null) {
                     DropdownMenuItem(
-                        text = { Text("Reply") },
+                        text = { Text(stringResource(R.string.home_reply)) },
                         onClick = {
                             showMenu = false
                             onReply()
@@ -302,7 +304,7 @@ fun SessionCanvasRow(
                 }
                 if (onFork != null) {
                     DropdownMenuItem(
-                        text = { Text("Fork") },
+                        text = { Text(stringResource(R.string.sessions_fork)) },
                         enabled = !session.hasActiveTurn,
                         onClick = {
                             showMenu = false
@@ -312,7 +314,7 @@ fun SessionCanvasRow(
                 }
                 if (onCancelTurn != null && session.hasActiveTurn) {
                     DropdownMenuItem(
-                        text = { Text("Cancel Turn", color = LitterTheme.danger) },
+                        text = { Text(stringResource(R.string.home_cancel_turn), color = LitterTheme.danger) },
                         onClick = {
                             showMenu = false
                             onCancelTurn()
@@ -321,7 +323,7 @@ fun SessionCanvasRow(
                 }
                 if (isPinned && onUnpin != null) {
                     DropdownMenuItem(
-                        text = { Text("Unpin") },
+                        text = { Text(stringResource(R.string.home_unpin)) },
                         onClick = {
                             showMenu = false
                             onUnpin()
@@ -329,7 +331,7 @@ fun SessionCanvasRow(
                     )
                 } else if (!isPinned && onPin != null) {
                     DropdownMenuItem(
-                        text = { Text("Pin") },
+                        text = { Text(stringResource(R.string.home_pin)) },
                         onClick = {
                             showMenu = false
                             onPin()
@@ -337,7 +339,7 @@ fun SessionCanvasRow(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Delete") },
+                    text = { Text(stringResource(R.string.common_delete)) },
                     onClick = {
                         showMenu = false
                         onDelete()
@@ -367,7 +369,7 @@ private fun MetaLine(
         ) {
             if (showActivity) {
                 Text(
-                    text = "running tool…",
+                    text = stringResource(R.string.home_running_tool),
                     color = LitterTheme.accent,
                     fontFamily = LitterTheme.monoFont,
                     fontSize = META_FONT_SP.scaled,
@@ -410,7 +412,7 @@ private fun MetaLine(
                 )
                 if (isActive) {
                     Text(
-                        text = "thinking",
+                        text = stringResource(R.string.home_thinking),
                         color = LitterTheme.accent,
                         fontFamily = LitterTheme.monoFont,
                         fontSize = META_FONT_SP.scaled,

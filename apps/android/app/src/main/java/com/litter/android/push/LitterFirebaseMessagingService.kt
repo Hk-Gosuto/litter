@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -11,12 +12,14 @@ import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.litter.android.MainActivity
+import com.sigkitten.litter.android.R
 import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.AppModel
 import com.litter.android.state.contextPercent
 import com.litter.android.state.hasActiveTurn
 import com.litter.android.state.latestAssistantSnippet
 import com.litter.android.state.resolvedModel
+import com.litter.android.ui.AppLanguagePreferences
 import com.litter.android.state.resolvedPreview
 import com.litter.android.util.LLog
 import kotlinx.coroutines.runBlocking
@@ -31,6 +34,10 @@ class LitterFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguagePreferences.wrap(newBase))
+    }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val data = remoteMessage.data
@@ -110,13 +117,12 @@ class LitterFirebaseMessagingService : FirebaseMessagingService() {
         val minutes = elapsed / 60
         val seconds = elapsed % 60
         val text = buildString {
-            append("Phase: $phase")
-            append(" | ${minutes}m ${seconds}s")
-            if (toolCount > 0) append(" | $toolCount tools")
+            append(getString(R.string.notification_phase_detail, phase, minutes, seconds))
+            if (toolCount > 0) append(getString(R.string.notification_tool_count, toolCount))
         }
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_sync)
-            .setContentTitle("Codex turn in progress")
+            .setContentTitle(getString(R.string.notification_turn_in_progress))
             .setContentText(text)
             .setContentIntent(notificationContentIntent(data))
             .setOngoing(true)
@@ -129,10 +135,10 @@ class LitterFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun showSnapshotTurnNotification(thread: AppThreadSnapshot) {
         ensureChannel()
-        val model = thread.resolvedModel.ifBlank { "unknown" }
+        val model = thread.resolvedModel.ifBlank { getString(R.string.notification_unknown_model) }
         val snippet = thread.latestAssistantSnippet
             ?: thread.resolvedPreview.takeIf { it.isNotBlank() }
-            ?: "Working..."
+            ?: getString(R.string.notification_working)
         val details = buildString {
             append(model)
             val contextPct = thread.contextPercent
@@ -144,7 +150,7 @@ class LitterFirebaseMessagingService : FirebaseMessagingService() {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_sync)
-            .setContentTitle("Codex turn in progress")
+            .setContentTitle(getString(R.string.notification_turn_in_progress))
             .setContentText(snippet)
             .setSubText(details)
             .setContentIntent(notificationContentIntent(data))
@@ -160,8 +166,8 @@ class LitterFirebaseMessagingService : FirebaseMessagingService() {
         ensureChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_sync)
-            .setContentTitle("Codex turn completed")
-            .setContentText(data["summary"] ?: "Turn finished")
+            .setContentTitle(getString(R.string.notification_turn_complete))
+            .setContentText(data["summary"] ?: getString(R.string.notification_turn_finished))
             .setContentIntent(notificationContentIntent(data))
             .setOngoing(false)
             .setAutoCancel(true)
@@ -175,7 +181,7 @@ class LitterFirebaseMessagingService : FirebaseMessagingService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Turn Status",
+                getString(R.string.notification_turn_status_channel),
                 NotificationManager.IMPORTANCE_LOW,
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)

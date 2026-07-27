@@ -298,15 +298,22 @@ final class MacPairingHost: NSObject {
             // earlier HostPeerConnected event. We didn't thread it through;
             // a simple placeholder is fine since the Mac user knows which
             // of their iPhones is close.
-            return "iPhone"
+            return AppLanguage.localizedString("iPhone")
         }()
         let distanceSuffix = distanceM.map { String(format: " (~%.1fm)", $0) } ?? ""
         let alert = UIAlertController(
-            title: "Pair with \(deviceLabel)?",
-            message: "\(deviceLabel)\(distanceSuffix) wants to pair with this Mac as its Litter home base.",
+            title: AppLanguage.localizedString("Pair with %@?", deviceLabel),
+            message: AppLanguage.localizedString(
+                "%@%@ wants to pair with this Mac as its Litter home base.",
+                deviceLabel,
+                distanceSuffix
+            ),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "Accept", style: .default) { [weak self] _ in
+        alert.addAction(UIAlertAction(
+            title: AppLanguage.localizedString("Accept"),
+            style: .default
+        ) { [weak self] _ in
             guard let self else { return }
             let lanIp = Self.resolveLANIPv4() ?? "127.0.0.1"
             Task {
@@ -324,7 +331,10 @@ final class MacPairingHost: NSObject {
                 }
             }
         })
-        alert.addAction(UIAlertAction(title: "Decline", style: .cancel) { _ in
+        alert.addAction(UIAlertAction(
+            title: AppLanguage.localizedString("Decline"),
+            style: .cancel
+        ) { _ in
             Task {
                 do {
                     try await host.acceptPairRequest(

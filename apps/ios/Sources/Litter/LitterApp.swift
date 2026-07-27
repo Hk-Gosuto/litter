@@ -85,12 +85,12 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                 actions: [
                     UNNotificationAction(
                         identifier: WatchApprovalNotification.allowActionIdentifier,
-                        title: "Allow",
+                        title: AppLanguage.localizedString("Allow"),
                         options: []
                     ),
                     UNNotificationAction(
                         identifier: WatchApprovalNotification.denyActionIdentifier,
-                        title: "Deny",
+                        title: AppLanguage.localizedString("Deny"),
                         options: [.destructive]
                     ),
                 ],
@@ -1080,7 +1080,7 @@ private struct HomeNavigationView: View {
         )) {
             Button("OK", role: .cancel) { actionErrorMessage = nil }
         } message: {
-            Text(actionErrorMessage ?? "Unknown error")
+            Text(actionErrorMessage ?? AppLanguage.localizedString("Unknown error"))
         }
     }
 
@@ -1952,7 +1952,7 @@ private struct HomeNavigationView: View {
         if let thread = homeDashboardModel.recentSessions.first(where: { $0.serverId == serverId }) {
             return thread.serverDisplayName
         }
-        return "Sessions"
+        return AppLanguage.localizedString("Sessions")
     }
 }
 
@@ -1996,7 +1996,7 @@ private struct ConversationDestinationScreen: View {
     }
 
     private var navigationTitle: String {
-        conversationThread?.displayTitle ?? "Conversation"
+        conversationThread?.displayTitle ?? AppLanguage.localizedString("Conversation")
     }
 
     var body: some View {
@@ -2146,7 +2146,11 @@ private struct ReplayDestinationScreen: View {
                     Spacer()
                     ProgressView()
                         .tint(LitterTheme.accent)
-                    Text(recorder.isReplaying ? "Replaying..." : "Starting replay...")
+                    Text(
+                        AppLanguage.localizedString(
+                            recorder.isReplaying ? "Replaying..." : "Starting replay..."
+                        )
+                    )
                         .litterFont(.caption)
                         .foregroundColor(LitterTheme.textMuted)
                     Spacer()
@@ -2192,13 +2196,13 @@ private struct ApprovalPromptView: View {
     private var title: String {
         switch approval.kind {
         case .command:
-            return "Command Approval Required"
+            return AppLanguage.localizedString("Command Approval Required")
         case .fileChange:
-            return "File Change Approval Required"
+            return AppLanguage.localizedString("File Change Approval Required")
         case .permissions:
-            return "Permissions Approval Required"
+            return AppLanguage.localizedString("Permissions Approval Required")
         case .mcpElicitation:
-            return "MCP Input Required"
+            return AppLanguage.localizedString("MCP Input Required")
         }
     }
 
@@ -2262,7 +2266,9 @@ private struct ApprovalPromptView: View {
                         }
 
                         if let grantRoot = approval.grantRoot, !grantRoot.isEmpty {
-                            Text("Grant Root: \(grantRoot)")
+                            Text(
+                                AppLanguage.localizedString("Grant Root: %@", grantRoot)
+                            )
                                 .litterFont(.caption)
                                 .foregroundColor(LitterTheme.textMuted)
                         }

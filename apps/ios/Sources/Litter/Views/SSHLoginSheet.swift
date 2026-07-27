@@ -218,7 +218,11 @@ struct SSHLoginSheet: View {
                     .foregroundColor(LitterTheme.textSecondary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isPasswordVisible ? "Hide password" : "Show password")
+            .accessibilityLabel(
+                AppLanguage.localizedString(
+                    isPasswordVisible ? "Hide password" : "Show password"
+                )
+            )
         }
     }
 

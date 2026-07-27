@@ -160,23 +160,25 @@ final class PetOverlayController {
     }
 
     func avatarMessage(snapshot: AppSnapshotRecord?) -> String? {
-        if isLoading { return "Fetching pet..." }
+        if isLoading { return AppLanguage.localizedString("Fetching pet...") }
         if isDragging { return nil }
         guard let snapshot else { return nil }
-        if !snapshot.pendingApprovals.isEmpty { return "Review needed" }
-        if !snapshot.pendingUserInputs.isEmpty { return "Input needed" }
+        if !snapshot.pendingApprovals.isEmpty { return AppLanguage.localizedString("Review needed") }
+        if !snapshot.pendingUserInputs.isEmpty { return AppLanguage.localizedString("Input needed") }
         let activeThread = snapshot.activeThread.flatMap { key in
             snapshot.threads.first(where: { $0.key == key })
         }
-        if activeThread?.info.status == .systemError { return "Run failed" }
-        if activeThread?.hasActiveTurn == true { return "Working..." }
+        if activeThread?.info.status == .systemError { return AppLanguage.localizedString("Run failed") }
+        if activeThread?.hasActiveTurn == true { return AppLanguage.localizedString("Working...") }
         if snapshot.threads.contains(where: \.hasActiveTurn) {
-            return "Working..."
+            return AppLanguage.localizedString("Working...")
         }
         if snapshot.threads.contains(where: { $0.info.status == .systemError }) {
-            return "Thread failed"
+            return AppLanguage.localizedString("Thread failed")
         }
-        return snapshot.servers.contains(where: \.isConnected) ? nil : "Waiting for server"
+        return snapshot.servers.contains(where: \.isConnected)
+            ? nil
+            : AppLanguage.localizedString("Waiting for server")
     }
 
     private var cacheDirectory: URL {

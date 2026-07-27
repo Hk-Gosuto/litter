@@ -62,10 +62,12 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.contextPercent
 import com.litter.android.state.hasActiveTurn
 import com.litter.android.state.isActiveStatus
@@ -471,7 +473,7 @@ fun ConversationScreen(
                                         )
                                     } else {
                                         Text(
-                                            "Loading conversation…",
+                                            stringResource(R.string.conversation_loading),
                                             color = LitterTheme.textMuted,
                                             fontSize = LitterTextStyle.caption.scaled,
                                         )
@@ -505,7 +507,7 @@ fun ConversationScreen(
                                         )
                                     } else {
                                         Text(
-                                            "Load earlier messages",
+                                            stringResource(R.string.conversation_load_earlier),
                                             color = LitterTheme.accent,
                                             fontSize = LitterTextStyle.caption.scaled,
                                             fontWeight = FontWeight.SemiBold,
@@ -660,7 +662,7 @@ fun ConversationScreen(
 
                                     if (turn.isCollapsedByDefault) {
                                         Text(
-                                            text = "Show less",
+                                            text = stringResource(R.string.conversation_show_less),
                                             color = LitterTheme.textMuted,
                                             fontSize = LitterTextStyle.caption2.scaled,
                                             fontWeight = FontWeight.Medium,
@@ -698,7 +700,11 @@ fun ConversationScreen(
                         containerColor = LitterTheme.surface,
                         contentColor = LitterTheme.textPrimary,
                     ) {
-                        Icon(Icons.Default.KeyboardArrowDown, "Scroll to bottom", modifier = Modifier.size(20.dp))
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            stringResource(R.string.conversation_scroll_bottom),
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
             }
@@ -828,7 +834,8 @@ fun ConversationScreen(
                                         )
                                         appModel.refreshThreadSnapshot(threadKey)
                                     } catch (e: Exception) {
-                                        slashErrorMessage = e.message ?: "Failed to rename conversation"
+                                        slashErrorMessage = e.message
+                                            ?: context.getString(R.string.conversation_rename_failed)
                                     }
                                 }
                             } else {
@@ -913,7 +920,8 @@ fun ConversationScreen(
                             try {
                                 appModel.store.setThreadCollaborationMode(threadKey, mode)
                             } catch (e: Exception) {
-                                slashErrorMessage = e.message ?: "Failed to switch collaboration mode"
+                                slashErrorMessage = e.message
+                                    ?: context.getString(R.string.conversation_switch_collaboration_failed)
                             }
                         }
                     },
@@ -966,12 +974,12 @@ fun ConversationScreen(
         if (showRenameDialog) {
             AlertDialog(
                 onDismissRequest = { showRenameDialog = false },
-                title = { Text("Rename Thread") },
+                title = { Text(stringResource(R.string.conversation_rename_thread)) },
                 text = {
                     OutlinedTextField(
                         value = renameDraft,
                         onValueChange = { renameDraft = it },
-                        label = { Text("New thread title") },
+                        label = { Text(stringResource(R.string.conversation_new_thread_title)) },
                         singleLine = true,
                     )
                 },
@@ -995,17 +1003,18 @@ fun ConversationScreen(
                                     )
                                     appModel.refreshThreadSnapshot(threadKey)
                                 } catch (e: Exception) {
-                                    slashErrorMessage = e.message ?: "Failed to rename conversation"
+                                    slashErrorMessage = e.message
+                                        ?: context.getString(R.string.conversation_rename_failed)
                                 }
                             }
                         },
                     ) {
-                        Text("Rename")
+                        Text(stringResource(R.string.common_rename))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showRenameDialog = false }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.common_cancel))
                     }
                 },
             )
@@ -1014,8 +1023,8 @@ fun ConversationScreen(
         thread?.pendingPlanImplementationPrompt?.let {
             AlertDialog(
                 onDismissRequest = { appModel.store.dismissPlanImplementationPrompt(threadKey) },
-                title = { Text("Implement this plan?") },
-                text = { Text("Switch back to Default mode and send \"Implement the plan.\"") },
+                title = { Text(stringResource(R.string.conversation_implement_plan_title)) },
+                text = { Text(stringResource(R.string.conversation_implement_plan_message)) },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -1023,19 +1032,20 @@ fun ConversationScreen(
                                 try {
                                     appModel.store.implementPlan(threadKey)
                                 } catch (e: Exception) {
-                                    slashErrorMessage = e.message ?: "Failed to implement plan"
+                                    slashErrorMessage = e.message
+                                        ?: context.getString(R.string.conversation_implement_failed)
                                 }
                             }
                         },
                     ) {
-                        Text("Yes, implement")
+                        Text(stringResource(R.string.conversation_implement_plan_confirm))
                     }
                 },
                 dismissButton = {
                     TextButton(
                         onClick = { appModel.store.dismissPlanImplementationPrompt(threadKey) },
                     ) {
-                        Text("No, stay in Plan")
+                        Text(stringResource(R.string.conversation_implement_plan_cancel))
                     }
                 },
             )
@@ -1044,11 +1054,11 @@ fun ConversationScreen(
         slashErrorMessage?.let { message ->
             AlertDialog(
                 onDismissRequest = { slashErrorMessage = null },
-                title = { Text("Slash Command Error") },
+                title = { Text(stringResource(R.string.conversation_slash_command_error)) },
                 text = { Text(message) },
                 confirmButton = {
                     TextButton(onClick = { slashErrorMessage = null }) {
-                        Text("OK")
+                        Text(stringResource(R.string.common_ok))
                     }
                 },
             )
@@ -1057,11 +1067,11 @@ fun ConversationScreen(
         reloadErrorMessage?.let { message ->
             AlertDialog(
                 onDismissRequest = { reloadErrorMessage = null },
-                title = { Text("Reload Failed") },
+                title = { Text(stringResource(R.string.conversation_reload_failed)) },
                 text = { Text(message) },
                 confirmButton = {
                     TextButton(onClick = { reloadErrorMessage = null }) {
-                        Text("OK")
+                        Text(stringResource(R.string.common_ok))
                     }
                 },
             )
@@ -1112,13 +1122,13 @@ private fun CollaborationModeSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Collaboration Mode",
+                text = stringResource(R.string.conversation_collaboration_mode),
                 color = LitterTheme.textPrimary,
                 fontSize = 18f.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             TextButton(onClick = onDismiss) {
-                Text("Done")
+                Text(stringResource(R.string.settings_done))
             }
         }
 
@@ -1153,7 +1163,7 @@ private fun CollaborationModeSheet(
                 }
                 if (preset.kind == selectedMode) {
                     Text(
-                        text = "Selected",
+                        text = stringResource(R.string.common_selected),
                         color = LitterTheme.accent,
                         fontSize = LitterTextStyle.caption2.scaled,
                         fontWeight = FontWeight.SemiBold,
@@ -1164,18 +1174,19 @@ private fun CollaborationModeSheet(
     }
 }
 
+@Composable
 private fun collaborationModeEffortLabel(
     effort: uniffi.codex_mobile_client.ReasoningEffort,
 ): String =
     when (effort) {
-        uniffi.codex_mobile_client.ReasoningEffort.NONE -> "None"
-        uniffi.codex_mobile_client.ReasoningEffort.MINIMAL -> "Minimal"
-        uniffi.codex_mobile_client.ReasoningEffort.LOW -> "Low"
-        uniffi.codex_mobile_client.ReasoningEffort.MEDIUM -> "Medium"
-        uniffi.codex_mobile_client.ReasoningEffort.HIGH -> "High"
-        uniffi.codex_mobile_client.ReasoningEffort.X_HIGH -> "XHigh"
-        uniffi.codex_mobile_client.ReasoningEffort.MAX -> "Max"
-        uniffi.codex_mobile_client.ReasoningEffort.ULTRA -> "Ultra"
+        uniffi.codex_mobile_client.ReasoningEffort.NONE -> stringResource(R.string.effort_none)
+        uniffi.codex_mobile_client.ReasoningEffort.MINIMAL -> stringResource(R.string.effort_minimal)
+        uniffi.codex_mobile_client.ReasoningEffort.LOW -> stringResource(R.string.effort_low)
+        uniffi.codex_mobile_client.ReasoningEffort.MEDIUM -> stringResource(R.string.effort_medium)
+        uniffi.codex_mobile_client.ReasoningEffort.HIGH -> stringResource(R.string.effort_high)
+        uniffi.codex_mobile_client.ReasoningEffort.X_HIGH -> stringResource(R.string.effort_xhigh)
+        uniffi.codex_mobile_client.ReasoningEffort.MAX -> stringResource(R.string.effort_max)
+        uniffi.codex_mobile_client.ReasoningEffort.ULTRA -> stringResource(R.string.effort_ultra)
     }
 
 private data class PinnedContextData(
@@ -1236,7 +1247,7 @@ private fun conversationBottomAnchorIndex(turnCount: Int): Int = turnCount + 1
 @Composable
 private fun PlanContextBadge(progress: String) {
     Text(
-        text = "Plan $progress",
+        text = stringResource(R.string.conversation_plan_value, progress),
         color = LitterTheme.accent,
         fontSize = LitterTextStyle.caption2.scaled,
         fontWeight = FontWeight.Medium,
@@ -1282,7 +1293,7 @@ private fun DiffSummaryBadge(
             )
         } else {
             Text(
-                text = "Diff",
+                text = stringResource(R.string.conversation_diff),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.caption2.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -1482,7 +1493,7 @@ private fun SessionDiffSheet(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("Done", color = LitterTheme.accent)
+                    Text(stringResource(R.string.settings_done), color = LitterTheme.accent)
                 }
             }
         }
@@ -1597,7 +1608,7 @@ private fun StreamingCursor() {
         end = Offset((shimmerOffset + 0.6f) * 200f, 0f),
     )
     Text(
-        text = "Thinking...",
+        text = stringResource(R.string.conversation_thinking),
         fontSize = LitterTextStyle.body.scaled,
         fontWeight = FontWeight.Medium,
         style = TextStyle(brush = shimmerBrush),
@@ -1617,7 +1628,7 @@ private fun MinigameLaunchButton(onClick: () -> Unit) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = Icons.Filled.SportsEsports,
-                contentDescription = "Play a minigame while waiting",
+                contentDescription = stringResource(R.string.conversation_play_minigame),
                 tint = LitterTheme.accent,
                 modifier = Modifier.size(18.dp),
             )

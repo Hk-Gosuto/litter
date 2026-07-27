@@ -11,19 +11,23 @@ enum LitterFeature: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .realtimeVoice: return "Realtime"
-        case .appleWatch: return "Apple Watch"
-        case .thinkingMinigame: return "Thinking minigame"
-        case .terminal: return "Terminal"
+        case .realtimeVoice: return AppLanguage.localizedString("Realtime")
+        case .appleWatch: return AppLanguage.localizedString("Apple Watch")
+        case .thinkingMinigame: return AppLanguage.localizedString("Thinking minigame")
+        case .terminal: return AppLanguage.localizedString("Terminal")
         }
     }
 
     var description: String {
         switch self {
-        case .realtimeVoice: return "Show the realtime voice launcher on the home screen."
-        case .appleWatch: return "Push server, task, and approval state to a paired Apple Watch. Requires the Litter watch app to be installed."
-        case .thinkingMinigame: return "Tap the Thinking shimmer while the assistant generates to play a tiny generated minigame."
-        case .terminal: return "Show the local and remote terminal launcher on the home screen."
+        case .realtimeVoice:
+            return AppLanguage.localizedString("Show the realtime voice launcher on the home screen.")
+        case .appleWatch:
+            return AppLanguage.localizedString("Push server, task, and approval state to a paired Apple Watch. Requires the Litter watch app to be installed.")
+        case .thinkingMinigame:
+            return AppLanguage.localizedString("Tap the Thinking shimmer while the assistant generates to play a tiny generated minigame.")
+        case .terminal:
+            return AppLanguage.localizedString("Show the local and remote terminal launcher on the home screen.")
         }
     }
 

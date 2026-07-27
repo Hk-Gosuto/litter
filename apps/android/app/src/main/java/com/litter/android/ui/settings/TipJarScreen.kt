@@ -44,6 +44,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -60,11 +61,11 @@ import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import com.litter.android.state.TipJarSupporterState
 import com.litter.android.ui.LitterTheme
+import com.sigkitten.litter.android.R
 
 private data class TipProduct(
     val productIds: List<String>,
     val iconRes: Int,
-    val displayName: String,
     val fallbackPrice: String,
     val details: ProductDetails? = null,
     val isPurchased: Boolean = false,
@@ -76,25 +77,21 @@ private val TIP_PRODUCTS = listOf(
     TipProduct(
         productIds = listOf("tip_10", "com.sigkitten.litter.tip.10", "com.sigkitten.litter.android.tip.10"),
         iconRes = com.sigkitten.litter.android.R.drawable.tip_cat_10,
-        displayName = "$9.99 Tip",
         fallbackPrice = "$9.99",
     ),
     TipProduct(
         productIds = listOf("tip_25", "com.sigkitten.litter.tip.25", "com.sigkitten.litter.android.tip.25"),
         iconRes = com.sigkitten.litter.android.R.drawable.tip_cat_25,
-        displayName = "$24.99 Tip",
         fallbackPrice = "$24.99",
     ),
     TipProduct(
         productIds = listOf("tip_50", "com.sigkitten.litter.tip.50", "com.sigkitten.litter.android.tip.50"),
         iconRes = com.sigkitten.litter.android.R.drawable.tip_cat_50,
-        displayName = "$49.99 Tip",
         fallbackPrice = "$49.99",
     ),
     TipProduct(
         productIds = listOf("tip_100", "com.sigkitten.litter.tip.100", "com.sigkitten.litter.android.tip.100"),
         iconRes = com.sigkitten.litter.android.R.drawable.tip_cat_100,
-        displayName = "$99.99 Tip",
         fallbackPrice = "$99.99",
     ),
 )
@@ -129,7 +126,9 @@ fun TipJarScreen(onBack: () -> Unit) {
                     state = TipJarState.Ready(cachedProducts)
                 }
                 else -> {
-                    state = TipJarState.Error(billingResult.debugMessage ?: "Purchase failed")
+                    state = TipJarState.Error(
+                        billingResult.debugMessage ?: context.getString(R.string.tip_purchase_failed),
+                    )
                 }
             }
         }
@@ -156,7 +155,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                     )
                     state = TipJarState.Ready(
                         products = TIP_PRODUCTS,
-                        message = "Google Play Billing is unavailable for this install.",
+                        message = context.getString(R.string.tip_billing_unavailable),
                     )
                     return
                 }
@@ -184,7 +183,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                         )
                         state = TipJarState.Ready(
                             products = TIP_PRODUCTS,
-                            message = "Google Play did not return tip products for this install.",
+                            message = context.getString(R.string.tip_products_unavailable),
                         )
                         return@queryProductDetailsAsync
                     }
@@ -225,7 +224,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                         val hadPurchases = cachedProducts.any { it.isPurchased }
                         val hasPurchasesNow = products.any { it.isPurchased }
                         val message = if (products.none { it.details != null }) {
-                            "Tips are unavailable in this build. Google Play did not match any configured tip products."
+                            context.getString(R.string.tip_unavailable_build)
                         } else {
                             null
                         }
@@ -272,7 +271,7 @@ fun TipJarScreen(onBack: () -> Unit) {
             }
             Spacer(Modifier.weight(1f))
             Text(
-                "Tip the Kitty",
+                stringResource(R.string.tip_title),
                 color = LitterTheme.textPrimary,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -296,13 +295,13 @@ fun TipJarScreen(onBack: () -> Unit) {
                     if (supporterTier != null) {
                         Image(
                             painter = painterResource(supporterTier.iconRes),
-                            contentDescription = "Supporter",
+                            contentDescription = stringResource(R.string.a11y_supporter),
                             modifier = Modifier.size(80.dp),
                             contentScale = ContentScale.Fit,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "You're a supporter! Thank you.",
+                            stringResource(R.string.tip_supporter_thanks),
                             color = LitterTheme.accent,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -313,7 +312,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                     }
                     Text(
-                        "If you enjoy Litter, consider leaving a tip. Tips help support ongoing development and are entirely optional.",
+                        stringResource(R.string.tip_description),
                         color = LitterTheme.textSecondary,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
@@ -361,20 +360,20 @@ fun TipJarScreen(onBack: () -> Unit) {
                             ) {
                                 Image(
                                     painter = painterResource(tip.iconRes),
-                                    contentDescription = tip.displayName,
+                                    contentDescription = tipDisplayName(tip),
                                     modifier = Modifier.size(40.dp),
                                     contentScale = ContentScale.Fit,
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
-                                    tip.displayName,
+                                    tipDisplayName(tip),
                                     color = LitterTheme.textPrimary,
                                     fontSize = 14.sp,
                                     modifier = Modifier.weight(1f),
                                 )
                                 Icon(
                                     Icons.Default.CheckCircle,
-                                    contentDescription = "Purchased",
+                                    contentDescription = stringResource(R.string.tip_purchased),
                                     tint = LitterTheme.accent,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -410,13 +409,13 @@ fun TipJarScreen(onBack: () -> Unit) {
                             ) {
                                 Image(
                                     painter = painterResource(tip.iconRes),
-                                    contentDescription = tip.displayName,
+                                    contentDescription = tipDisplayName(tip),
                                     modifier = Modifier.size(40.dp),
                                     contentScale = ContentScale.Fit,
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
-                                    tip.details?.title?.replace(Regex("\\s*\\(.*\\)$"), "") ?: tip.displayName,
+                                    tipDisplayName(tip),
                                     color = LitterTheme.textPrimary,
                                     fontSize = 14.sp,
                                     modifier = Modifier.weight(1f),
@@ -434,7 +433,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                     if (purchasedTips.isNotEmpty()) {
                         item {
                             Text(
-                                "Home Header",
+                                stringResource(R.string.tip_home_header),
                                 color = LitterTheme.textSecondary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -459,26 +458,32 @@ fun TipJarScreen(onBack: () -> Unit) {
                             ) {
                                 Image(
                                     painter = painterResource(tip.iconRes),
-                                    contentDescription = tip.displayName,
+                                    contentDescription = tipDisplayName(tip),
                                     modifier = Modifier.size(40.dp),
                                     contentScale = ContentScale.Fit,
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        tip.displayName,
+                                        tipDisplayName(tip),
                                         color = LitterTheme.textPrimary,
                                         fontSize = 14.sp,
                                     )
                                     Text(
-                                        if (isSelected) "Shown on home" else "Hidden from home",
+                                        stringResource(
+                                            if (isSelected) R.string.tip_shown_home else R.string.tip_hidden_home,
+                                        ),
                                         color = LitterTheme.textSecondary,
                                         fontSize = 12.sp,
                                     )
                                 }
                                 Icon(
                                     Icons.Default.CheckCircle,
-                                    contentDescription = if (isSelected) "Shown on home" else "Hidden from home",
+                                    contentDescription = if (isSelected) {
+                                        stringResource(R.string.tip_shown_home)
+                                    } else {
+                                        stringResource(R.string.tip_hidden_home)
+                                    },
                                     tint = if (isSelected) LitterTheme.accent else LitterTheme.textMuted,
                                     modifier = Modifier
                                         .size(20.dp)
@@ -488,7 +493,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                         }
                         item {
                             Text(
-                                "Pick which purchased kitties appear around the home logo.",
+                                stringResource(R.string.tip_home_header_helper),
                                 color = LitterTheme.textMuted,
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -503,7 +508,7 @@ fun TipJarScreen(onBack: () -> Unit) {
                             onClick = { state = TipJarState.Loading },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Restore Purchases", color = LitterTheme.accent, fontSize = 14.sp)
+                            Text(stringResource(R.string.tip_restore_purchases), color = LitterTheme.accent, fontSize = 14.sp)
                         }
                     }
 
@@ -519,14 +524,14 @@ fun TipJarScreen(onBack: () -> Unit) {
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
                                     Text(
-                                        "Thank you!",
+                                        stringResource(R.string.tip_thank_you),
                                         color = LitterTheme.accent,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Text(
-                                        "Your support means a lot.",
+                                        stringResource(R.string.tip_thanks),
                                         color = LitterTheme.textSecondary,
                                         fontSize = 13.sp,
                                     )
@@ -565,3 +570,8 @@ fun TipJarScreen(onBack: () -> Unit) {
         }
     }
 }
+
+@Composable
+private fun tipDisplayName(tip: TipProduct): String =
+    tip.details?.title?.replace(Regex("\\s*\\(.*\\)$"), "")
+        ?: stringResource(R.string.tip_amount, tip.fallbackPrice)

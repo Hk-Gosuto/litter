@@ -346,101 +346,155 @@ struct TranscriptTurn: Identifiable, Equatable {
     }
 
     private static func previewText(for item: ConversationItem?) -> String {
-        guard let item else { return "Conversation turn" }
+        guard let item else { return AppLanguage.localizedString("Conversation turn") }
 
         switch item.content {
         case .user(let data):
             let trimmed = data.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return collapsedExcerpt(from: trimmed) }
             if !data.images.isEmpty {
-                return data.images.count == 1 ? "Shared 1 image" : "Shared \(data.images.count) images"
+                return AppLanguage.localizedString(
+                    data.images.count == 1 ? "Shared %lld image" : "Shared %lld images",
+                    Int64(data.images.count)
+                )
             }
-            return "Conversation turn"
+            return AppLanguage.localizedString("Conversation turn")
         case .assistant(let data):
             let trimmed = data.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? "Assistant response" : collapsedExcerpt(from: trimmed)
+            return trimmed.isEmpty
+                ? AppLanguage.localizedString("Assistant response")
+                : collapsedExcerpt(from: trimmed)
         case .codeReview(let data):
             if let first = data.findings.first {
-                return "Review: \(collapsedExcerpt(from: first.title))"
+                return AppLanguage.localizedString(
+                    "Review: %@",
+                    collapsedExcerpt(from: first.title)
+                )
             }
-            return "Code review"
+            return AppLanguage.localizedString("Code review")
         case .reasoning(let data):
             let body = (data.summary + data.content)
                 .joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return body.isEmpty ? "Reasoning" : "Reasoning: \(collapsedExcerpt(from: body))"
+            return body.isEmpty
+                ? AppLanguage.localizedString("Reasoning")
+                : AppLanguage.localizedString(
+                    "Reasoning: %@",
+                    collapsedExcerpt(from: body)
+                )
         case .todoList(let data):
             if data.steps.isEmpty {
-                return "To do list"
+                return AppLanguage.localizedString("To do list")
             }
             let completed = data.completedCount
             let total = data.steps.count
             if completed == 0 {
-                return "To do list: \(total) tasks"
+                return AppLanguage.localizedString("To do list: %lld tasks", Int64(total))
             }
-            return "To do list: \(completed) of \(total) done"
+            return AppLanguage.localizedString(
+                "To do list: %lld of %lld done",
+                Int64(completed),
+                Int64(total)
+            )
         case .proposedPlan(let data):
             let trimmed = data.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? "Plan" : "Plan: \(collapsedExcerpt(from: trimmed))"
+            return trimmed.isEmpty
+                ? AppLanguage.localizedString("Plan")
+                : AppLanguage.localizedString(
+                    "Plan: %@",
+                    collapsedExcerpt(from: trimmed)
+                )
         case .commandExecution(let data):
             if let action = data.actions.first {
                 switch action.kind {
                 case .read:
-                    return action.path.map { "Read \(workspaceTitle(for: $0))" } ?? "Read file"
+                    return action.path.map {
+                        AppLanguage.localizedString("Read %@", workspaceTitle(for: $0))
+                    } ?? AppLanguage.localizedString("Read file")
                 case .search:
                     if let query = action.query, let path = action.path {
-                        return "Searched for \(query) in \(workspaceTitle(for: path))"
+                        return AppLanguage.localizedString(
+                            "Searched for %@ in %@",
+                            query,
+                            workspaceTitle(for: path)
+                        )
                     }
                     if let query = action.query {
-                        return "Searched for \(query)"
+                        return AppLanguage.localizedString("Searched for %@", query)
                     }
-                    return "Searched files"
+                    return AppLanguage.localizedString("Searched files")
                 case .listFiles:
-                    return action.path.map { "Listed files in \(workspaceTitle(for: $0))" } ?? "Listed files"
+                    return action.path.map {
+                        AppLanguage.localizedString("Listed files in %@", workspaceTitle(for: $0))
+                    } ?? AppLanguage.localizedString("Listed files")
                 case .unknown:
                     break
                 }
             }
-            return data.command.isEmpty ? "Ran command" : collapsedExcerpt(from: "Ran \(data.command)")
+            return data.command.isEmpty
+                ? AppLanguage.localizedString("Ran command")
+                : AppLanguage.localizedString(
+                    "Ran %@",
+                    collapsedExcerpt(from: data.command)
+                )
         case .fileChange(let data):
             if let first = data.changes.first {
-                return "Changed \(workspaceTitle(for: first.path))"
+                return AppLanguage.localizedString(
+                    "Changed %@",
+                    workspaceTitle(for: first.path)
+                )
             }
-            return "File changes"
+            return AppLanguage.localizedString("File changes")
         case .turnDiff:
-            return "Turn diff"
+            return AppLanguage.localizedString("Turn diff")
         case .mcpToolCall(let data):
-            return data.server.isEmpty ? "Called \(data.tool)" : "Called \(data.tool) from \(data.server)"
+            return data.server.isEmpty
+                ? AppLanguage.localizedString("Called %@", data.tool)
+                : AppLanguage.localizedString("Called %@ from %@", data.tool, data.server)
         case .dynamicToolCall(let data):
-            return "Called \(data.tool)"
+            return AppLanguage.localizedString("Called %@", data.tool)
         case .multiAgentAction(let data):
             let count = max(data.targets.count, data.agentStates.count)
-            return count == 1 ? "\(data.tool) 1 agent" : "\(data.tool) \(count) agents"
+            return AppLanguage.localizedString(
+                count == 1 ? "%@ %lld agent" : "%@ %lld agents",
+                data.tool,
+                Int64(count)
+            )
         case .webSearch(let data):
-            return data.query.isEmpty ? "Searched web" : "Searched web for \(data.query)"
+            return data.query.isEmpty
+                ? AppLanguage.localizedString("Searched web")
+                : AppLanguage.localizedString("Searched web for %@", data.query)
         case .imageView(let data):
-            return "Viewed image: \(workspaceTitle(for: data.path))"
+            return AppLanguage.localizedString(
+                "Viewed image: %@",
+                workspaceTitle(for: data.path)
+            )
         case .imageGeneration(let data):
             switch data.status {
-            case .completed: return "Generated image"
-            case .failed: return "Image generation failed"
-            default: return "Generating image"
+            case .completed: return AppLanguage.localizedString("Generated image")
+            case .failed: return AppLanguage.localizedString("Image generation failed")
+            default: return AppLanguage.localizedString("Generating image")
             }
         case .widget(let data):
-            return "Widget: \(data.widgetState.title)"
+            return AppLanguage.localizedString("Widget: %@", data.widgetState.title)
         case .userInputResponse(let data):
             let count = data.questions.count
-            return count == 1 ? "Asked 1 question" : "Asked \(count) questions"
+            return AppLanguage.localizedString(
+                count == 1 ? "Asked %lld question" : "Asked %lld questions",
+                Int64(count)
+            )
         case .divider(let divider):
             switch divider {
             case .contextCompaction(let isComplete):
-                return isComplete ? "Context compacted" : "Compacting context"
+                return AppLanguage.localizedString(
+                    isComplete ? "Context compacted" : "Compacting context"
+                )
             case .modelRerouted(_, let toModel, _):
-                return "Routed to \(toModel)"
+                return AppLanguage.localizedString("Routed to %@", toModel)
             case .reviewEntered(let review):
-                return "Entered review: \(review)"
+                return AppLanguage.localizedString("Entered review: %@", review)
             case .reviewExited(let review):
-                return "Exited review: \(review)"
+                return AppLanguage.localizedString("Exited review: %@", review)
             case .workedFor(let duration):
                 return duration
             case .generic(let title, let detail):

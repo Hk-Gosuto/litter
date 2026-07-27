@@ -46,16 +46,25 @@ private enum ProximityPhase: Equatable {
     func statusText(peerLabel: String, isHost: Bool) -> String {
         switch self {
         case .idle:
-            return isHost ? "Broadcasting…" : "Tap Start to begin"
+            return AppLanguage.localizedString(
+                isHost ? "Broadcasting…" : "Tap Start to begin"
+            )
         case .searching:
-            return isHost ? "Waiting for an \(peerLabel)…" : "Looking for a \(peerLabel)…"
+            return AppLanguage.localizedString(
+                isHost ? "Waiting for an %@…" : "Looking for a %@…",
+                peerLabel
+            )
         case .detected:
-            return isHost ? "\(peerLabel) detected — walk closer" : "Walk closer to pair"
+            return isHost
+                ? AppLanguage.localizedString("%@ detected — walk closer", peerLabel)
+                : AppLanguage.localizedString("Walk closer to pair")
         case .awaitingConfirm:
-            return isHost ? "Tap Accept to confirm" : "Confirm on the \(peerLabel)"
-        case .paired: return "Paired ✓"
-        case .rejected: return "Pair declined"
-        case .failed: return "Couldn't pair"
+            return isHost
+                ? AppLanguage.localizedString("Tap Accept to confirm")
+                : AppLanguage.localizedString("Confirm on the %@", peerLabel)
+        case .paired: return AppLanguage.localizedString("Paired ✓")
+        case .rejected: return AppLanguage.localizedString("Pair declined")
+        case .failed: return AppLanguage.localizedString("Couldn't pair")
         }
     }
 }
@@ -204,7 +213,11 @@ struct ProximityPairView: View {
                     .litterFont(.title3, weight: .semibold)
                     .foregroundColor(LitterTheme.textPrimary)
             } else {
-                Text(frame.phase == .searching ? "Searching…" : "—")
+                Text(
+                    frame.phase == .searching
+                        ? AppLanguage.localizedString("Searching…")
+                        : "—"
+                )
                     .litterFont(.title3, weight: .semibold)
                     .foregroundColor(LitterTheme.textSecondary)
             }
@@ -291,7 +304,13 @@ struct ProximityPairView: View {
             #else
             // On the Mac side the host runs continuously; nothing to
             // start/stop from this screen. Show a passive status pill.
-            Text(frame.phase == .paired ? "Paired" : (frame.peerName != nil ? "Connected" : "Broadcasting"))
+            Text(
+                AppLanguage.localizedString(
+                    frame.phase == .paired
+                        ? "Paired"
+                        : (frame.peerName != nil ? "Connected" : "Broadcasting")
+                )
+            )
                 .litterFont(.body, weight: .semibold)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)

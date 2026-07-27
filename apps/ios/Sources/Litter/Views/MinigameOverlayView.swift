@@ -58,9 +58,9 @@ struct MinigameOverlayView: View {
     private var titleText: String {
         switch state {
         case .idle: return ""
-        case .loading: return "Generating…"
+        case .loading: return AppLanguage.localizedString("Generating…")
         case .shown(let content): return content.title
-        case .failed: return "Couldn't generate"
+        case .failed: return AppLanguage.localizedString("Couldn't generate")
         }
     }
 

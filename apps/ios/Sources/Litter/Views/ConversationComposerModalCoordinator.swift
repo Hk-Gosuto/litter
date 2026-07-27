@@ -85,7 +85,8 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
     }
 
     private var selectedApprovalLabel: String {
-        ComposerApprovalOption.allCases.first { $0.wireValue == selectedApprovalValue }?.title ?? "Custom"
+        ComposerApprovalOption.allCases.first { $0.wireValue == selectedApprovalValue }?.title
+            ?? AppLanguage.localizedString("Custom")
     }
 
     private var selectedApprovalDescription: String {
@@ -93,7 +94,8 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
     }
 
     private var selectedSandboxLabel: String {
-        ComposerSandboxOption.allCases.first { $0.wireValue == selectedSandboxValue }?.title ?? "Custom"
+        ComposerSandboxOption.allCases.first { $0.wireValue == selectedSandboxValue }?.title
+            ?? AppLanguage.localizedString("Custom")
     }
 
     private var selectedSandboxDescription: String {
@@ -118,13 +120,19 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
     }
 
     private var currentApprovalLabel: String {
-        guard hasAuthoritativeThreadPermissions else { return "Syncing..." }
-        return currentThread?.effectiveApprovalPolicy?.displayTitle ?? "Syncing..."
+        guard hasAuthoritativeThreadPermissions else {
+            return AppLanguage.localizedString("Syncing...")
+        }
+        return currentThread?.effectiveApprovalPolicy?.displayTitle
+            ?? AppLanguage.localizedString("Syncing...")
     }
 
     private var currentSandboxLabel: String {
-        guard hasAuthoritativeThreadPermissions else { return "Syncing..." }
-        return currentThread?.effectiveSandboxPolicy?.displayTitle ?? "Syncing..."
+        guard hasAuthoritativeThreadPermissions else {
+            return AppLanguage.localizedString("Syncing...")
+        }
+        return currentThread?.effectiveSandboxPolicy?.displayTitle
+            ?? AppLanguage.localizedString("Syncing...")
     }
 
     private var usesThreadDefaults: Bool {
@@ -226,7 +234,12 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
                     Task { await onRenameThread(nextName) }
                 }
             } message: {
-                Text("Current thread title:\n\(renameCurrentThreadTitle)")
+                Text(
+                    AppLanguage.localizedString(
+                        "Current thread title:\n%@",
+                        renameCurrentThreadTitle
+                    )
+                )
             }
             .alert("Slash Command Error", isPresented: Binding(
                 get: { slashErrorMessage != nil },
@@ -234,7 +247,7 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
             )) {
                 Button("OK", role: .cancel) { slashErrorMessage = nil }
             } message: {
-                Text(slashErrorMessage ?? "Unknown error")
+                Text(slashErrorMessage ?? AppLanguage.localizedString("Unknown error"))
             }
             .alert("Microphone Access", isPresented: $showMicPermissionAlert) {
                 Button("Open Settings", action: onOpenSettings)
@@ -255,12 +268,24 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
                                 Text("Thread permissions")
                                     .foregroundStyle(LitterTheme.textPrimary)
                                     .litterFont(.headline)
-                                Text(currentRuntimeSupportsPermissionOverrides ? "Changes apply on your next turn and later turns." : "This runtime controls its own permissions.")
+                                Text(
+                                    AppLanguage.localizedString(
+                                        currentRuntimeSupportsPermissionOverrides
+                                            ? "Changes apply on your next turn and later turns."
+                                            : "This runtime controls its own permissions."
+                                    )
+                                )
                                     .foregroundStyle(LitterTheme.textMuted)
                                     .litterFont(.caption)
                             }
                             Spacer(minLength: 12)
-                            Text(currentRuntimeSupportsPermissionOverrides ? (usesThreadDefaults ? "Using defaults" : "Custom override") : "Runtime managed")
+                            Text(
+                                AppLanguage.localizedString(
+                                    currentRuntimeSupportsPermissionOverrides
+                                        ? (usesThreadDefaults ? "Using defaults" : "Custom override")
+                                        : "Runtime managed"
+                                )
+                            )
                                 .foregroundStyle(usesThreadDefaults ? LitterTheme.textSecondary : LitterTheme.accentStrong)
                                 .litterFont(size: 11, weight: .semibold)
                                 .padding(.horizontal, 10)
@@ -395,7 +420,7 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
         accent: Color
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .foregroundStyle(LitterTheme.textSecondary)
                 .litterFont(size: 11, weight: .semibold)
             VStack(alignment: .leading, spacing: 8) {
@@ -417,7 +442,7 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
 
     private func permissionSummaryRow(label: String, value: String, accent: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .foregroundStyle(LitterTheme.textMuted)
                 .litterFont(size: 10, weight: .medium)
             Text(value)
@@ -435,10 +460,10 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .foregroundStyle(LitterTheme.textPrimary)
                     .litterFont(.headline)
-                Text(subtitle)
+                Text(LocalizedStringKey(subtitle))
                     .foregroundStyle(LitterTheme.textSecondary)
                     .litterFont(.caption)
             }
@@ -465,12 +490,12 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
         } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    Text(LocalizedStringKey(title))
                         .foregroundStyle(LitterTheme.textPrimary)
                         .litterFont(size: 14, weight: .semibold)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
-                    Text(detail)
+                    Text(LocalizedStringKey(detail))
                         .foregroundStyle(LitterTheme.textMuted)
                         .litterFont(size: 11)
                         .lineLimit(1)
@@ -504,7 +529,7 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text(title)
+                    Text(LocalizedStringKey(title))
                         .foregroundStyle(LitterTheme.textPrimary)
                         .litterFont(size: 14, weight: .semibold)
                         .multilineTextAlignment(.leading)
@@ -515,7 +540,7 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
                             .imageScale(.small)
                     }
                 }
-                Text(description)
+                Text(LocalizedStringKey(description))
                     .foregroundStyle(LitterTheme.textMuted)
                     .litterFont(size: 11)
                     .multilineTextAlignment(.leading)

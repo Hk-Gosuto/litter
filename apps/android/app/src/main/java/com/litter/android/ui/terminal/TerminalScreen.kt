@@ -56,9 +56,11 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.core.bridge.GhosttyRendererBridge
 import com.litter.android.core.bridge.GhosttyRendererStatus
 import com.litter.android.state.ActiveTerminalRegistry
@@ -163,7 +165,7 @@ fun TerminalScreen(
                     .height(34.dp),
             ) {
                 Text(
-                    text = "Trust ${challenge.fingerprint}",
+                    text = stringResource(R.string.terminal_trust_host, challenge.fingerprint),
                     color = Color.Black,
                     fontFamily = LitterTheme.monoFont,
                     fontSize = 12.sp,
@@ -247,7 +249,7 @@ private fun TerminalConfigSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Terminal",
+                text = stringResource(R.string.terminal_title),
                 color = LitterTheme.textPrimary,
                 fontFamily = LitterTheme.monoFont,
                 fontWeight = FontWeight.SemiBold,
@@ -257,7 +259,7 @@ private fun TerminalConfigSheet(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Font size",
+                text = stringResource(R.string.terminal_font_size),
                         color = LitterTheme.textSecondary,
                         fontFamily = LitterTheme.monoFont,
                         fontSize = 13.sp,
@@ -283,7 +285,7 @@ private fun TerminalConfigSheet(
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = "Theme",
+                    text = stringResource(R.string.terminal_theme),
                     color = LitterTheme.textSecondary,
                     fontFamily = LitterTheme.monoFont,
                     fontSize = 13.sp,
@@ -296,7 +298,7 @@ private fun TerminalConfigSheet(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = choice.title,
+                            text = stringResource(choice.titleRes),
                             color = if (selected) LitterTheme.accent else LitterTheme.textPrimary,
                             fontFamily = LitterTheme.monoFont,
                             fontSize = 13.sp,
@@ -319,7 +321,7 @@ private fun TerminalConfigSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "Cursor blink",
+                    text = stringResource(R.string.terminal_cursor_blink),
                     color = LitterTheme.textPrimary,
                     fontFamily = LitterTheme.monoFont,
                     fontSize = 13.sp,
@@ -348,6 +350,7 @@ private fun TerminalOutputPane(
     terminalConfig: uniffi.codex_mobile_client.TerminalConfig?,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val outputScroll = rememberScrollState()
     LaunchedEffect(controller.output.length) {
         outputScroll.scrollTo(outputScroll.maxValue)
@@ -407,7 +410,7 @@ private fun TerminalOutputPane(
                 ) {
                     Text(
                         text = controller.output.ifEmpty {
-                            terminalEmptyMessage(prootState, selectedBackend)
+                            terminalEmptyMessage(context, prootState, selectedBackend)
                         },
                         color = LitterTheme.accent,
                         fontFamily = LitterTheme.monoFont,
@@ -481,12 +484,12 @@ private fun TerminalHeader(
         IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.common_back),
                 tint = LitterTheme.textPrimary,
             )
         }
         Text(
-            text = "Terminal",
+            text = stringResource(R.string.terminal_title),
             color = LitterTheme.textPrimary,
             fontFamily = LitterTheme.monoFont,
             fontWeight = FontWeight.SemiBold,
@@ -507,7 +510,7 @@ private fun TerminalHeader(
                 modifier = Modifier.size(16.dp),
             )
             Text(
-                text = selectedBackend?.title ?: "No backend",
+                text = selectedBackend?.title ?: stringResource(R.string.terminal_no_backend),
                 color = LitterTheme.accent,
                 fontFamily = LitterTheme.monoFont,
                 fontSize = 12.sp,
@@ -595,7 +598,7 @@ private fun TerminalAccessoryRow(
             pasteText?.let(controller::send)
         }
         TerminalKey("Clear", enabled = controller.output.isNotEmpty()) { controller.clearOutput() }
-        TerminalKey("Send to AI", enabled = canSendToAssistant, onClick = onSendToAssistant)
+        TerminalKey(stringResource(R.string.terminal_send_to_ai), enabled = canSendToAssistant, onClick = onSendToAssistant)
     }
 }
 
@@ -669,8 +672,8 @@ private fun loadBackendOptions(
         options.add(
             TerminalBackendOption(
                 id = "local-proot",
-                title = "Local Alpine",
-                runningLabel = "local alpine",
+                title = context.getString(R.string.terminal_local_alpine),
+                runningLabel = context.getString(R.string.terminal_local_alpine_running),
                 icon = Icons.Outlined.PhoneIphone,
                 supportsResize = true,
                 backend = TerminalBackendKind.LocalProot(normalized(cwd)),
@@ -689,8 +692,10 @@ private fun loadBackendOptions(
                 options.add(
                     TerminalBackendOption(
                         id = "alleycat-$nodeId",
-                        title = saved.name.trim().ifEmpty { "Remote shell" },
-                        runningLabel = "remote shell",
+                        title = saved.name.trim().ifEmpty {
+                            context.getString(R.string.terminal_remote_shell)
+                        },
+                        runningLabel = context.getString(R.string.terminal_remote_shell_running),
                         icon = Icons.Outlined.Storage,
                         alleycatNodeId = nodeId,
                         supportsResize = true,
@@ -716,7 +721,7 @@ private fun loadBackendOptions(
             TerminalBackendOption(
                 id = "ssh-$key",
                 title = saved.name.trim().ifEmpty { "${credential.username}@$host" },
-                runningLabel = "ssh shell",
+                runningLabel = context.getString(R.string.terminal_ssh_shell_running),
                 icon = Icons.Outlined.Storage,
                 supportsResize = true,
                 backend = TerminalBackendKind.RemoteSsh(
@@ -747,21 +752,26 @@ private fun normalized(value: String?): String? =
     value?.trim()?.takeIf { it.isNotEmpty() }
 
 private fun terminalEmptyMessage(
+    context: Context,
     prootState: AndroidProotBootstrap.BootstrapState,
     selectedBackend: TerminalBackendOption?,
 ): String {
     if (selectedBackend != null) return ""
     return when (prootState.status) {
         AndroidProotBootstrap.Status.Pending,
-        AndroidProotBootstrap.Status.Bootstrapping -> "Preparing local Alpine...\n"
+        AndroidProotBootstrap.Status.Bootstrapping ->
+            context.getString(R.string.terminal_preparing_alpine)
         AndroidProotBootstrap.Status.PtraceDenied ->
-            "Local Alpine is unavailable because this Android environment blocks ptrace.\nRemote shell remains available after pairing an Alleycat host.\n"
+            context.getString(R.string.terminal_ptrace_denied)
         AndroidProotBootstrap.Status.MissingArtifact ->
-            "Local Alpine is unavailable because proot or the Alpine rootfs is not bundled.\nRemote shell remains available after pairing an Alleycat host.\n"
+            context.getString(R.string.terminal_artifact_missing)
         AndroidProotBootstrap.Status.Failed ->
-            "Local Alpine bootstrap failed: ${prootState.message ?: "unknown error"}\nRemote shell remains available after pairing an Alleycat host.\n"
+            context.getString(
+                R.string.terminal_bootstrap_failed,
+                prootState.message ?: context.getString(R.string.common_unknown_error),
+            )
         AndroidProotBootstrap.Status.Ready ->
-            "Pair an Alleycat host to open a remote shell.\n"
+            context.getString(R.string.terminal_pair_remote)
     }
 }
 

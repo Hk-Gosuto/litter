@@ -1,6 +1,7 @@
 package com.litter.android.state
 
 import android.content.Intent
+import android.content.Context
 import android.graphics.PixelFormat
 import android.provider.Settings
 import android.view.Gravity
@@ -17,9 +18,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.sigkitten.litter.android.R
+import com.litter.android.ui.AppLanguagePreferences
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -43,6 +47,9 @@ import uniffi.codex_mobile_client.AppSnapshotRecord
 import uniffi.codex_mobile_client.ThreadKey
 
 class PetOverlayService : LifecycleService() {
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguagePreferences.wrap(newBase))
+    }
     companion object {
         const val ACTION_SYNC = "com.litter.android.pet.ACTION_SYNC"
         const val ACTION_HIDE = "com.litter.android.pet.ACTION_HIDE"
@@ -338,9 +345,9 @@ private fun PetActionMenu(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        PetActionMenuItem(label = "Open Litter", onClick = onOpenLitter)
-        PetActionMenuItem(label = "Hide Pet", onClick = onHidePet)
-        PetActionMenuItem(label = "Pet Settings", onClick = onOpenPetSettings)
+        PetActionMenuItem(label = stringResource(R.string.pet_open_litter), onClick = onOpenLitter)
+        PetActionMenuItem(label = stringResource(R.string.pet_hide), onClick = onHidePet)
+        PetActionMenuItem(label = stringResource(R.string.pet_settings), onClick = onOpenPetSettings)
     }
 }
 

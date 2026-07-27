@@ -1875,7 +1875,7 @@ struct HomeSessionRowContent: View {
                 if pinned { onUnpin() } else { onPin() }
             } label: {
                 Label(
-                    pinned ? "Remove from Home" : "Pin to Home",
+                    AppLanguage.localizedString(pinned ? "Remove from Home" : "Pin to Home"),
                     systemImage: pinned ? "minus.circle" : "pin"
                 )
             }

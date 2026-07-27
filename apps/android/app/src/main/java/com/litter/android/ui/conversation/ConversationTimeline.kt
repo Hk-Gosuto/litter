@@ -68,6 +68,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -315,7 +316,7 @@ private fun UserMessageRow(
                                 .data(it)
                                 .crossfade(false)
                                 .build(),
-                            contentDescription = "Attached image",
+                            contentDescription = stringResource(R.string.a11y_attached_image),
                             modifier = Modifier
                                 .padding(top = 4.dp)
                                 .heightIn(max = 200.dp)
@@ -330,18 +331,18 @@ private fun UserMessageRow(
             ) {
                 if (onEdit != null) {
                     DropdownMenuItem(
-                        text = { Text("Edit Message") },
+                        text = { Text(stringResource(R.string.conversation_edit_message)) },
                         onClick = { showMenu = false; onEdit(itemId) },
                     )
                 }
                 if (onFork != null) {
                     DropdownMenuItem(
-                        text = { Text("Fork From Here") },
+                        text = { Text(stringResource(R.string.conversation_fork_from_here)) },
                         onClick = { showMenu = false; onFork(itemId) },
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Copy") },
+                    text = { Text(stringResource(R.string.common_copy)) },
                     onClick = {
                         showMenu = false
                         val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -370,7 +371,9 @@ private fun LimitedUserMessageText(text: String) {
 
     if (isLong) {
         Text(
-            text = if (expanded) "Show less" else "Show more",
+            text = stringResource(
+                if (expanded) R.string.conversation_show_less else R.string.conversation_show_more,
+            ),
             color = LitterTheme.accent,
             fontSize = LitterTextStyle.caption2.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -514,7 +517,7 @@ private fun AssistantRenderBlocks(
                             .data(block.data)
                             .crossfade(false)
                             .build(),
-                        contentDescription = "Assistant image ${index + 1}",
+                        contentDescription = stringResource(R.string.a11y_assistant_image_number, index + 1),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 300.dp)
@@ -606,7 +609,7 @@ private fun CodeReviewFindingCard(
             )
 
             Text(
-                text = "Dismiss",
+                text = stringResource(R.string.common_dismiss),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.callout.scaled,
                 fontWeight = FontWeight.Medium,
@@ -670,9 +673,9 @@ private fun CommandExecutionRow(
             ?.trim('\n')
             ?.takeIf { it.isNotBlank() }
             ?: if (data.status == AppOperationStatus.PENDING || data.status == AppOperationStatus.IN_PROGRESS) {
-                "Waiting for output…"
+                stringResource(R.string.timeline_waiting_output)
             } else {
-                "No output"
+                stringResource(R.string.timeline_no_output)
             }
     val isRunning = data.status == AppOperationStatus.PENDING || data.status == AppOperationStatus.IN_PROGRESS
     val displayedCommand = remember(data.command) { displayCommandText(data.command) }
@@ -912,7 +915,7 @@ private fun ProposedPlanRow(
             .padding(vertical = 4.dp),
     ) {
         Text(
-            text = "Plan",
+            text = stringResource(R.string.timeline_plan),
             color = LitterTheme.accent,
             fontSize = LitterTextStyle.caption.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -976,7 +979,7 @@ private fun ScreenshotPreview(bytes: ByteArray) {
     val context = LocalContext.current
     Column {
         Text(
-            text = "SCREENSHOT",
+            text = stringResource(R.string.timeline_screenshot),
             color = LitterTheme.textSecondary,
             fontSize = 10f.scaled,
             fontWeight = FontWeight.Bold,
@@ -987,7 +990,7 @@ private fun ScreenshotPreview(bytes: ByteArray) {
                 .data(bytes)
                 .crossfade(false)
                 .build(),
-            contentDescription = "Computer Use screenshot",
+            contentDescription = stringResource(R.string.conversation_computer_use_screenshot),
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxWidth()
@@ -1005,13 +1008,14 @@ private fun AccessibilityTreeSection(text: String) {
     val display = if (expanded || lines.size <= previewLineCount) {
         text
     } else {
-        lines.take(previewLineCount).joinToString("\n") + "\n… (${lines.size - previewLineCount} more lines)"
+        lines.take(previewLineCount).joinToString("\n") + "\n" +
+            stringResource(R.string.timeline_more_lines, lines.size - previewLineCount)
     }
 
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "ACCESSIBILITY TREE",
+                text = stringResource(R.string.timeline_accessibility_tree),
                 color = LitterTheme.textSecondary,
                 fontSize = 10f.scaled,
                 fontWeight = FontWeight.Bold,
@@ -1019,7 +1023,9 @@ private fun AccessibilityTreeSection(text: String) {
             )
             if (lines.size > previewLineCount) {
                 Text(
-                    text = if (expanded) "Show less" else "Show more",
+                    text = stringResource(
+                        if (expanded) R.string.conversation_show_less else R.string.conversation_show_more,
+                    ),
                     color = LitterTheme.accent,
                     fontSize = 10f.scaled,
                     fontWeight = FontWeight.Medium,
@@ -1074,7 +1080,7 @@ private fun DynamicToolCallRow(
         durationMs = data.durationMs,
     ) {
         if (metadata.isNotEmpty()) {
-            KeyValueSection(label = "Metadata", entries = metadata)
+            KeyValueSection(label = stringResource(R.string.conversation_metadata), entries = metadata)
         }
         data.argumentsJson?.takeIf { it.isNotBlank() }?.let { CodeSection("Arguments", it) }
         data.contentSummary?.takeIf { it.isNotBlank() }?.let { InlineTextSection("Result", it) }
@@ -1163,7 +1169,7 @@ private fun GeneratedImageSection(
                             .data(pngBytes)
                             .crossfade(false)
                             .build(),
-                        contentDescription = "Generated image",
+                        contentDescription = stringResource(R.string.a11y_generated_image),
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1177,7 +1183,7 @@ private fun GeneratedImageSection(
                 }
                 else -> {
                     Text(
-                        text = "Image unavailable",
+                        text = stringResource(R.string.timeline_image_unavailable),
                         color = LitterTheme.textMuted,
                         fontSize = LitterTextStyle.caption.scaled,
                         modifier = Modifier.padding(vertical = 20.dp),
@@ -1237,7 +1243,7 @@ private fun GeneratedImageLoadingTile() {
         }
 
         Text(
-            text = "Generating image",
+            text = stringResource(R.string.timeline_generating_image),
             color = LitterTheme.textPrimary,
             fontSize = LitterTextStyle.caption.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -1605,7 +1611,7 @@ private fun SavedAsAppChip(
             modifier = Modifier.size(10.dp),
         )
         Text(
-            text = "Saved as",
+            text = stringResource(R.string.timeline_saved_as),
             color = LitterTheme.accent,
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
@@ -1632,7 +1638,7 @@ private fun UserInputResponseRow(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = "Requested Input",
+            text = stringResource(R.string.timeline_requested_input),
             color = LitterTheme.textPrimary,
             fontSize = LitterTextStyle.body.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -1655,7 +1661,11 @@ private fun UserInputResponseRow(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = question.answer.ifBlank { "No answer provided" },
+                    text = if (question.answer.isBlank()) {
+                        stringResource(R.string.timeline_no_answer)
+                    } else {
+                        question.answer
+                    },
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.body.scaled,
                 )
@@ -1671,11 +1681,11 @@ private fun TurnDiffRow(
     data: uniffi.codex_mobile_client.HydratedTurnDiffData,
 ) {
     ToolCardShell(
-        summary = "Turn Diff",
+        summary = stringResource(R.string.timeline_turn_diff),
         accent = LitterTheme.toolCallFileChange,
         status = AppOperationStatus.COMPLETED,
     ) {
-        DiffSection(label = "Diff", content = data.diff)
+        DiffSection(label = stringResource(R.string.conversation_diff), content = data.diff)
     }
 }
 
@@ -1686,15 +1696,21 @@ private fun DividerRow(
 ) {
     val label = when (data) {
         is uniffi.codex_mobile_client.HydratedDividerData.ContextCompaction ->
-            if (data.isComplete && !isLiveTurn) "Context compacted" else "Compacting context\u2026"
+            if (data.isComplete && !isLiveTurn) {
+                stringResource(R.string.timeline_context_compacted)
+            } else {
+                stringResource(R.string.timeline_compacting_context)
+            }
         is uniffi.codex_mobile_client.HydratedDividerData.ModelRerouted -> {
             val route = data.fromModel?.takeIf { it.isNotBlank() }?.let { "$it -> ${data.toModel}" }
-                ?: "Routed to ${data.toModel}"
+                ?: stringResource(R.string.timeline_routed_to, data.toModel)
             val reason = data.reason?.takeIf { it.isNotBlank() }
             if (reason != null) "$route | $reason" else route
         }
-        is uniffi.codex_mobile_client.HydratedDividerData.ReviewEntered -> "Review started"
-        is uniffi.codex_mobile_client.HydratedDividerData.ReviewExited -> "Review ended"
+        is uniffi.codex_mobile_client.HydratedDividerData.ReviewEntered ->
+            stringResource(R.string.timeline_review_started)
+        is uniffi.codex_mobile_client.HydratedDividerData.ReviewExited ->
+            stringResource(R.string.timeline_review_ended)
     }
 
     Row(
@@ -2487,7 +2503,9 @@ private fun LimitedToolTextBlock(
     if (isLong) {
         TextButton(onClick = { expanded = !expanded }) {
             Text(
-                text = if (expanded) "Show less" else "Show more",
+                text = stringResource(
+                    if (expanded) R.string.conversation_show_less else R.string.conversation_show_more,
+                ),
                 color = LitterTheme.accent,
                 fontSize = LitterTextStyle.caption2.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -2515,7 +2533,9 @@ private fun RichDynamicToolResult(
                         },
                         title = item.name,
                         subtitle = item.hostname,
-                        trailing = if (item.isConnected) "Connected" else "Offline",
+                        trailing = stringResource(
+                            if (item.isConnected) R.string.timeline_connected else R.string.timeline_offline,
+                        ),
                         statusDotColor = if (item.isConnected) LitterTheme.success else LitterTheme.textMuted,
                     )
                 }
@@ -2537,7 +2557,11 @@ private fun RichDynamicToolResult(
                                 modifier = Modifier.size(18.dp),
                             )
                         },
-                        title = item.title.ifBlank { "Untitled session" },
+                        title = if (item.title.isBlank()) {
+                            stringResource(R.string.conversation_untitled_session)
+                        } else {
+                            item.title
+                        },
                         subtitle = subtitle,
                         trailing = null,
                         statusDotColor = null,
@@ -2693,7 +2717,7 @@ internal fun StatusIcon(status: AppOperationStatus) {
         AppOperationStatus.COMPLETED -> {
             Icon(
                 Icons.Default.CheckCircle,
-                contentDescription = "Completed",
+                contentDescription = stringResource(R.string.common_completed),
                 tint = LitterTheme.success,
                 modifier = Modifier.size(14.dp),
             )
@@ -2701,7 +2725,7 @@ internal fun StatusIcon(status: AppOperationStatus) {
         AppOperationStatus.FAILED -> {
             Icon(
                 Icons.Default.Error,
-                contentDescription = "Failed",
+                contentDescription = stringResource(R.string.common_failed),
                 tint = LitterTheme.danger,
                 modifier = Modifier.size(14.dp),
             )
@@ -2709,7 +2733,7 @@ internal fun StatusIcon(status: AppOperationStatus) {
         else -> {
             Icon(
                 Icons.Default.HourglassEmpty,
-                contentDescription = "Unknown",
+                contentDescription = stringResource(R.string.common_unknown),
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(14.dp),
             )

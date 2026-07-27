@@ -17,12 +17,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import com.sigkitten.litter.android.R
 import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.AppModel
 import com.litter.android.state.OpenAIApiKeyStore
@@ -89,7 +91,7 @@ class MainActivity : ComponentActivity() {
                         )
                     } else {
                         Text(
-                            text = "Litter couldn't finish starting.",
+                            text = stringResource(R.string.startup_failed),
                             modifier = Modifier.padding(horizontal = 24.dp),
                         )
                     }

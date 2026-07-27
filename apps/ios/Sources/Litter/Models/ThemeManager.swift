@@ -26,11 +26,11 @@ enum LitterAppearanceMode: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .system:
-            return "System"
+            return AppLanguage.localizedString("System")
         case .light:
-            return "Light"
+            return AppLanguage.localizedString("Light")
         case .dark:
-            return "Dark"
+            return AppLanguage.localizedString("Dark")
         }
     }
 

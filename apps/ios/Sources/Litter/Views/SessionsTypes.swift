@@ -15,7 +15,7 @@ extension AppSessionSummary: Identifiable {
             return trimmedTitle
         }
 
-        return "Untitled session"
+        return AppLanguage.localizedString("Untitled session")
     }
 
     var sessionTitle: String {
@@ -50,11 +50,11 @@ enum WorkspaceSortMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .mostRecent:
-            return "Most Recent"
+            return AppLanguage.localizedString("Most Recent")
         case .name:
-            return "Name"
+            return AppLanguage.localizedString("Name")
         case .date:
-            return "Date"
+            return AppLanguage.localizedString("Date")
         }
     }
 }

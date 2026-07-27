@@ -32,33 +32,37 @@ enum ChatGPTOAuthError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidAuthorizeURL:
-            return "Failed to build the ChatGPT login URL."
+            return AppLanguage.localizedString("Failed to build the ChatGPT login URL.")
         case .invalidCallbackURL:
-            return "ChatGPT login returned an invalid callback."
+            return AppLanguage.localizedString("ChatGPT login returned an invalid callback.")
         case .missingAuthorizationCode:
-            return "ChatGPT login did not return an authorization code."
+            return AppLanguage.localizedString("ChatGPT login did not return an authorization code.")
         case .oauthError(let message):
             return message
         case .stateMismatch:
-            return "ChatGPT login state did not match the original request."
+            return AppLanguage.localizedString("ChatGPT login state did not match the original request.")
         case .unableToStartSession:
-            return "Unable to start the ChatGPT login session."
+            return AppLanguage.localizedString("Unable to start the ChatGPT login session.")
         case .cancelled:
-            return "ChatGPT login was cancelled."
+            return AppLanguage.localizedString("ChatGPT login was cancelled.")
         case .callbackTimedOut:
-            return "ChatGPT login timed out before returning to Litter."
+            return AppLanguage.localizedString("ChatGPT login timed out before returning to Litter.")
         case .missingRefreshToken:
-            return "No ChatGPT refresh token is available."
+            return AppLanguage.localizedString("No ChatGPT refresh token is available.")
         case .missingStoredTokens:
-            return "No stored ChatGPT login is available to refresh."
+            return AppLanguage.localizedString("No stored ChatGPT login is available to refresh.")
         case .missingAccountID:
-            return "ChatGPT login did not include an account identifier."
+            return AppLanguage.localizedString("ChatGPT login did not include an account identifier.")
         case .tokenExchangeFailed(let status, let message):
-            return "ChatGPT token exchange failed (\(status)): \(message)"
+            return AppLanguage.localizedString(
+                "ChatGPT token exchange failed (%lld): %@",
+                Int64(status),
+                message
+            )
         case .refreshAccountMismatch:
-            return "ChatGPT refresh returned a different account than expected."
+            return AppLanguage.localizedString("ChatGPT refresh returned a different account than expected.")
         case .keychain(let status):
-            return "Keychain error (\(status))"
+            return AppLanguage.localizedString("Keychain error (%d)", status)
         }
     }
 

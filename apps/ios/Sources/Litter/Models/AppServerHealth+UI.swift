@@ -4,15 +4,15 @@ extension AppServerHealth {
     var displayLabel: String {
         switch self {
         case .connected:
-            return "Connected"
+            return AppLanguage.localizedString("Connected")
         case .connecting:
-            return "Connecting…"
+            return AppLanguage.localizedString("Connecting…")
         case .unresponsive:
-            return "Unresponsive"
+            return AppLanguage.localizedString("Unresponsive")
         case .disconnected:
-            return "Disconnected"
+            return AppLanguage.localizedString("Disconnected")
         case .unknown:
-            return "Unknown"
+            return AppLanguage.localizedString("Unknown")
         }
     }
 
@@ -32,15 +32,15 @@ extension AppServerTransportState {
     var displayLabel: String {
         switch self {
         case .connected:
-            return "Connected"
+            return AppLanguage.localizedString("Connected")
         case .connecting:
-            return "Connecting…"
+            return AppLanguage.localizedString("Connecting…")
         case .unresponsive:
-            return "Unresponsive"
+            return AppLanguage.localizedString("Unresponsive")
         case .disconnected:
-            return "Disconnected"
+            return AppLanguage.localizedString("Disconnected")
         case .unknown:
-            return "Unknown"
+            return AppLanguage.localizedString("Unknown")
         }
     }
 

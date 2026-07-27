@@ -153,12 +153,16 @@ struct ComputerUseToolCallView: View {
                         errorExpanded.toggle()
                     }
                 } label: {
-                    Text(errorExpanded ? "Show less" : "Show more")
+                    Text(AppLanguage.localizedString(errorExpanded ? "Show less" : "Show more"))
                         .litterFont(.caption2, weight: .semibold)
                         .foregroundColor(LitterTheme.accent)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(errorExpanded ? "Show less error text" : "Show more error text")
+                .accessibilityLabel(
+                    AppLanguage.localizedString(
+                        errorExpanded ? "Show less error text" : "Show more error text"
+                    )
+                )
             }
         }
     }
@@ -176,7 +180,7 @@ struct ComputerUseToolCallView: View {
                         a11yExpanded.toggle()
                     }
                 } label: {
-                    Text(a11yExpanded ? "Show less" : "Show more")
+                    Text(AppLanguage.localizedString(a11yExpanded ? "Show less" : "Show more"))
                         .litterFont(.caption2, weight: .medium)
                         .foregroundColor(LitterTheme.accent)
                 }

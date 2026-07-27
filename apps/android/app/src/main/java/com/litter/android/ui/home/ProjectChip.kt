@@ -18,9 +18,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.scaled
@@ -35,8 +37,8 @@ fun ProjectChip(
 ) {
     val label = when {
         project != null -> projectDefaultLabel(project.cwd)
-        disabled -> "no server"
-        else -> "pick project"
+        disabled -> stringResource(R.string.home_no_server)
+        else -> stringResource(R.string.home_pick_project)
     }
     Row(
         modifier = Modifier

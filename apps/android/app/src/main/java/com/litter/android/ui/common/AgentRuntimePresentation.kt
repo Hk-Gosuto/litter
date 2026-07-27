@@ -19,7 +19,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import com.litter.android.ui.LitterTheme
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.AppAgentMetadata
 
 /**
@@ -164,7 +166,7 @@ fun BetaBadge(modifier: Modifier = Modifier) {
             .padding(horizontal = 5.dp, vertical = 1.dp),
     ) {
         Text(
-            text = "BETA",
+            text = stringResource(R.string.common_beta),
             color = LitterTheme.accent,
             fontSize = 9.sp,
             fontWeight = FontWeight.SemiBold,

@@ -399,7 +399,7 @@ fun SessionsScreen(
                 FilterChip(
                     selected = sessionsUiState.sortMode != WorkspaceSortMode.RECENT,
                     onClick = { showSortMenu = true },
-                    label = { Text(sessionsUiState.sortMode.title, fontSize = 11.sp) },
+                    label = { Text(stringResource(sessionsUiState.sortMode.titleRes), fontSize = 11.sp) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = LitterTheme.accent,
                         selectedLabelColor = Color.Black,
@@ -587,7 +587,13 @@ private fun SessionNodeRow(
                 if (hasChildren) {
                     Icon(
                         if (isCollapsed) Icons.Default.ChevronRight else Icons.Default.ExpandMore,
-                        contentDescription = if (isCollapsed) "Expand session children" else "Collapse session children",
+                        contentDescription = stringResource(
+                            if (isCollapsed) {
+                                R.string.sessions_expand_children
+                            } else {
+                                R.string.sessions_collapse_children
+                            },
+                        ),
                         tint = LitterTheme.textMuted,
                         modifier = Modifier.size(14.dp),
                     )

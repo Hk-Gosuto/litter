@@ -85,7 +85,11 @@ final class VoiceRuntimeController: VoiceActions {
             throw NSError(
                 domain: "Litter",
                 code: 3310,
-                userInfo: [NSLocalizedDescriptionKey: "Voice is only available on the local server"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: AppLanguage.localizedString(
+                        "Voice is only available on the local server"
+                    )
+                ]
             )
         }
         return try await prepareAndLaunchRealtimeVoiceSession(for: key)
@@ -281,7 +285,11 @@ final class VoiceRuntimeController: VoiceActions {
             throw NSError(
                 domain: "Litter",
                 code: 3311,
-                userInfo: [NSLocalizedDescriptionKey: "Microphone access is required for voice mode"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: AppLanguage.localizedString(
+                        "Microphone access is required for voice mode"
+                    )
+                ]
             )
         }
 
@@ -306,7 +314,11 @@ final class VoiceRuntimeController: VoiceActions {
             throw NSError(
                 domain: "Litter",
                 code: 3302,
-                userInfo: [NSLocalizedDescriptionKey: "Voice mode requires an active server thread"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: AppLanguage.localizedString(
+                        "Voice mode requires an active server thread"
+                    )
+                ]
             )
         }
         LLog.info("voice", "thread resolved", fields: [
@@ -1022,9 +1034,9 @@ private extension VoiceRuntimeController {
     func voiceSpeakerLabel(_ speaker: AppVoiceSpeaker) -> String {
         switch speaker {
         case .user:
-            return "You"
+            return AppLanguage.localizedString("You")
         case .assistant:
-            return "Codex"
+            return AppLanguage.localizedString("Codex")
         }
     }
 

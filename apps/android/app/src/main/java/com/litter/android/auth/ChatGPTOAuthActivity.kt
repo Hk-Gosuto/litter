@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +48,7 @@ import com.litter.android.state.ChatGPTOAuthTokenBundle
 import com.litter.android.ui.LitterAppTheme
 import com.litter.android.ui.LitterTheme
 import com.litter.android.util.LLog
+import com.sigkitten.litter.android.R
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -72,7 +74,7 @@ class ChatGPTOAuthActivity : ComponentActivity() {
 
         val authAttempt = parseAttempt(intent)
         if (authAttempt == null) {
-            finishWithError("ChatGPT login could not start.")
+            finishWithError(getString(R.string.auth_start_failed))
             return
         }
         attempt = authAttempt
@@ -180,7 +182,7 @@ class ChatGPTOAuthActivity : ComponentActivity() {
                 // Activity closed or recreated.
             } catch (e: Exception) {
                 LLog.e("ChatGPTOAuth", "auth flow failed", e)
-                finishWithError(e.localizedMessage ?: e.message ?: "ChatGPT login failed.")
+                finishWithError(e.localizedMessage ?: e.message ?: getString(R.string.auth_login_failed))
             } finally {
                 isLaunchingBrowser = false
                 loopbackServer?.close()
@@ -221,11 +223,13 @@ class ChatGPTOAuthActivity : ComponentActivity() {
                 startActivity(Intent(Intent.ACTION_VIEW, authUri))
                 true
             } catch (e: Exception) {
-                pageError = e.localizedMessage ?: e.message ?: "No browser is available for ChatGPT login."
+                pageError = e.localizedMessage ?: e.message
+                    ?: getString(R.string.auth_browser_unavailable)
                 false
             }
         } catch (e: Exception) {
-            pageError = e.localizedMessage ?: e.message ?: "ChatGPT login could not open a browser."
+            pageError = e.localizedMessage ?: e.message
+                ?: getString(R.string.auth_browser_open_failed)
             false
         }
     }
@@ -342,13 +346,13 @@ private fun ChatGPTOAuthActivityScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Close login",
+                        contentDescription = stringResource(R.string.auth_close_login),
                         tint = LitterTheme.textPrimary,
                     )
                 }
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "ChatGPT Login",
+                    text = stringResource(R.string.auth_title),
                     color = LitterTheme.textPrimary,
                     fontSize = 16.sp,
                 )
@@ -369,9 +373,9 @@ private fun ChatGPTOAuthActivityScreen(
 
             Text(
                 text = if (browserOpened) {
-                    "Continue the ChatGPT login in your browser."
+                    stringResource(R.string.auth_continue_browser)
                 } else {
-                    "Opening a secure browser for ChatGPT login."
+                    stringResource(R.string.auth_opening_browser)
                 },
                 color = LitterTheme.textPrimary,
                 fontSize = 18.sp,
@@ -380,9 +384,9 @@ private fun ChatGPTOAuthActivityScreen(
             Spacer(Modifier.height(12.dp))
             Text(
                 text = if (browserOpened) {
-                    "After the login finishes, this screen will complete automatically. If the browser closed early, you can open it again below."
+                    stringResource(R.string.auth_browser_return_helper)
                 } else {
-                    "Google blocks sign-in inside embedded web views, so Litter uses your browser for this flow."
+                    stringResource(R.string.auth_embedded_webview_helper)
                 },
                 color = LitterTheme.textSecondary,
                 fontSize = 13.sp,
@@ -404,7 +408,13 @@ private fun ChatGPTOAuthActivityScreen(
                 onClick = { onOpenBrowser() },
                 enabled = !isLaunchingBrowser && !isCompleting,
             ) {
-                Text(if (browserOpened) "Open browser again" else "Open browser")
+                Text(
+                    if (browserOpened) {
+                        stringResource(R.string.auth_open_browser_again)
+                    } else {
+                        stringResource(R.string.auth_open_browser)
+                    },
+                )
             }
         }
 

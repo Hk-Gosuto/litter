@@ -43,9 +43,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -66,83 +69,91 @@ import uniffi.codex_mobile_client.ThreadKey
 import uniffi.codex_mobile_client.threadPermissionsAreAuthoritative
 
 private data class ComposerSelectionOption(
-    val title: String,
-    val description: String,
+    val titleRes: Int,
+    val descriptionRes: Int,
     val wireValue: String,
 )
 
 private val composerApprovalOptions = listOf(
     ComposerSelectionOption(
-        title = "Default",
-        description = "Use the thread or server default",
+        titleRes = R.string.permissions_default,
+        descriptionRes = R.string.permissions_default_detail,
         wireValue = "inherit",
     ),
     ComposerSelectionOption(
-        title = "Untrusted",
-        description = "Always ask before taking action",
+        titleRes = R.string.permissions_untrusted,
+        descriptionRes = R.string.permissions_untrusted_detail,
         wireValue = "untrusted",
     ),
     ComposerSelectionOption(
-        title = "On failure",
-        description = "Ask only when a command fails",
+        titleRes = R.string.permissions_on_failure,
+        descriptionRes = R.string.permissions_on_failure_detail,
         wireValue = "on-failure",
     ),
     ComposerSelectionOption(
-        title = "On request",
-        description = "Ask when escalation is requested",
+        titleRes = R.string.permissions_on_request,
+        descriptionRes = R.string.permissions_on_request_detail,
         wireValue = "on-request",
     ),
     ComposerSelectionOption(
-        title = "Never",
-        description = "Run without asking for approval",
+        titleRes = R.string.permissions_never,
+        descriptionRes = R.string.permissions_never_detail,
         wireValue = "never",
     ),
 )
 
 private val composerSandboxOptions = listOf(
     ComposerSelectionOption(
-        title = "Default",
-        description = "Use the thread or server default",
+        titleRes = R.string.permissions_default,
+        descriptionRes = R.string.permissions_default_detail,
         wireValue = "inherit",
     ),
     ComposerSelectionOption(
-        title = "Read only",
-        description = "Can read files, but cannot edit them",
+        titleRes = R.string.permissions_read_only,
+        descriptionRes = R.string.permissions_read_only_detail,
         wireValue = "read-only",
     ),
     ComposerSelectionOption(
-        title = "Workspace write",
-        description = "Can edit files, but only in this workspace",
+        titleRes = R.string.permissions_workspace_write,
+        descriptionRes = R.string.permissions_workspace_write_detail,
         wireValue = "workspace-write",
     ),
     ComposerSelectionOption(
-        title = "Full access",
-        description = "Can edit files outside this workspace",
+        titleRes = R.string.permissions_full_access,
+        descriptionRes = R.string.permissions_full_access_detail,
         wireValue = "danger-full-access",
     ),
 )
 
+@Composable
 private fun selectedApprovalLabel(approvalPolicy: String): String =
-    composerApprovalOptions.firstOrNull { it.wireValue == approvalPolicy }?.title ?: "Custom"
+    composerApprovalOptions.firstOrNull { it.wireValue == approvalPolicy }
+        ?.let { stringResource(it.titleRes) }
+        ?: stringResource(R.string.permissions_custom)
 
+@Composable
 private fun selectedSandboxLabel(sandboxMode: String): String =
-    composerSandboxOptions.firstOrNull { it.wireValue == sandboxMode }?.title ?: "Custom"
+    composerSandboxOptions.firstOrNull { it.wireValue == sandboxMode }
+        ?.let { stringResource(it.titleRes) }
+        ?: stringResource(R.string.permissions_custom)
 
+@Composable
 private fun AppAskForApproval.displayTitle(): String =
     when (this) {
-        AppAskForApproval.UnlessTrusted -> "Untrusted"
-        AppAskForApproval.OnFailure -> "On failure"
-        AppAskForApproval.OnRequest -> "On request"
-        is AppAskForApproval.Granular -> "Granular"
-        AppAskForApproval.Never -> "Never"
+        AppAskForApproval.UnlessTrusted -> stringResource(R.string.permissions_untrusted)
+        AppAskForApproval.OnFailure -> stringResource(R.string.permissions_on_failure)
+        AppAskForApproval.OnRequest -> stringResource(R.string.permissions_on_request)
+        is AppAskForApproval.Granular -> stringResource(R.string.permissions_granular)
+        AppAskForApproval.Never -> stringResource(R.string.permissions_never)
     }
 
+@Composable
 private fun AppSandboxPolicy.displayTitle(): String =
     when (this) {
-        AppSandboxPolicy.DangerFullAccess -> "Full access"
-        is AppSandboxPolicy.ReadOnly -> "Read only"
-        is AppSandboxPolicy.WorkspaceWrite -> "Workspace write"
-        is AppSandboxPolicy.ExternalSandbox -> "External sandbox"
+        AppSandboxPolicy.DangerFullAccess -> stringResource(R.string.permissions_full_access)
+        is AppSandboxPolicy.ReadOnly -> stringResource(R.string.permissions_read_only)
+        is AppSandboxPolicy.WorkspaceWrite -> stringResource(R.string.permissions_workspace_write)
+        is AppSandboxPolicy.ExternalSandbox -> stringResource(R.string.permissions_external_sandbox)
     }
 
 @Composable
@@ -163,11 +174,19 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
         )
     ) true else false
     val currentApprovalLabel =
-        if (hasAuthoritativeThreadPermissions) effectiveThread?.effectiveApprovalPolicy?.displayTitle() ?: "Syncing..."
-        else "Syncing..."
+        if (hasAuthoritativeThreadPermissions) {
+            effectiveThread?.effectiveApprovalPolicy?.displayTitle()
+                ?: stringResource(R.string.permissions_syncing)
+        } else {
+            stringResource(R.string.permissions_syncing)
+        }
     val currentSandboxLabel =
-        if (hasAuthoritativeThreadPermissions) effectiveThread?.effectiveSandboxPolicy?.displayTitle() ?: "Syncing..."
-        else "Syncing..."
+        if (hasAuthoritativeThreadPermissions) {
+            effectiveThread?.effectiveSandboxPolicy?.displayTitle()
+                ?: stringResource(R.string.permissions_syncing)
+        } else {
+            stringResource(R.string.permissions_syncing)
+        }
     val usesThreadDefaults = selectedApproval == "inherit" && selectedSandbox == "inherit"
     val scrollState = rememberScrollState()
 
@@ -185,7 +204,7 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SheetHeader(title = "Permissions", onDismiss = onDismiss)
+        SheetHeader(title = stringResource(R.string.permissions_title), onDismiss = onDismiss)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -201,16 +220,16 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Thread permissions",
+                        text = stringResource(R.string.permissions_thread),
                         color = LitterTheme.textPrimary,
                         fontSize = 18f.scaled,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = if (currentRuntimeSupportsPermissionOverrides) {
-                            "Changes apply on your next turn and later turns."
+                            stringResource(R.string.permissions_next_turn_detail)
                         } else {
-                            "This runtime controls its own permissions."
+                            stringResource(R.string.permissions_runtime_controls)
                         },
                         color = LitterTheme.textMuted,
                         fontSize = LitterTextStyle.caption2.scaled,
@@ -218,11 +237,11 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
                 }
                 Text(
                     text = if (!currentRuntimeSupportsPermissionOverrides) {
-                        "Runtime managed"
+                        stringResource(R.string.permissions_runtime_managed)
                     } else if (usesThreadDefaults) {
-                        "Using defaults"
+                        stringResource(R.string.permissions_using_defaults)
                     } else {
-                        "Custom override"
+                        stringResource(R.string.permissions_custom_override)
                     },
                     color = if (!currentRuntimeSupportsPermissionOverrides || usesThreadDefaults) {
                         LitterTheme.textSecondary
@@ -251,7 +270,7 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 PermissionSummaryTile(
-                    title = "Next turn",
+                    title = stringResource(R.string.permissions_next_turn),
                     approval = selectedApprovalLabel(selectedApproval),
                     sandbox = selectedSandboxLabel(selectedSandbox),
                     accent = LitterTheme.accentStrong,
@@ -259,7 +278,7 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
                 )
                 if (threadKey != null) {
                     PermissionSummaryTile(
-                        title = "Current thread",
+                        title = stringResource(R.string.permissions_current_thread),
                         approval = currentApprovalLabel,
                         sandbox = currentSandboxLabel,
                         accent = if (hasAuthoritativeThreadPermissions) LitterTheme.textSecondary else LitterTheme.warning,
@@ -271,8 +290,8 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
 
         if (currentRuntimeSupportsPermissionOverrides) {
             PermissionSettingsSection(
-                title = "Approval policy",
-                subtitle = "Choose when Codex asks for approval",
+                title = stringResource(R.string.permissions_approval_policy),
+                subtitle = stringResource(R.string.permissions_approval_helper),
             ) {
                 PermissionDropdownField(
                     options = composerApprovalOptions,
@@ -284,8 +303,8 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
             }
 
             PermissionSettingsSection(
-                title = "Sandbox settings",
-                subtitle = "Choose how much Codex can do when running commands",
+                title = stringResource(R.string.permissions_sandbox_settings),
+                subtitle = stringResource(R.string.permissions_sandbox_helper),
             ) {
                 PermissionDropdownField(
                     options = composerSandboxOptions,
@@ -297,11 +316,11 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
             }
         } else {
             PermissionSettingsSection(
-                title = "Runtime managed",
-                subtitle = "This runtime does not accept client-side permission overrides.",
+                title = stringResource(R.string.permissions_runtime_managed),
+                subtitle = stringResource(R.string.permissions_runtime_override_unavailable),
             ) {
                 Text(
-                    text = "Use the runtime's own controls for approval and sandbox behavior.",
+                    text = stringResource(R.string.permissions_runtime_own_controls),
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.caption.scaled,
                 )
@@ -331,8 +350,8 @@ private fun PermissionSummaryTile(
             fontSize = LitterTextStyle.caption2.scaled,
             fontWeight = FontWeight.SemiBold,
         )
-        PermissionSummaryRow(label = "Approval", value = approval, accent = accent)
-        PermissionSummaryRow(label = "Sandbox", value = sandbox, accent = accent)
+        PermissionSummaryRow(label = stringResource(R.string.permissions_approval_summary), value = approval, accent = accent)
+        PermissionSummaryRow(label = stringResource(R.string.permissions_sandbox_summary), value = sandbox, accent = accent)
     }
 }
 
@@ -414,14 +433,16 @@ private fun PermissionDropdownField(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = selectedOption?.title ?: "Custom",
+                    text = selectedOption?.let { stringResource(it.titleRes) }
+                        ?: stringResource(R.string.permissions_custom),
                     color = LitterTheme.textPrimary,
                     fontSize = LitterTextStyle.body.scaled,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
                 Text(
-                    text = selectedOption?.description ?: "This setting is managed by the server.",
+                    text = selectedOption?.let { stringResource(it.descriptionRes) }
+                        ?: stringResource(R.string.permissions_managed_server),
                     color = LitterTheme.textMuted,
                     fontSize = LitterTextStyle.caption2.scaled,
                     maxLines = 1,
@@ -444,13 +465,13 @@ private fun PermissionDropdownField(
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                text = option.title,
+                                text = stringResource(option.titleRes),
                                 color = LitterTheme.textPrimary,
                                 fontSize = LitterTextStyle.body.scaled,
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = option.description,
+                                text = stringResource(option.descriptionRes),
                                 color = LitterTheme.textMuted,
                                 fontSize = LitterTextStyle.caption2.scaled,
                             )
@@ -483,6 +504,7 @@ fun ComposerExperimentalSheet(
     onError: (String) -> Unit,
 ) {
     val appModel = LocalAppModel.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var features by remember(serverId) { mutableStateOf<List<ExperimentalFeature>>(emptyList()) }
     var isLoading by remember(serverId) { mutableStateOf(true) }
@@ -499,7 +521,7 @@ fun ComposerExperimentalSheet(
             features = featuresResult.sortedBy { (it.displayName ?: it.name).lowercase() }
         }.onFailure { error ->
             features = emptyList()
-            onError(error.message ?: "Failed to load experimental features")
+            onError(error.message ?: context.getString(R.string.experimental_load_failed))
         }
         isLoading = false
     }
@@ -512,8 +534,8 @@ fun ComposerExperimentalSheet(
             .padding(16.dp),
     ) {
         SheetHeader(
-            title = "Experimental",
-            leadingActionLabel = "Reload",
+            title = stringResource(R.string.settings_experimental_section),
+            leadingActionLabel = stringResource(R.string.common_reload),
             onLeadingAction = { reloadToken += 1 },
             onDismiss = onDismiss,
         )
@@ -526,7 +548,7 @@ fun ComposerExperimentalSheet(
             }
 
             features.isEmpty() -> {
-                Text("No experimental features available", color = LitterTheme.textMuted, fontSize = LitterTextStyle.code.scaled)
+                Text(stringResource(R.string.conversation_no_experimental_features), color = LitterTheme.textMuted, fontSize = LitterTextStyle.code.scaled)
             }
 
             else -> {
@@ -592,7 +614,10 @@ fun ComposerExperimentalSheet(
                                                     it
                                                 }
                                             }
-                                            onError(error.message ?: "Failed to update experimental feature")
+                                            onError(
+                                                error.message
+                                                    ?: context.getString(R.string.experimental_update_failed),
+                                            )
                                         }
                                     }
                                 },
@@ -614,6 +639,7 @@ fun ComposerSkillsSheet(
     onError: (String) -> Unit,
 ) {
     val appModel = LocalAppModel.current
+    val context = LocalContext.current
     var skills by remember(serverId, cwd) { mutableStateOf<List<SkillMetadata>>(emptyList()) }
     var isLoading by remember(serverId, cwd) { mutableStateOf(true) }
     var reloadToken by remember(serverId, cwd) { mutableIntStateOf(0) }
@@ -632,7 +658,7 @@ fun ComposerSkillsSheet(
             skills = skillResults.sortedBy { it.name.lowercase() }
         }.onFailure { error ->
             skills = emptyList()
-            onError(error.message ?: "Failed to load skills")
+            onError(error.message ?: context.getString(R.string.skills_load_failed))
         }
         isLoading = false
     }
@@ -645,8 +671,8 @@ fun ComposerSkillsSheet(
             .padding(16.dp),
     ) {
         SheetHeader(
-            title = "Skills",
-            leadingActionLabel = "Reload",
+            title = stringResource(R.string.composer_skills),
+            leadingActionLabel = stringResource(R.string.common_reload),
             onLeadingAction = { reloadToken += 1 },
             onDismiss = onDismiss,
         )
@@ -659,7 +685,7 @@ fun ComposerSkillsSheet(
             }
 
             skills.isEmpty() -> {
-                Text("No skills available for this workspace", color = LitterTheme.textMuted, fontSize = LitterTextStyle.code.scaled)
+                Text(stringResource(R.string.conversation_no_skills), color = LitterTheme.textMuted, fontSize = LitterTextStyle.code.scaled)
             }
 
             else -> {
@@ -718,7 +744,7 @@ private fun SheetHeader(
         Text(title, color = LitterTheme.textPrimary, fontSize = LitterTextStyle.headline.scaled, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.weight(1f))
         TextButton(onClick = onDismiss) {
-            Text("Done", color = LitterTheme.accent)
+            Text(stringResource(R.string.settings_done), color = LitterTheme.accent)
         }
     }
     HorizontalDivider(color = LitterTheme.divider, modifier = Modifier.padding(top = 8.dp))

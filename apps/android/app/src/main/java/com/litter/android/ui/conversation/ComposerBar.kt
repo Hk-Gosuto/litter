@@ -1,5 +1,6 @@
 package com.litter.android.ui.conversation
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -83,9 +84,11 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.AppModel
 import com.litter.android.state.ComposerImageAttachment
 import com.litter.android.state.ComposerFileAttachment
@@ -120,22 +123,22 @@ import uniffi.codex_mobile_client.AppThreadGoalSetRequest
 import uniffi.codex_mobile_client.AppThreadGoalStatus
 
 /** Slash command definitions matching iOS. */
-internal data class SlashCommand(val name: String, val description: String)
+internal data class SlashCommand(val name: String, val descriptionRes: Int)
 internal data class SlashInvocation(val command: SlashCommand, val args: String?)
 data class ActiveTaskSummary(val progress: String, val label: String)
 
 private val SLASH_COMMANDS = listOf(
-    SlashCommand("plan", "Switch collaboration mode"),
-    SlashCommand("model", "Change model or reasoning effort"),
-    SlashCommand("new", "Start a new session"),
-    SlashCommand("fork", "Fork this conversation"),
-    SlashCommand("rename", "Rename this session"),
-    SlashCommand("review", "Start a code review"),
-    SlashCommand("goal", "Set or manage the thread goal"),
-    SlashCommand("resume", "Browse sessions"),
-    SlashCommand("skills", "List available skills"),
-    SlashCommand("permissions", "Change permissions"),
-    SlashCommand("experimental", "Toggle experimental features"),
+    SlashCommand("plan", R.string.slash_plan_description),
+    SlashCommand("model", R.string.slash_model_description),
+    SlashCommand("new", R.string.slash_new_description),
+    SlashCommand("fork", R.string.slash_fork_description),
+    SlashCommand("rename", R.string.slash_rename_description),
+    SlashCommand("review", R.string.slash_review_description),
+    SlashCommand("goal", R.string.slash_goal_description),
+    SlashCommand("resume", R.string.slash_resume_description),
+    SlashCommand("skills", R.string.slash_skills_description),
+    SlashCommand("permissions", R.string.slash_permissions_description),
+    SlashCommand("experimental", R.string.slash_experimental_description),
 )
 
 private val SUPPORTED_IMAGE_FILE_MIME_TYPES = arrayOf(
@@ -294,7 +297,10 @@ fun ComposerBar(
                     threadKey.serverId,
                     AppThreadGoalGetRequest(threadId = threadKey.threadId),
                 )
-                onSlashError?.invoke(current?.let(::goalSummary) ?: "No goal is set for this thread.")
+                onSlashError?.invoke(
+                    current?.let { goalSummary(context, it) }
+                        ?: context.getString(R.string.conversation_goal_none),
+                )
             }
             "pause" -> {
                 appModel.client.setThreadGoal(
@@ -365,7 +371,9 @@ fun ComposerBar(
                 try {
                     handleGoalCommand(args)
                 } catch (e: Exception) {
-                    onSlashError?.invoke(e.message ?: "Failed to update goal")
+                    onSlashError?.invoke(
+                        e.message ?: context.getString(R.string.conversation_goal_update_failed),
+                    )
                 }
             }
             "fork" -> scope.launch {
@@ -383,7 +391,9 @@ fun ComposerBar(
                     appModel.store.setActiveThread(newKey)
                     appModel.refreshThreadSnapshot(newKey)
                 } catch (e: Exception) {
-                    onSlashError?.invoke(e.message ?: "Failed to fork conversation")
+                    onSlashError?.invoke(
+                        e.message ?: context.getString(R.string.conversation_fork_failed),
+                    )
                 }
             }
             "review" -> scope.launch {
@@ -397,7 +407,9 @@ fun ComposerBar(
                         ),
                     )
                 } catch (e: Exception) {
-                    onSlashError?.invoke(e.message ?: "Failed to start review")
+                    onSlashError?.invoke(
+                        e.message ?: context.getString(R.string.conversation_review_failed),
+                    )
                 }
             }
             else -> return false
@@ -481,7 +493,7 @@ fun ComposerBar(
                     previewBitmap?.let { bitmap ->
                         androidx.compose.foundation.Image(
                             bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Attached image",
+                            contentDescription = stringResource(R.string.a11y_attached_image),
                             modifier = Modifier
                                 .size(60.dp)
                                 .clip(RoundedCornerShape(8.dp)),
@@ -496,7 +508,7 @@ fun ComposerBar(
                     ) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = "Remove attachment",
+                            contentDescription = stringResource(R.string.a11y_remove_attachment),
                             tint = Color.White,
                             modifier = Modifier.size(14.dp),
                         )
@@ -547,7 +559,11 @@ fun ComposerBar(
                                         tokenBudget = null,
                                     ),
                                 )
-                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
+                            }.onFailure {
+                                onSlashError?.invoke(
+                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
+                                )
+                            }
                         }
                     },
                     markComplete = {
@@ -562,7 +578,11 @@ fun ComposerBar(
                                         tokenBudget = null,
                                     ),
                                 )
-                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
+                            }.onFailure {
+                                onSlashError?.invoke(
+                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
+                                )
+                            }
                         }
                     },
                     setObjective = { objective ->
@@ -577,7 +597,11 @@ fun ComposerBar(
                                         tokenBudget = null,
                                     ),
                                 )
-                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
+                            }.onFailure {
+                                onSlashError?.invoke(
+                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
+                                )
+                            }
                         }
                     },
                     setBudget = { budget ->
@@ -595,7 +619,11 @@ fun ComposerBar(
                                         tokenBudget = budget,
                                     ),
                                 )
-                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
+                            }.onFailure {
+                                onSlashError?.invoke(
+                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
+                                )
+                            }
                         }
                     },
                     clear = {
@@ -605,7 +633,11 @@ fun ComposerBar(
                                     threadKey.serverId,
                                     AppThreadGoalClearRequest(threadId = threadKey.threadId),
                                 )
-                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to clear goal") }
+                            }.onFailure {
+                                onSlashError?.invoke(
+                                    it.message ?: context.getString(R.string.conversation_goal_clear_failed),
+                                )
+                            }
                         }
                     },
                 )
@@ -643,7 +675,7 @@ fun ComposerBar(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Active tasks",
+                            text = stringResource(R.string.conversation_active_tasks),
                             color = LitterTheme.textPrimary,
                             fontSize = LitterTextStyle.caption.scaled,
                             fontWeight = FontWeight.SemiBold,
@@ -683,7 +715,7 @@ fun ComposerBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Input Required",
+                        text = stringResource(R.string.conversation_input_required),
                         color = LitterTheme.textPrimary,
                         fontSize = LitterTextStyle.caption.scaled,
                         fontWeight = FontWeight.SemiBold,
@@ -696,7 +728,11 @@ fun ComposerBar(
                             modifier = Modifier
                                 .clickable { onDismissPendingUserInput() }
                                 .padding(4.dp)
-                                .semantics { contentDescription = "Dismiss input request" },
+                                .semantics {
+                                    contentDescription = context.getString(
+                                        R.string.conversation_dismiss_input_request,
+                                    )
+                                },
                         )
                     }
                 }
@@ -753,7 +789,7 @@ fun ComposerBar(
                     )
                 }
                 Text(
-                    text = "Submit",
+                    text = stringResource(R.string.common_submit),
                     color = if (isSubmittingPendingUserInput) LitterTheme.textMuted else Color.Black,
                     fontSize = LitterTextStyle.code.scaled,
                     fontWeight = FontWeight.Bold,
@@ -829,7 +865,7 @@ fun ComposerBar(
                 ) {
                     Icon(
                         Icons.Default.Add,
-                        contentDescription = "Attach",
+                        contentDescription = stringResource(R.string.composer_attach),
                         tint = LitterTheme.textPrimary,
                     )
                 }
@@ -847,7 +883,7 @@ fun ComposerBar(
                 Box(modifier = Modifier.weight(1f)) {
                     if (text.isEmpty()) {
                         Text(
-                            text = "Message\u2026",
+                            text = stringResource(R.string.composer_message_placeholder),
                             color = LitterTheme.textMuted,
                             fontSize = LitterTextStyle.body.scaled,
                         )
@@ -882,7 +918,7 @@ fun ComposerBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.OpenInFull,
-                                contentDescription = "Expand composer",
+                                contentDescription = stringResource(R.string.a11y_expand_composer),
                                 tint = LitterTheme.textSecondary,
                                 modifier = Modifier.size(12.dp),
                             )
@@ -900,7 +936,7 @@ fun ComposerBar(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("/${cmd.name}", color = LitterTheme.accent, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Medium)
                                         Spacer(Modifier.width(8.dp))
-                                        Text(cmd.description, color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
+                                        Text(stringResource(cmd.descriptionRes), color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
                                     }
                                 },
                                 onClick = {
@@ -967,7 +1003,7 @@ fun ComposerBar(
                         ) {
                             Icon(
                                 Icons.Default.Stop,
-                                contentDescription = "Stop recording",
+                                contentDescription = stringResource(R.string.a11y_stop_recording),
                                 tint = LitterTheme.accentStrong,
                             )
                         }
@@ -1026,7 +1062,7 @@ fun ComposerBar(
                             ) {
                                 Icon(
                                     Icons.Default.Mic,
-                                    contentDescription = "Voice",
+                                    contentDescription = stringResource(R.string.conversation_voice),
                                     tint = LitterTheme.textSecondary,
                                 )
                             }
@@ -1055,7 +1091,7 @@ fun ComposerBar(
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
+                        contentDescription = stringResource(R.string.common_send),
                         tint = Color.Black,
                         modifier = Modifier.size(17.dp),
                     )
@@ -1065,7 +1101,7 @@ fun ComposerBar(
 
             if (isThinking && !canSend) {
                 Text(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     color = LitterTheme.textPrimary,
                     fontSize = LitterTextStyle.caption.scaled,
                     fontWeight = FontWeight.Medium,
@@ -1159,7 +1195,7 @@ fun ComposerBar(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "Attach",
+                    text = stringResource(R.string.composer_attach),
                     color = LitterTheme.textPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1167,7 +1203,7 @@ fun ComposerBar(
 
                 if (clipboardHasImage) {
                     AttachmentActionRow(
-                        title = "Paste Image",
+                        title = stringResource(R.string.conversation_paste_image),
                         onClick = {
                             showAttachMenu = false
                             val clip = clipboardManager.primaryClip
@@ -1180,7 +1216,7 @@ fun ComposerBar(
                 }
 
                 AttachmentActionRow(
-                    title = "Photo Library",
+                    title = stringResource(R.string.composer_photo_library),
                     onClick = {
                         showAttachMenu = false
                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -1188,7 +1224,7 @@ fun ComposerBar(
                 )
 
                 AttachmentActionRow(
-                    title = "Choose File",
+                    title = stringResource(R.string.composer_choose_file),
                     onClick = {
                         showAttachMenu = false
                         filePicker.launch(ALL_FILE_MIME_TYPES)
@@ -1196,7 +1232,7 @@ fun ComposerBar(
                 )
 
                 AttachmentActionRow(
-                    title = "Take Photo",
+                    title = stringResource(R.string.conversation_take_photo),
                     onClick = {
                         showAttachMenu = false
                         cameraLauncher.launch(null)
@@ -1237,7 +1273,7 @@ private fun QueuedFollowUpsPreviewPanel(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "Queued Next",
+                text = stringResource(R.string.conversation_queued_next),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.caption.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -1316,7 +1352,7 @@ private fun QueuedFollowUpCard(
 
         if (preview.kind == AppQueuedFollowUpKind.MESSAGE) {
             Text(
-                text = "\u21b3 Steer",
+                text = stringResource(R.string.composer_steer),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.caption.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -1333,7 +1369,7 @@ private fun QueuedFollowUpCard(
         ) {
             Icon(
                 Icons.Default.Close,
-                contentDescription = "Delete queued follow-up",
+                contentDescription = stringResource(R.string.conversation_delete_queued_followup),
                 tint = LitterTheme.textSecondary,
                 modifier = Modifier.size(14.dp),
             )
@@ -1345,7 +1381,7 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
     when (kind) {
         AppQueuedFollowUpKind.MESSAGE ->
             QueuedFollowUpUiStyle(
-                title = "Queued message",
+                title = stringResource(R.string.conversation_queued_message),
                 tint = LitterTheme.accent,
                 background = LitterTheme.accent.copy(alpha = 0.08f),
                 border = LitterTheme.accent.copy(alpha = 0.24f),
@@ -1353,7 +1389,7 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
 
         AppQueuedFollowUpKind.PENDING_STEER ->
             QueuedFollowUpUiStyle(
-                title = "Steer queued",
+                title = stringResource(R.string.conversation_steer_queued),
                 tint = LitterTheme.accentStrong,
                 background = LitterTheme.accentStrong.copy(alpha = 0.10f),
                 border = LitterTheme.accentStrong.copy(alpha = 0.28f),
@@ -1361,7 +1397,7 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
 
         AppQueuedFollowUpKind.RETRYING_STEER ->
             QueuedFollowUpUiStyle(
-                title = "Retrying steer",
+                title = stringResource(R.string.conversation_retrying_steer),
                 tint = LitterTheme.warning,
                 background = LitterTheme.warning.copy(alpha = 0.10f),
                 border = LitterTheme.warning.copy(alpha = 0.28f),
@@ -1418,7 +1454,7 @@ internal fun CollaborationModeChip(
         )
         Icon(
             Icons.Default.KeyboardArrowDown,
-            contentDescription = "Open collaboration mode picker",
+            contentDescription = stringResource(R.string.conversation_open_collaboration_picker),
             tint = contentColor,
             modifier = Modifier.size(14.dp),
         )
@@ -1433,7 +1469,9 @@ private fun PlanProgressPanel(
     val completed = remember(progress.plan) {
         progress.plan.count { it.status == uniffi.codex_mobile_client.AppPlanStepStatus.COMPLETED }
     }
-    val currentStepLabel = remember(progress.plan) {
+    val noPlanTaskLabel = stringResource(R.string.conversation_plan_no_task)
+    val planCompleteLabel = stringResource(R.string.conversation_plan_complete)
+    val currentStepLabel = remember(progress.plan, noPlanTaskLabel, planCompleteLabel) {
         val currentStep = progress.plan.firstOrNull {
             it.status == uniffi.codex_mobile_client.AppPlanStepStatus.IN_PROGRESS
         } ?: progress.plan.firstOrNull {
@@ -1443,7 +1481,11 @@ private fun PlanProgressPanel(
         }
 
         currentStep?.step?.trim()?.takeIf { it.isNotEmpty() }
-            ?: if (progress.plan.isEmpty()) "No plan task" else "Plan complete"
+            ?: if (progress.plan.isEmpty()) {
+                noPlanTaskLabel
+            } else {
+                planCompleteLabel
+            }
     }
     Column(
         modifier = Modifier
@@ -1462,7 +1504,11 @@ private fun PlanProgressPanel(
                 .clickable { expanded = !expanded },
         ) {
             Text(
-                text = if (expanded) "Plan Progress" else "Plan",
+                text = if (expanded) {
+                    stringResource(R.string.conversation_plan_progress)
+                } else {
+                    stringResource(R.string.conversation_plan)
+                },
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.caption.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -1488,7 +1534,11 @@ private fun PlanProgressPanel(
             }
             Icon(
                 imageVector = if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = if (expanded) "Collapse plan progress" else "Expand plan progress",
+                contentDescription = if (expanded) {
+                    stringResource(R.string.conversation_plan_collapse)
+                } else {
+                    stringResource(R.string.conversation_plan_expand)
+                },
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(16.dp),
             )
@@ -1572,7 +1622,7 @@ private fun ComposerFileAttachmentRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "FILE",
+            text = stringResource(R.string.composer_file_label),
             color = LitterTheme.accent,
             fontSize = LitterTextStyle.caption2.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -1601,7 +1651,7 @@ private fun ComposerFileAttachmentRow(
         ) {
             Icon(
                 Icons.Default.Close,
-                contentDescription = "Remove file",
+                contentDescription = stringResource(R.string.a11y_remove_file),
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(14.dp),
             )
@@ -1711,29 +1761,35 @@ internal fun parseSlashCommandInvocation(text: String): SlashInvocation? {
     return SlashInvocation(command = command, args = args)
 }
 
-private fun goalSummary(goal: AppThreadGoal): String {
-    return buildString {
-        append("Goal: ")
-        append(goal.objective)
-        append("\nStatus: ")
-        append(goalStatusLabel(goal.status))
-        append("\nTokens used: ")
-        append(goal.tokensUsed)
-        goal.tokenBudget?.let {
-            append("\nToken budget: ")
-            append(it)
-        }
-    }
+private fun goalSummary(context: Context, goal: AppThreadGoal): String {
+    val status = goalStatusLabel(context, goal.status)
+    return goal.tokenBudget?.let { budget ->
+        context.getString(
+            R.string.conversation_goal_summary_budget,
+            goal.objective,
+            status,
+            goal.tokensUsed,
+            budget,
+        )
+    } ?: context.getString(
+        R.string.conversation_goal_summary,
+        goal.objective,
+        status,
+        goal.tokensUsed,
+    )
 }
 
-private fun goalStatusLabel(status: AppThreadGoalStatus): String =
+private fun goalStatusLabel(context: Context, status: AppThreadGoalStatus): String =
     when (status) {
-        AppThreadGoalStatus.ACTIVE -> "active"
-        AppThreadGoalStatus.PAUSED -> "paused"
-        AppThreadGoalStatus.BLOCKED -> "blocked"
-        AppThreadGoalStatus.USAGE_LIMITED -> "limited by usage"
-        AppThreadGoalStatus.BUDGET_LIMITED -> "limited by budget"
-        AppThreadGoalStatus.COMPLETE -> "complete"
+        AppThreadGoalStatus.ACTIVE -> context.getString(R.string.conversation_goal_status_active)
+        AppThreadGoalStatus.PAUSED -> context.getString(R.string.conversation_goal_status_paused)
+        AppThreadGoalStatus.BLOCKED -> context.getString(R.string.conversation_goal_status_blocked)
+        AppThreadGoalStatus.USAGE_LIMITED ->
+            context.getString(R.string.conversation_goal_status_usage_limited)
+        AppThreadGoalStatus.BUDGET_LIMITED ->
+            context.getString(R.string.conversation_goal_status_budget_limited)
+        AppThreadGoalStatus.COMPLETE ->
+            context.getString(R.string.conversation_goal_status_complete)
     }
 
 data class GoalCardActions(
@@ -1765,12 +1821,12 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
         AppThreadGoalStatus.COMPLETE -> LitterTheme.success
     }
     val statusLabel = when (goal.status) {
-        AppThreadGoalStatus.ACTIVE -> "active"
-        AppThreadGoalStatus.PAUSED -> "paused"
-        AppThreadGoalStatus.BLOCKED -> "blocked"
-        AppThreadGoalStatus.USAGE_LIMITED -> "usage limit"
-        AppThreadGoalStatus.BUDGET_LIMITED -> "limited"
-        AppThreadGoalStatus.COMPLETE -> "complete"
+        AppThreadGoalStatus.ACTIVE -> stringResource(R.string.conversation_goal_status_active)
+        AppThreadGoalStatus.PAUSED -> stringResource(R.string.conversation_goal_status_paused)
+        AppThreadGoalStatus.BLOCKED -> stringResource(R.string.conversation_goal_status_blocked)
+        AppThreadGoalStatus.USAGE_LIMITED -> stringResource(R.string.conversation_goal_status_usage_limit)
+        AppThreadGoalStatus.BUDGET_LIMITED -> stringResource(R.string.conversation_goal_status_limited)
+        AppThreadGoalStatus.COMPLETE -> stringResource(R.string.conversation_goal_status_complete)
     }
     val budgetProgress: Float? = goal.tokenBudget?.takeIf { it > 0 }?.let { budget ->
         (goal.tokensUsed.toFloat() / budget.toFloat()).coerceIn(0f, 1f)
@@ -1792,11 +1848,11 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
     }
     val canTogglePause = goal.status != AppThreadGoalStatus.COMPLETE
     val pauseResumeLabel: String? = when (goal.status) {
-        AppThreadGoalStatus.ACTIVE -> "Pause goal"
-        AppThreadGoalStatus.PAUSED -> "Resume goal"
-        AppThreadGoalStatus.BLOCKED -> "Resume goal (override block)"
-        AppThreadGoalStatus.USAGE_LIMITED -> "Resume goal (override usage cap)"
-        AppThreadGoalStatus.BUDGET_LIMITED -> "Resume goal (override cap)"
+        AppThreadGoalStatus.ACTIVE -> stringResource(R.string.conversation_goal_pause)
+        AppThreadGoalStatus.PAUSED -> stringResource(R.string.conversation_goal_resume)
+        AppThreadGoalStatus.BLOCKED -> stringResource(R.string.conversation_goal_resume_blocked)
+        AppThreadGoalStatus.USAGE_LIMITED -> stringResource(R.string.conversation_goal_resume_usage)
+        AppThreadGoalStatus.BUDGET_LIMITED -> stringResource(R.string.conversation_goal_resume_budget)
         AppThreadGoalStatus.COMPLETE -> null
     }
 
@@ -1885,7 +1941,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreHoriz,
-                        contentDescription = "Goal actions",
+                        contentDescription = stringResource(R.string.conversation_goal_actions),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(16.dp),
                     )
@@ -1904,14 +1960,14 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("Edit objective", color = LitterTheme.textPrimary) },
+                        text = { Text(stringResource(R.string.conversation_goal_edit), color = LitterTheme.textPrimary) },
                         onClick = {
                             showMenu = false
                             showEditDialog = true
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Set token budget", color = LitterTheme.textPrimary) },
+                        text = { Text(stringResource(R.string.conversation_goal_budget), color = LitterTheme.textPrimary) },
                         onClick = {
                             showMenu = false
                             showBudgetDialog = true
@@ -1919,7 +1975,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                     )
                     if (goal.status != AppThreadGoalStatus.COMPLETE) {
                         DropdownMenuItem(
-                            text = { Text("Mark complete", color = LitterTheme.textPrimary) },
+                            text = { Text(stringResource(R.string.conversation_goal_complete), color = LitterTheme.textPrimary) },
                             onClick = {
                                 showMenu = false
                                 actions.markComplete()
@@ -1927,7 +1983,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("Clear goal", color = LitterTheme.danger) },
+                        text = { Text(stringResource(R.string.conversation_goal_clear), color = LitterTheme.danger) },
                         onClick = {
                             showMenu = false
                             showClearConfirm = true
@@ -2037,11 +2093,11 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
 
     if (showEditDialog) {
         GoalTextInputDialog(
-            title = "Edit Objective",
+            title = stringResource(R.string.conversation_goal_edit_title),
             initial = goal.objective,
-            placeholder = "What do you want to accomplish?",
+            placeholder = stringResource(R.string.conversation_goal_objective_placeholder),
             singleLine = false,
-            confirmLabel = "Save",
+            confirmLabel = stringResource(R.string.common_save),
             onConfirm = { value ->
                 val trimmed = value.trim()
                 if (trimmed.isNotEmpty()) actions.setObjective(trimmed)
@@ -2053,13 +2109,13 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
 
     if (showBudgetDialog) {
         GoalTextInputDialog(
-            title = "Token Budget",
+            title = stringResource(R.string.conversation_goal_budget_title),
             initial = goal.tokenBudget?.toString().orEmpty(),
-            placeholder = "e.g. 50000",
+            placeholder = stringResource(R.string.conversation_goal_budget_placeholder),
             singleLine = true,
             keyboardNumeric = true,
-            confirmLabel = "Save",
-            helper = "The agent will pause when the cap is reached.",
+            confirmLabel = stringResource(R.string.common_save),
+            helper = stringResource(R.string.conversation_goal_budget_helper),
             onConfirm = { value ->
                 val parsed = value.trim().toLongOrNull()
                 if (parsed != null && parsed > 0) actions.setBudget(parsed)
@@ -2074,7 +2130,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
             onDismissRequest = { showClearConfirm = false },
             confirmButton = {
                 Text(
-                    text = "Clear Goal",
+                    text = stringResource(R.string.conversation_goal_clear),
                     color = LitterTheme.danger,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
@@ -2087,7 +2143,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
             },
             dismissButton = {
                 Text(
-                    text = "Cancel",
+                    text = stringResource(R.string.common_cancel),
                     color = LitterTheme.textPrimary,
                     modifier = Modifier
                         .clickable { showClearConfirm = false }
@@ -2095,11 +2151,11 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                 )
             },
             title = {
-                Text("Clear this goal?", color = LitterTheme.textPrimary, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.conversation_goal_clear_question), color = LitterTheme.textPrimary, fontWeight = FontWeight.SemiBold)
             },
             text = {
                 Text(
-                    "Removes the goal from this thread. The agent stops tracking objective progress.",
+                    stringResource(R.string.conversation_goal_clear_detail),
                     color = LitterTheme.textSecondary,
                 )
             },
@@ -2135,7 +2191,7 @@ private fun GoalTextInputDialog(
         },
         dismissButton = {
             Text(
-                text = "Cancel",
+                text = stringResource(R.string.common_cancel),
                 color = LitterTheme.textPrimary,
                 modifier = Modifier
                     .clickable(onClick = onDismiss)

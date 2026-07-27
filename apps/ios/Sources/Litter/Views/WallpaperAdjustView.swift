@@ -229,7 +229,7 @@ struct WallpaperAdjustView: View {
                 Image(systemName: isOn.wrappedValue ? "checkmark.square.fill" : "square")
                     .font(.system(size: 18))
                     .foregroundStyle(isOn.wrappedValue ? LitterTheme.accent : LitterTheme.textMuted)
-                Text(label)
+                Text(LocalizedStringKey(label))
                     .litterFont(size: 14)
                     .foregroundStyle(LitterTheme.textPrimary)
             }

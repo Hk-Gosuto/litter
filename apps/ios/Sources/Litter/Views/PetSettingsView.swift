@@ -23,7 +23,10 @@ struct PetSettingsView: View {
                         Text("Show Pet")
                             .litterFont(.subheadline)
                             .foregroundColor(LitterTheme.textPrimary)
-                        Text(controller.selectedPet?.displayName ?? "No pet selected")
+                        Text(
+                            controller.selectedPet?.displayName
+                                ?? AppLanguage.localizedString("No pet selected")
+                        )
                             .litterFont(.caption)
                             .foregroundColor(LitterTheme.textSecondary)
                     }

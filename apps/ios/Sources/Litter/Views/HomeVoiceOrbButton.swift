@@ -29,10 +29,10 @@ struct HomeVoiceOrbButton: View {
     }
 
     private var accessibilityLabel: String {
-        if !isAvailable { return "Realtime voice unavailable" }
-        if isStarting { return "Connecting realtime voice" }
-        if hasRecoverableError { return "Retry realtime voice" }
-        return "Start realtime voice"
+        if !isAvailable { return AppLanguage.localizedString("Realtime voice unavailable") }
+        if isStarting { return AppLanguage.localizedString("Connecting realtime voice") }
+        if hasRecoverableError { return AppLanguage.localizedString("Retry realtime voice") }
+        return AppLanguage.localizedString("Start realtime voice")
     }
 
     /// Tint for the mic glyph. When the session is live we use a warmer

@@ -14,15 +14,21 @@ final class VideoWallpaperProcessor {
         var errorDescription: String? {
             switch self {
             case .durationExceedsLimit(let duration):
-                return "Video is \(Int(duration))s — maximum is 30s"
+                return AppLanguage.localizedString(
+                    "Video is %llds — maximum is 30s",
+                    Int64(duration)
+                )
             case .noVideoTrack:
-                return "No video track found"
+                return AppLanguage.localizedString("No video track found")
             case .transcodeFailed(let reason):
-                return "Transcode failed: \(reason)"
+                return AppLanguage.localizedString("Transcode failed: %@", reason)
             case .downloadFailed(let reason):
-                return "Download failed: \(reason)"
+                return AppLanguage.localizedString("Download failed: %@", reason)
             case .fileTooLarge(let bytes):
-                return "Video is \(bytes / 1_000_000)MB — maximum is 50MB"
+                return AppLanguage.localizedString(
+                    "Video is %lldMB — maximum is 50MB",
+                    Int64(bytes / 1_000_000)
+                )
             }
         }
     }

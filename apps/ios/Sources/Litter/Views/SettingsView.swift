@@ -609,26 +609,26 @@ private enum SettingsServerConnectionMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .local:
-            return "Local"
+            return AppLanguage.localizedString("Local")
         case .ssh:
-            return "SSH"
+            return AppLanguage.localizedString("SSH")
         case .directCodex:
-            return "Codex"
+            return AppLanguage.localizedString("Codex")
         case .websocket:
-            return "WebSocket"
+            return AppLanguage.localizedString("WebSocket")
         }
     }
 
     var formHeader: String {
         switch self {
         case .local:
-            return "Local Runtime"
+            return AppLanguage.localizedString("Local Runtime")
         case .ssh:
-            return "SSH Host"
+            return AppLanguage.localizedString("SSH Host")
         case .directCodex:
-            return "Codex Server"
+            return AppLanguage.localizedString("Codex Server")
         case .websocket:
-            return "Codex URL"
+            return AppLanguage.localizedString("Codex URL")
         }
     }
 }
@@ -645,17 +645,17 @@ private enum SettingsServerConnectionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName:
-            return "Server name cannot be empty."
+            return AppLanguage.localizedString("Server name cannot be empty.")
         case .emptyHost:
-            return "Host cannot be empty."
+            return AppLanguage.localizedString("Host cannot be empty.")
         case .invalidCodexPort, .missingCodexPort:
-            return "Codex port must be a valid number."
+            return AppLanguage.localizedString("Codex port must be a valid number.")
         case .invalidSSHPort:
-            return "SSH port must be a valid number."
+            return AppLanguage.localizedString("SSH port must be a valid number.")
         case .invalidWakeMAC:
-            return "Wake MAC must look like aa:bb:cc:dd:ee:ff."
+            return AppLanguage.localizedString("Wake MAC must look like aa:bb:cc:dd:ee:ff.")
         case .invalidWebsocketURL:
-            return "Enter a valid ws:// or wss:// URL."
+            return AppLanguage.localizedString("Enter a valid ws:// or wss:// URL.")
         }
     }
 }
@@ -848,7 +848,11 @@ private struct SettingsServerConnectionEditor: View {
             .litterFont(.subheadline)
 
             if !isSpecialPairedServer {
-                Button(connectionMode == .local ? "Save & Restart" : "Save & Reconnect") {
+                Button(
+                    AppLanguage.localizedString(
+                        connectionMode == .local ? "Save & Restart" : "Save & Reconnect"
+                    )
+                ) {
                     submit(reconnect: true)
                 }
                 .foregroundColor(LitterTheme.accent)
@@ -1111,7 +1115,11 @@ private struct SettingsConnectionAccountSection: View {
                             isAuthWorking = false
                         }
                     } label: {
-                        Text(hasStoredApiKey ? "Update API Key" : "Save API Key")
+                        Text(
+                            AppLanguage.localizedString(
+                                hasStoredApiKey ? "Update API Key" : "Save API Key"
+                            )
+                        )
                     }
                     .litterFont(.caption)
                     .foregroundColor(LitterTheme.accent)
@@ -1144,7 +1152,11 @@ private struct SettingsConnectionAccountSection: View {
                                 isAuthWorking = false
                             }
                         } label: {
-                            Text(hasStoredBaseURL ? "Update Base URL" : "Save Base URL")
+                            Text(
+                                AppLanguage.localizedString(
+                                    hasStoredBaseURL ? "Update Base URL" : "Save Base URL"
+                                )
+                            )
                         }
                         .litterFont(.caption)
                         .foregroundColor(LitterTheme.accent)
@@ -1217,26 +1229,26 @@ private struct SettingsConnectionAccountSection: View {
         case .chatgpt(let email, _)?:
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
-            return "API Key"
+            return AppLanguage.localizedString("API Key")
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return "ChatGPT"
         case nil where server.isLocal && hasStoredApiKey:
-            return "API Key"
+            return AppLanguage.localizedString("API Key")
         case nil:
-            return "Not logged in"
+            return AppLanguage.localizedString("Not logged in")
         }
     }
 
     private var authSubtitle: String? {
         switch server.account {
         case .chatgpt?:
-            return "ChatGPT account"
+            return AppLanguage.localizedString("ChatGPT account")
         case .apiKey?:
-            return "OpenAI API key"
+            return AppLanguage.localizedString("OpenAI API key")
         case nil where server.isLocal && hasStoredChatGPTTokens:
-            return "Stored locally; restoring session"
+            return AppLanguage.localizedString("Stored locally; restoring session")
         case nil where server.isLocal && hasStoredApiKey:
-            return "Saved locally; refreshing local account"
+            return AppLanguage.localizedString("Saved locally; refreshing local account")
         case nil:
             return nil
         }
@@ -1244,7 +1256,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func loginWithChatGPT() async {
         guard server.isLocal else {
-            authError = "Settings login is only available for the local server."
+            authError = AppLanguage.localizedString("Settings login is only available for the local server.")
             return
         }
         do {
@@ -1292,7 +1304,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func saveApiKey(_ key: String) async {
         guard server.isLocal else {
-            authError = "API keys can only be saved for the local server."
+            authError = AppLanguage.localizedString("API keys can only be saved for the local server.")
             return
         }
         do {
@@ -1304,7 +1316,7 @@ private struct SettingsConnectionAccountSection: View {
             try await appModel.restartLocalServer()
             refreshStoredCredentialFlags()
             guard hasStoredApiKey else {
-                authError = "API key did not persist locally."
+                authError = AppLanguage.localizedString("API key did not persist locally.")
                 return
             }
         } catch {
@@ -1314,11 +1326,11 @@ private struct SettingsConnectionAccountSection: View {
 
     private func saveBaseURL(_ rawBaseURL: String) async {
         guard server.isLocal else {
-            authError = "Base URL can only be saved for the local server."
+            authError = AppLanguage.localizedString("Base URL can only be saved for the local server.")
             return
         }
         guard let baseURL = normalizedOpenAIBaseURL(rawBaseURL) else {
-            authError = "Enter a valid http or https base URL."
+            authError = AppLanguage.localizedString("Enter a valid http or https base URL.")
             return
         }
         do {
@@ -1327,7 +1339,7 @@ private struct SettingsConnectionAccountSection: View {
             try await appModel.restartLocalServer()
             refreshStoredCredentialFlags()
             guard hasStoredBaseURL else {
-                authError = "Base URL did not persist locally."
+                authError = AppLanguage.localizedString("Base URL did not persist locally.")
                 return
             }
             openAIBaseURL = ""
@@ -1338,7 +1350,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func clearBaseURL() async {
         guard server.isLocal else {
-            authError = "Base URL can only be cleared for the local server."
+            authError = AppLanguage.localizedString("Base URL can only be cleared for the local server.")
             return
         }
         do {
@@ -1365,7 +1377,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func logout() async {
         guard server.isLocal else {
-            authError = "Settings logout is only available for the local server."
+            authError = AppLanguage.localizedString("Settings logout is only available for the local server.")
             return
         }
         do {

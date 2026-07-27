@@ -263,7 +263,7 @@ enum WatchProjection {
         if !summary.preview.isEmpty {
             return compact(summary.preview, max: 50)
         }
-        return "untitled task"
+        return AppLanguage.localizedString("untitled task")
     }
 
     private static func rank(_ status: WatchTask.Status) -> Int {
@@ -287,7 +287,7 @@ enum WatchProjection {
         guard let updatedAt else { return "" }
         let updatedDate = Date(timeIntervalSince1970: TimeInterval(updatedAt))
         let delta = Date().timeIntervalSince(updatedDate)
-        if delta < 60 { return "now" }
+        if delta < 60 { return AppLanguage.localizedString("now") }
         if delta < 3600 { return "\(Int(delta) / 60)m" }
         if delta < 86400 { return "\(Int(delta) / 3600)h" }
         if delta < 7 * 86400 { return "\(Int(delta) / 86400)d" }
@@ -422,10 +422,20 @@ enum WatchProjection {
 
     private static func approvalLabel(_ approval: PendingApproval) -> String {
         switch approval.kind {
-        case .command:        return compact(approval.command ?? "command", max: 32)
-        case .fileChange:     return compact(approval.path ?? "file change", max: 32)
-        case .permissions:    return "permissions"
-        case .mcpElicitation: return "mcp input"
+        case .command:
+            return compact(
+                approval.command ?? AppLanguage.localizedString("command"),
+                max: 32
+            )
+        case .fileChange:
+            return compact(
+                approval.path ?? AppLanguage.localizedString("file change"),
+                max: 32
+            )
+        case .permissions:
+            return AppLanguage.localizedString("permissions")
+        case .mcpElicitation:
+            return AppLanguage.localizedString("mcp input")
         }
     }
 

@@ -233,11 +233,11 @@ enum SessionsDerivation {
 
         switch dayDelta {
         case 0:
-            return "Today"
+            return AppLanguage.localizedString("Today")
         case 1:
-            return "Yesterday"
+            return AppLanguage.localizedString("Yesterday")
         case 2 ... 6:
-            return "\(dayDelta) days ago"
+            return AppLanguage.localizedString("%lld days ago", Int64(dayDelta))
         default:
             return absoluteDateFormatter.string(from: dayStart)
         }

@@ -141,10 +141,10 @@ enum LitterPlatform {
                 return displayName
             }
         }
-        return "Local Mac"
+        return AppLanguage.localizedString("Local Mac")
 #else
         let device = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return device.isEmpty ? "This Device" : device
+        return device.isEmpty ? AppLanguage.localizedString("This Device") : device
 #endif
     }
 

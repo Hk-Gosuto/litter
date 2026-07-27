@@ -123,13 +123,15 @@ struct DiscoveryView: View {
             )
         }
         .confirmationDialog(
-            connectionChoiceServer.map { "Connect to \($0.name)" } ?? "Choose Connection",
+            connectionChoiceServer.map {
+                AppLanguage.localizedString("Connect to %@", $0.name)
+            } ?? AppLanguage.localizedString("Choose Connection"),
             isPresented: connectionChoicePresented,
             titleVisibility: .visible
         ) {
             if let server = connectionChoiceServer {
                 ForEach(server.availableDirectCodexPorts, id: \.self) { port in
-                    Button("Use Codex (\(port))") {
+                    Button(AppLanguage.localizedString("Use Codex (%lld)", Int64(port))) {
                         let preferredServer = server.withConnectionPreference(.directCodex, codexPort: port)
                         connectionChoiceServer = nil
                         Task { await connectToServer(preferredServer) }
@@ -340,11 +342,11 @@ struct DiscoveryView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Text(title)
+                            Text(LocalizedStringKey(title))
                                 .litterFont(.subheadline, weight: .semibold)
                                 .foregroundColor(LitterTheme.textPrimary)
                             if let badge {
-                                Text(badge)
+                                Text(LocalizedStringKey(badge))
                                     .litterFont(.caption2, weight: .semibold)
                                     .foregroundColor(LitterTheme.accentStrong)
                                     .tracking(0.5)
@@ -360,7 +362,7 @@ struct DiscoveryView: View {
                                     )
                             }
                         }
-                        Text(subtitle)
+                        Text(LocalizedStringKey(subtitle))
                             .litterFont(.caption)
                             .foregroundColor(LitterTheme.textSecondary)
                             .multilineTextAlignment(.leading)
@@ -560,7 +562,7 @@ struct DiscoveryView: View {
     }
 
     private func serverSubtitle(_ server: DiscoveredServer) -> String {
-        if server.source == .local { return "In-process server" }
+        if server.source == .local { return AppLanguage.localizedString("In-process server") }
         let snapshot = connectedSnapshot(for: server)
         if let progressDetail = snapshot?.connectionProgressDetail,
            !progressDetail.isEmpty {
@@ -631,7 +633,7 @@ struct DiscoveryView: View {
         } else if prepared.canAttemptSSH {
             sshServer = prepared.server.withConnectionPreference(.ssh)
         } else {
-            connectError = "Server did not respond after wake attempt. Enable Wake for network access on the Mac."
+            connectError = AppLanguage.localizedString("Server did not respond after wake attempt. Enable Wake for network access on the Mac.")
         }
     }
 
@@ -877,7 +879,7 @@ struct DiscoveryView: View {
         connectError = nil
 
         guard let target = targetOverride ?? server.connectionTarget else {
-            connectError = "Server requires SSH login"
+            connectError = AppLanguage.localizedString("Server requires SSH login")
             connectingServer = nil
             return
         }
@@ -960,7 +962,7 @@ struct DiscoveryView: View {
         if appModel.snapshot?.servers.first(where: { $0.serverId == connectedServerId })?.health == .connected {
             navigateAfterConnect(server)
         } else {
-            connectError = "Failed to connect"
+            connectError = AppLanguage.localizedString("Failed to connect")
         }
     }
 
@@ -1314,11 +1316,11 @@ struct DiscoveryView: View {
     @MainActor
     private func connectSlingshotEnvironment(_ environment: AppSlingshotEnvironment) async {
         guard environment.online else {
-            connectError = "\(environment.displayName) is offline."
+            connectError = AppLanguage.localizedString("%@ is offline.", environment.displayName)
             return
         }
         guard let server = slingshotServer(for: environment) else {
-            connectError = "Could not prepare this connected computer."
+            connectError = AppLanguage.localizedString("Could not prepare this connected computer.")
             return
         }
         await connectToServer(server)
@@ -1575,7 +1577,7 @@ struct DiscoveryView: View {
             host = raw
             port = 8390
         } else {
-            connectError = "Enter a ws:// URL or host:port"
+            connectError = AppLanguage.localizedString("Enter a ws:// URL or host:port")
             return
         }
 
@@ -1603,12 +1605,12 @@ struct DiscoveryView: View {
         let wakeInput = manualWakeMAC.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedWakeMAC = DiscoveredServer.normalizeWakeMAC(wakeInput)
         if !wakeInput.isEmpty && normalizedWakeMAC == nil {
-            connectError = "Wake MAC must look like aa:bb:cc:dd:ee:ff"
+            connectError = AppLanguage.localizedString("Wake MAC must look like aa:bb:cc:dd:ee:ff")
             return
         }
 
         guard let sshPort = UInt16(manualSSHPort) else {
-            connectError = "SSH port must be a valid number"
+            connectError = AppLanguage.localizedString("SSH port must be a valid number")
             return
         }
         pendingSSHServer = DiscoveredServer(
@@ -1639,12 +1641,22 @@ struct DiscoveryView: View {
     private func connectionChoiceMessage(for server: DiscoveredServer) -> String {
         let directPorts = server.availableDirectCodexPorts.map(String.init)
         if directPorts.isEmpty {
-            return "Use SSH to bootstrap Codex on \(server.hostname)."
+            return AppLanguage.localizedString(
+                "Use SSH to bootstrap Codex on %@.",
+                server.hostname
+            )
         }
         if server.canConnectViaSSH {
-            return "Codex is available on ports \(directPorts.joined(separator: ", ")) and SSH is also available on port \(server.resolvedSSHPort)."
+            return AppLanguage.localizedString(
+                "Codex is available on ports %@ and SSH is also available on port %lld.",
+                directPorts.joined(separator: ", "),
+                Int64(server.resolvedSSHPort)
+            )
         }
-        return "Choose a Codex app-server port on \(server.hostname)."
+        return AppLanguage.localizedString(
+            "Choose a Codex app-server port on %@.",
+            server.hostname
+        )
     }
 
     private func progressTag(
@@ -1705,18 +1717,18 @@ private enum ManualConnectionMode: String, CaseIterable, Identifiable {
     var formHeader: String {
         switch self {
         case .codex:
-            return "Codex Server"
+            return AppLanguage.localizedString("Codex Server")
         case .ssh:
-            return "SSH Bootstrap"
+            return AppLanguage.localizedString("SSH Bootstrap")
         }
     }
 
     var primaryButtonTitle: String {
         switch self {
         case .codex:
-            return "Connect"
+            return AppLanguage.localizedString("Connect")
         case .ssh:
-            return "Continue to SSH Login"
+            return AppLanguage.localizedString("Continue to SSH Login")
         }
     }
 }

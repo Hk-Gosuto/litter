@@ -141,7 +141,7 @@ final class NetworkDiscovery {
         isScanning = true
         isInitialLoad = true
         scanProgress = 0
-        scanProgressLabel = "Discovering services…"
+        scanProgressLabel = AppLanguage.localizedString("Discovering services…")
         if LitterPlatform.supportsLocalRuntime {
             servers.append(DiscoveredServer(
                 id: "local",
@@ -211,7 +211,7 @@ final class NetworkDiscovery {
         await MainActor.run { [weak self] in
             guard let self, self.activeScanID == scanID else { return }
             self.scanProgress = 0.02
-            self.scanProgressLabel = "Scanning network…"
+            self.scanProgressLabel = AppLanguage.localizedString("Scanning network…")
         }
 
         let subscription = store.scanServersWithMdnsContextProgressive(
@@ -510,14 +510,14 @@ final class NetworkDiscovery {
         }
 
         if let urlError = error as? URLError, urlError.code == .timedOut {
-            return "Tailscale peer discovery timed out. Add a server manually with its MagicDNS name or Tailscale IP. Saved servers will still appear here."
+            return AppLanguage.localizedString("Tailscale peer discovery timed out. Add a server manually with its MagicDNS name or Tailscale IP. Saved servers will still appear here.")
         }
 
         if let parseError = error as? TailscalePeerParseError, parseError == .unsupportedSurface {
-            return "Tailscale returned its web UI instead of a peer list, so peer discovery is unavailable here. Add a server manually with its MagicDNS name or Tailscale IP. Saved servers will still appear here."
+            return AppLanguage.localizedString("Tailscale returned its web UI instead of a peer list, so peer discovery is unavailable here. Add a server manually with its MagicDNS name or Tailscale IP. Saved servers will still appear here.")
         }
 
-        return "Tailscale peer discovery is unavailable right now. Add a server manually with its MagicDNS name or Tailscale IP. Saved servers will still appear here."
+        return AppLanguage.localizedString("Tailscale peer discovery is unavailable right now. Add a server manually with its MagicDNS name or Tailscale IP. Saved servers will still appear here.")
     }
 
     nonisolated private static func probeTailscaleDiscoveryNotice(

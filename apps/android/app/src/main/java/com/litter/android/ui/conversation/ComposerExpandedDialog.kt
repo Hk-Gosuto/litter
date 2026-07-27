@@ -30,10 +30,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.scaled
@@ -51,9 +53,10 @@ fun ComposerExpandedDialog(
     onSend: () -> Unit,
     onDismiss: () -> Unit,
     canSend: Boolean,
-    placeholder: String = "Message\u2026",
+    placeholder: String? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val resolvedPlaceholder = placeholder ?: stringResource(R.string.composer_message_placeholder)
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
     Dialog(
@@ -85,7 +88,7 @@ fun ComposerExpandedDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CloseFullscreen,
-                            contentDescription = "Collapse composer",
+                            contentDescription = stringResource(R.string.conversation_collapse_composer),
                             tint = LitterTheme.textPrimary,
                         )
                     }
@@ -103,7 +106,7 @@ fun ComposerExpandedDialog(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Send",
+                                contentDescription = stringResource(R.string.common_send),
                                 tint = Color.Black,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -119,7 +122,7 @@ fun ComposerExpandedDialog(
                 ) {
                     if (text.isEmpty()) {
                         Text(
-                            text = placeholder,
+                            text = resolvedPlaceholder,
                             color = LitterTheme.textMuted,
                             fontSize = LitterTextStyle.body.scaled,
                         )

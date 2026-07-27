@@ -93,9 +93,9 @@ struct ImageGenerationToolCallView: View {
 
     private var summary: String {
         switch data.status {
-        case .completed: return "Generated image"
-        case .failed: return "Image generation failed"
-        default: return "Generating image…"
+        case .completed: return AppLanguage.localizedString("Generated image")
+        case .failed: return AppLanguage.localizedString("Image generation failed")
+        default: return AppLanguage.localizedString("Generating image…")
         }
     }
 
@@ -171,7 +171,7 @@ struct ImageGenerationToolCallView: View {
                             promptExpanded.toggle()
                         }
                     } label: {
-                        Text(promptExpanded ? "Show less" : "Show more")
+                        Text(AppLanguage.localizedString(promptExpanded ? "Show less" : "Show more"))
                             .litterFont(.caption2, weight: .medium)
                             .foregroundColor(LitterTheme.accent)
                     }
@@ -197,7 +197,7 @@ struct ImageGenerationToolCallView: View {
             Image(systemName: icon)
                 .litterFont(size: 24, weight: .medium)
                 .foregroundColor(tone)
-            Text(message)
+            Text(LocalizedStringKey(message))
                 .litterFont(.caption)
                 .foregroundColor(tone)
         }

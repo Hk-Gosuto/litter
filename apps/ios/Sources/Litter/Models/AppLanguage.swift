@@ -50,6 +50,14 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         return bundle.localizedString(forKey: key, value: key, table: nil)
     }
 
+    static func localizedString(_ key: String, _ arguments: CVarArg...) -> String {
+        String(
+            format: localizedString(key),
+            locale: current.locale,
+            arguments: arguments
+        )
+    }
+
     private static var inferredSystemLanguage: AppLanguage {
         guard let preferredLanguage = Locale.preferredLanguages.first else {
             return .english

@@ -29,10 +29,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -175,7 +177,7 @@ fun SubagentCard(
                         ) {
                             Icon(
                                 Icons.Default.OpenInNew,
-                                contentDescription = "Open",
+                                contentDescription = stringResource(R.string.common_open),
                                 tint = LitterTheme.accent,
                                 modifier = Modifier.size(16.dp),
                             )

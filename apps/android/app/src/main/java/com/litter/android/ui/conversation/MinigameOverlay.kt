@@ -36,9 +36,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.MinigameOverlayState
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -113,7 +115,7 @@ private fun Header(state: MinigameOverlayState, onClose: () -> Unit) {
         IconButton(onClick = onClose) {
             Icon(
                 Icons.Default.Close,
-                contentDescription = "Close minigame",
+                contentDescription = stringResource(R.string.conversation_close_minigame),
                 tint = LitterTheme.textSecondary,
                 modifier = Modifier.size(16.dp),
             )
@@ -218,7 +220,7 @@ private fun FailureCard(message: String, onRetry: () -> Unit) {
                 containerColor = Color.Transparent,
             ),
         ) {
-            Text("Try again", fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.conversation_try_again), fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.SemiBold)
         }
     }
 }

@@ -131,7 +131,13 @@ struct TipJarView: View {
                             Text(tier.displayName)
                                 .litterFont(.subheadline)
                                 .foregroundColor(LitterTheme.textPrimary)
-                            Text(store.isHeaderKittySelected(tier) ? "Shown on home" : "Hidden from home")
+                            Text(
+                                AppLanguage.localizedString(
+                                    store.isHeaderKittySelected(tier)
+                                        ? "Shown on home"
+                                        : "Hidden from home"
+                                )
+                            )
                                 .litterFont(.caption)
                                 .foregroundColor(LitterTheme.textSecondary)
                         }

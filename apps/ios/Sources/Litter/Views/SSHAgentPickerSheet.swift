@@ -158,7 +158,11 @@ struct SSHAgentPickerSheet: View {
                 Text("Agents")
                 Spacer()
                 if !availableBridgeKinds.isEmpty {
-                    Button(selectedKinds.count == availableBridgeKinds.count ? "None" : "All") {
+                    Button(
+                        AppLanguage.localizedString(
+                            selectedKinds.count == availableBridgeKinds.count ? "None" : "All"
+                        )
+                    ) {
                         if selectedKinds.count == availableBridgeKinds.count {
                             selectedKinds = []
                         } else {
@@ -284,11 +288,11 @@ private func runtimeSortRank(_ kind: AgentRuntimeKind) -> Int {
 private func statusLabel(_ status: AgentAvailabilityStatus, kind: AgentRuntimeKind) -> String {
     switch status {
     case .available:
-        return "Available"
+        return AppLanguage.localizedString("Available")
     case .agentCliMissing:
-        return "CLI missing"
+        return AppLanguage.localizedString("CLI missing")
     case .windowsNotYetSupported:
-        return "Windows not supported"
+        return AppLanguage.localizedString("Windows not supported")
     }
 }
 

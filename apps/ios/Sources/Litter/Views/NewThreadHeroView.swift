@@ -138,7 +138,7 @@ struct NewThreadHeroView: View {
             HStack(spacing: 6) {
                 Image(systemName: "server.rack")
                     .font(.system(size: 10, weight: .semibold))
-                Text(server?.displayName ?? "Server")
+                Text(server?.displayName ?? AppLanguage.localizedString("Server"))
                     .litterMonoFont(size: 12, weight: .regular)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))

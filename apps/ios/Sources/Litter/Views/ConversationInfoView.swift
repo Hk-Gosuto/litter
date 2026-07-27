@@ -86,7 +86,7 @@ struct ConversationInfoView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(isServerOnly ? "Server Info" : "Info")
+                Text(AppLanguage.localizedString(isServerOnly ? "Server Info" : "Info"))
                     .litterFont(size: 16, weight: .semibold)
                     .foregroundStyle(LitterTheme.textPrimary)
             }
@@ -127,7 +127,10 @@ struct ConversationInfoView: View {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 10, height: 10)
-                Text(thread?.displayTitle ?? "Untitled session")
+                Text(
+                    thread?.displayTitle
+                        ?? AppLanguage.localizedString("Untitled session")
+                )
                     .litterFont(size: 22, weight: .bold)
                     .foregroundStyle(LitterTheme.textPrimary)
                     .lineLimit(2)
@@ -239,7 +242,7 @@ struct ConversationInfoView: View {
                     .foregroundStyle(LitterTheme.accent)
                     .frame(width: 52, height: 52)
                     .modifier(GlassRectModifier(cornerRadius: 14))
-                Text(label)
+                Text(LocalizedStringKey(label))
                     .litterFont(size: 11, weight: .medium)
                     .foregroundStyle(LitterTheme.textSecondary)
             }
@@ -250,7 +253,7 @@ struct ConversationInfoView: View {
 
     private func timestampLabel(_ label: String, timestamp: Int64) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .litterFont(size: 10, weight: .medium)
                 .foregroundStyle(LitterTheme.textMuted)
             Text(relativeDate(timestamp))
@@ -271,11 +274,11 @@ struct ConversationInfoView: View {
 
     private var statusLabel: String {
         switch thread?.info.status {
-        case .active: return "Active"
-        case .idle: return "Idle"
-        case .systemError: return "Error"
-        case .notLoaded: return "Not Loaded"
-        default: return "Unknown"
+        case .active: return AppLanguage.localizedString("Active")
+        case .idle: return AppLanguage.localizedString("Idle")
+        case .systemError: return AppLanguage.localizedString("Error")
+        case .notLoaded: return AppLanguage.localizedString("Not Loaded")
+        default: return AppLanguage.localizedString("Unknown")
         }
     }
 
@@ -562,7 +565,7 @@ struct ConversationInfoView: View {
             }
             .frame(width: 56, height: 56)
 
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .litterFont(size: 10)
                 .foregroundStyle(LitterTheme.textMuted)
         }
@@ -615,7 +618,12 @@ struct ConversationInfoView: View {
                                 .foregroundStyle(LitterTheme.textSecondary)
                         }
                         if models.count > 8 {
-                            Text("+\(models.count - 8) more")
+                            Text(
+                                AppLanguage.localizedString(
+                                    "+%lld more",
+                                    Int64(models.count - 8)
+                                )
+                            )
                                 .litterFont(size: 11)
                                 .foregroundStyle(LitterTheme.textMuted)
                         }
@@ -670,11 +678,11 @@ struct ConversationInfoView: View {
 
     private func healthLabel(_ health: AppServerHealth) -> String {
         switch health {
-        case .connected: return "Connected"
-        case .connecting: return "Connecting"
-        case .disconnected: return "Disconnected"
-        case .unresponsive: return "Unresponsive"
-        case .unknown: return "Unknown"
+        case .connected: return AppLanguage.localizedString("Connected")
+        case .connecting: return AppLanguage.localizedString("Connecting")
+        case .disconnected: return AppLanguage.localizedString("Disconnected")
+        case .unresponsive: return AppLanguage.localizedString("Unresponsive")
+        case .unknown: return AppLanguage.localizedString("Unknown")
         }
     }
 
@@ -704,15 +712,15 @@ struct ConversationInfoView: View {
 
     private func planTypeLabel(_ planType: PlanType) -> String {
         switch planType {
-        case .free: return "Free"
-        case .go: return "Go"
-        case .plus: return "Plus"
-        case .pro: return "Pro"
-        case .team: return "Team"
-        case .business: return "Business"
-        case .enterprise: return "Enterprise"
-        case .edu: return "Edu"
-        case .unknown: return "Unknown"
+        case .free: return AppLanguage.localizedString("Free")
+        case .go: return AppLanguage.localizedString("Go")
+        case .plus: return AppLanguage.localizedString("Plus")
+        case .pro: return AppLanguage.localizedString("Pro")
+        case .team: return AppLanguage.localizedString("Team")
+        case .business: return AppLanguage.localizedString("Business")
+        case .enterprise: return AppLanguage.localizedString("Enterprise")
+        case .edu: return AppLanguage.localizedString("Edu")
+        case .unknown: return AppLanguage.localizedString("Unknown")
         }
     }
 

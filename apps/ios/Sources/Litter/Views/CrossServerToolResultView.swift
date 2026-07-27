@@ -167,7 +167,7 @@ struct SessionServerCardRow: View {
                     Circle()
                         .fill(connected ? LitterTheme.accent : LitterTheme.textMuted.opacity(0.5))
                         .frame(width: 8, height: 8)
-                    Text(connected ? "Connected" : "Offline")
+                    Text(AppLanguage.localizedString(connected ? "Connected" : "Offline"))
                         .litterFont(.caption)
                         .foregroundColor(LitterTheme.textMuted)
                 }

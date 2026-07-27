@@ -155,12 +155,18 @@ struct UserBubble: View {
                                     expandedLongText.toggle()
                                 }
                             } label: {
-                                Text(expandedLongText ? "Show less" : "Show more")
+                                Text(AppLanguage.localizedString(expandedLongText ? "Show less" : "Show more"))
                                     .litterFont(.caption2, weight: .semibold)
                                     .foregroundColor(LitterTheme.accent)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel(expandedLongText ? "Show less user message" : "Show more user message")
+                            .accessibilityLabel(
+                                AppLanguage.localizedString(
+                                    expandedLongText
+                                        ? "Show less user message"
+                                        : "Show more user message"
+                                )
+                            )
                         }
                     }
                 }
@@ -735,7 +741,7 @@ struct MessageBubbleView: View {
     private var genericSystemBubble: some View {
         let (title, body) = extractSystemTitleAndBody(message.text)
         let markdown = title == nil ? message.text : body
-        let displayTitle = title ?? "System"
+        let displayTitle = title ?? AppLanguage.localizedString("System")
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {

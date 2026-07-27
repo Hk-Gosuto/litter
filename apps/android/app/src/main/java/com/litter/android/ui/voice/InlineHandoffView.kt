@@ -17,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.rememberStickyFollowTail
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.HydratedConversationItemContent
 import uniffi.codex_mobile_client.ThreadKey
 
@@ -96,7 +98,7 @@ fun InlineHandoffView(
                 is HydratedConversationItemContent.CodeReview -> {
                     val text = content.v1.findings.firstOrNull()?.title ?: "Code review"
                     Text(
-                        text = "Review: $text",
+                        text = stringResource(R.string.voice_review, text),
                         color = LitterTheme.textPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
@@ -125,7 +127,10 @@ fun InlineHandoffView(
 
                 is HydratedConversationItemContent.ImageView -> {
                     Text(
-                        text = "Viewed image: ${content.v1.path.substringAfterLast('/')}",
+                        text = stringResource(
+                            R.string.voice_viewed_image,
+                            content.v1.path.substringAfterLast('/'),
+                        ),
                         color = LitterTheme.textMuted,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(vertical = 1.dp),

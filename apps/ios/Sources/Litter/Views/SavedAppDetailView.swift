@@ -113,7 +113,10 @@ struct SavedAppDetailView: View {
                 .presentationDetents([.medium])
         }
         .alert(
-            "Delete \"\(payload?.app.title ?? "")\"?",
+            AppLanguage.localizedString(
+                "Delete \"%@\"?",
+                payload?.app.title ?? ""
+            ),
             isPresented: $showDeleteConfirm
         ) {
             Button("Cancel", role: .cancel) {}
@@ -383,7 +386,7 @@ struct SavedAppDetailView: View {
 
     private func runUpdate(prompt: String) async {
         guard let serverId = SavedAppDetailView.resolveActiveServerId() else {
-            updateError = "No connected server available"
+            updateError = AppLanguage.localizedString("No connected server available")
             return
         }
         isUpdating = true

@@ -120,14 +120,14 @@ fun DirectoryPickerSheet(
         }
         val serverSnapshot = appModel.snapshot.value?.servers?.firstOrNull { it.serverId == serverId }
         if (serverSnapshot?.canBrowseDirectories != true) {
-            errorMessage = "Selected server is not connected."
+            errorMessage = context.getString(R.string.directory_picker_server_disconnected)
             return "/"
         }
         return runCatching {
             appModel.client.resolveRemoteHome(serverId)
         }.getOrElse { error ->
             if (isDisconnectedError(error)) {
-                errorMessage = "Selected server is not connected."
+                errorMessage = context.getString(R.string.directory_picker_server_disconnected)
             }
             "/"
         }
@@ -147,7 +147,7 @@ fun DirectoryPickerSheet(
                 currentPath = normalizedPath
             }.onFailure { err ->
                 allEntries = emptyList()
-                errorMessage = err.message ?: "Failed to list directory."
+                errorMessage = err.message ?: context.getString(R.string.directory_picker_list_failed)
             }
             isLoading = false
             return
@@ -157,7 +157,7 @@ fun DirectoryPickerSheet(
         if (serverSnapshot?.canBrowseDirectories != true) {
             isLoading = false
             allEntries = emptyList()
-            errorMessage = "Selected server is not connected."
+            errorMessage = context.getString(R.string.directory_picker_server_disconnected)
             return
         }
 
@@ -175,9 +175,9 @@ fun DirectoryPickerSheet(
         }.onFailure { error ->
             allEntries = emptyList()
             errorMessage = if (isDisconnectedError(error)) {
-                "Selected server is not connected."
+                context.getString(R.string.directory_picker_server_disconnected)
             } else {
-                error.message ?: "Failed to list directory."
+                error.message ?: context.getString(R.string.directory_picker_list_failed)
             }
         }
         isLoading = false
@@ -210,14 +210,11 @@ fun DirectoryPickerSheet(
     }
 
     fun relativeTime(epochMillis: Long): String {
-        val deltaMinutes = ((System.currentTimeMillis() - epochMillis).coerceAtLeast(0L) / 60000L)
-        return when {
-            deltaMinutes < 1L -> "just now"
-            deltaMinutes < 60L -> "${deltaMinutes}m ago"
-            deltaMinutes < 1440L -> "${deltaMinutes / 60L}h ago"
-            deltaMinutes < 10080L -> "${deltaMinutes / 1440L}d ago"
-            else -> "${deltaMinutes / 10080L}w ago"
-        }
+        return android.text.format.DateUtils.getRelativeTimeSpanString(
+            epochMillis,
+            System.currentTimeMillis(),
+            android.text.format.DateUtils.MINUTE_IN_MILLIS,
+        ).toString()
     }
 
     fun navigateInto(name: String) {
@@ -554,7 +551,13 @@ fun DirectoryPickerSheet(
                                 Spacer(Modifier.weight(1f))
                                 Box {
                                     IconButton(onClick = { showRecentsMenu = true }) {
-                                        Icon(Icons.Default.MoreHoriz, contentDescription = "Recent options", tint = LitterTheme.textMuted)
+                                        Icon(
+                                            Icons.Default.MoreHoriz,
+                                            contentDescription = stringResource(
+                                                R.string.directory_picker_recent_options,
+                                            ),
+                                            tint = LitterTheme.textMuted,
+                                        )
                                     }
                                     DropdownMenu(
                                         expanded = showRecentsMenu,

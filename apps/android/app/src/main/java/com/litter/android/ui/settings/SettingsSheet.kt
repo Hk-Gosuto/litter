@@ -264,7 +264,11 @@ private fun SettingsTopLevel(
             ) {
                 FontRow("Berkeley Mono", BerkeleyMono, LitterThemeManager.monoFontEnabled) { LitterThemeManager.applyFont(true) }
                 HorizontalDivider(color = LitterTheme.divider)
-                FontRow("System Default", FontFamily.Default, !LitterThemeManager.monoFontEnabled) { LitterThemeManager.applyFont(false) }
+                FontRow(
+                    stringResource(R.string.settings_system_default),
+                    FontFamily.Default,
+                    !LitterThemeManager.monoFontEnabled,
+                ) { LitterThemeManager.applyFont(false) }
             }
         }
 
@@ -541,7 +545,7 @@ private fun SettingsTopLevel(
                     null
                 } catch (e: Exception) {
                     LLog.e("SettingsSheet", "SSH reconnect failed: ${e.message}", e)
-                    e.message ?: "SSH reconnect failed"
+                    e.message ?: context.getString(R.string.settings_ssh_reconnect_failed)
                 }
             },
         )
@@ -585,7 +589,7 @@ private fun ServerSettingsRow(
             ) {
                 Icon(
                     Icons.Default.MoreVert,
-                    contentDescription = "Server actions",
+                    contentDescription = stringResource(R.string.a11y_server_actions),
                     tint = LitterTheme.textSecondary,
                 )
             }
@@ -594,7 +598,7 @@ private fun ServerSettingsRow(
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             if (onEdit != null) {
                 DropdownMenuItem(
-                    text = { Text("Edit") },
+                    text = { Text(stringResource(R.string.common_edit)) },
                     onClick = {
                         showMenu = false
                         onEdit()
@@ -603,7 +607,7 @@ private fun ServerSettingsRow(
             }
             if (onRename != null) {
                 DropdownMenuItem(
-                    text = { Text("Rename") },
+                    text = { Text(stringResource(R.string.common_rename)) },
                     onClick = {
                         showMenu = false
                         onRename()
@@ -611,7 +615,7 @@ private fun ServerSettingsRow(
                 )
             }
             DropdownMenuItem(
-                text = { Text("Remove") },
+                text = { Text(stringResource(R.string.common_remove)) },
                 onClick = {
                     showMenu = false
                     onRemove()
@@ -621,12 +625,12 @@ private fun ServerSettingsRow(
     }
 }
 
-private enum class ServerConnectionMode(val label: String, val formHeader: String) {
-    LOCAL("Local", "Local Runtime"),
-    SSH("SSH", "SSH Host"),
-    DIRECT_CODEX("Codex", "Codex Server"),
-    WEBSOCKET("WebSocket", "Codex URL"),
-    SLINGSHOT("Slingshot", "Slingshot"),
+private enum class ServerConnectionMode(val labelRes: Int, val formHeaderRes: Int) {
+    LOCAL(R.string.settings_connection_local, R.string.settings_connection_local_runtime),
+    SSH(R.string.settings_connection_ssh, R.string.settings_connection_ssh_host),
+    DIRECT_CODEX(R.string.settings_connection_codex, R.string.settings_connection_codex_server),
+    WEBSOCKET(R.string.settings_connection_websocket, R.string.settings_connection_codex_url),
+    SLINGSHOT(R.string.settings_connection_slingshot, R.string.settings_connection_slingshot),
 }
 
 private fun isSettingsSlingshotUrl(rawUrl: String): Boolean =
@@ -636,7 +640,7 @@ private fun isSettingsSlingshotUrl(rawUrl: String): Boolean =
 private suspend fun loadSettingsSlingshotTokens(context: Context) =
     ChatGPTOAuth.requireStoredOrRefreshedTokens(
         context,
-        "Sign in with ChatGPT before connecting with Slingshot.",
+        context.getString(R.string.discovery_sign_in_slingshot),
     )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -681,7 +685,7 @@ private fun ServerEditSheet(
     fun validateAndBuild(): SavedServer? {
         val name = displayName.trim()
         if (name.isEmpty()) {
-            validationError = "Server name cannot be empty."
+            validationError = context.getString(R.string.settings_server_name_required)
             return null
         }
 
@@ -712,18 +716,18 @@ private fun ServerEditSheet(
             ServerConnectionMode.SSH -> {
                 val resolvedHost = host.trim()
                 if (resolvedHost.isEmpty()) {
-                    validationError = "Host cannot be empty."
+                    validationError = context.getString(R.string.settings_host_required)
                     return null
                 }
                 val resolvedSSHPort = sshPort.trim().toIntOrNull()
                 if (resolvedSSHPort == null || resolvedSSHPort !in 1..65535) {
-                    validationError = "SSH port must be a valid number."
+                    validationError = context.getString(R.string.discovery_invalid_ssh_port)
                     return null
                 }
                 val wakeInput = wakeMAC.trim()
                 val resolvedWakeMAC = SavedServer.normalizeWakeMac(wakeInput)
                 if (wakeInput.isNotEmpty() && resolvedWakeMAC == null) {
-                    validationError = "Wake MAC must look like aa:bb:cc:dd:ee:ff."
+                    validationError = context.getString(R.string.discovery_invalid_wake_mac)
                     return null
                 }
                 SavedServer(
@@ -746,12 +750,12 @@ private fun ServerEditSheet(
             ServerConnectionMode.DIRECT_CODEX -> {
                 val resolvedHost = host.trim()
                 if (resolvedHost.isEmpty()) {
-                    validationError = "Host cannot be empty."
+                    validationError = context.getString(R.string.settings_host_required)
                     return null
                 }
                 val resolvedCodexPort = codexPort.trim().toIntOrNull()
                 if (resolvedCodexPort == null || resolvedCodexPort !in 1..65535) {
-                    validationError = "Codex port must be a valid number."
+                    validationError = context.getString(R.string.settings_invalid_codex_port)
                     return null
                 }
                 SavedServer(
@@ -774,12 +778,12 @@ private fun ServerEditSheet(
             ServerConnectionMode.WEBSOCKET -> {
                 val rawURL = websocketURL.trim()
                 if (!rawURL.startsWith("ws://", ignoreCase = true) && !rawURL.startsWith("wss://", ignoreCase = true)) {
-                    validationError = "Enter a valid ws:// or wss:// URL."
+                    validationError = context.getString(R.string.settings_invalid_websocket_url)
                     return null
                 }
                 val uri = runCatching { java.net.URI(rawURL) }.getOrNull()
                 if (uri == null || uri.host.isNullOrEmpty()) {
-                    validationError = "Enter a valid ws:// or wss:// URL."
+                    validationError = context.getString(R.string.settings_invalid_websocket_url)
                     return null
                 }
                 val resolvedPort = if (uri.port != -1) uri.port else null
@@ -802,7 +806,7 @@ private fun ServerEditSheet(
             }
             ServerConnectionMode.SLINGSHOT -> {
                 val saved = originalSaved ?: run {
-                    validationError = "Remove and add this connected computer again."
+                    validationError = context.getString(R.string.settings_readd_computer)
                     return null
                 }
                 saved.copy(
@@ -839,7 +843,7 @@ private fun ServerEditSheet(
 
     suspend fun connectSlingshotSaved(saved: SavedServer, stepUpToken: String) {
         val websocketURL = saved.websocketURL?.takeIf(::isSettingsSlingshotUrl)
-            ?: throw IllegalStateException("Saved server is not a Slingshot connection.")
+            ?: throw IllegalStateException(context.getString(R.string.settings_invalid_slingshot_server))
 
         val tokens = loadSettingsSlingshotTokens(context)
         appModel.serverBridge.connectRemoteSlingshotUrlServer(
@@ -872,13 +876,13 @@ private fun ServerEditSheet(
         }
         if (result.resultCode != android.app.Activity.RESULT_OK) {
             validationError = result.data?.getStringExtra(ChatGPTOAuthActivity.EXTRA_ERROR)
-                ?: "Remote-control authorization was cancelled."
+                ?: context.getString(R.string.discovery_remote_auth_cancelled)
             isReconnecting = false
             return@rememberLauncherForActivityResult
         }
         val stepUpToken = ChatGPTOAuthActivity.parseRemoteControlStepUpToken(result.data)
         if (stepUpToken == null) {
-            validationError = "Remote-control authorization returned incomplete credentials."
+            validationError = context.getString(R.string.discovery_remote_auth_incomplete)
             isReconnecting = false
             return@rememberLauncherForActivityResult
         }
@@ -907,7 +911,9 @@ private fun ServerEditSheet(
             )
         } catch (e: Exception) {
             pendingSlingshotReconnect = null
-            validationError = e.localizedMessage ?: e.message ?: "Unable to authorize remote control."
+            validationError = e.localizedMessage
+                ?: e.message
+                ?: context.getString(R.string.discovery_authorize_failed)
         }
     }
 
@@ -926,18 +932,18 @@ private fun ServerEditSheet(
             // Header
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1f))
-                Text("Edit Server", color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.settings_edit_server), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text("Done", color = LitterTheme.accent) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done), color = LitterTheme.accent) }
             }
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
-                    SectionHeader("Name")
+                    SectionHeader(stringResource(R.string.settings_name))
                     OutlinedTextField(
                         value = displayName,
                         onValueChange = { displayName = it },
-                        label = { Text("Server name") },
+                        label = { Text(stringResource(R.string.settings_server_name)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
@@ -945,23 +951,23 @@ private fun ServerEditSheet(
                 }
 
                 item {
-                    SectionHeader(connectionMode.formHeader)
+                    SectionHeader(stringResource(connectionMode.formHeaderRes))
 
                     if (originalSaved?.alleycatNodeId != null || originalSaved?.alleycatAgentWire == "ssh-bridge") {
                         Text(
-                            "This paired server uses saved pairing metadata. Edit its display name here, or remove and add it again to change the pairing.",
+                            stringResource(R.string.settings_pairing_metadata_help),
                             color = LitterTheme.textSecondary,
                             fontSize = 12.sp,
                         )
                     } else if (server.isLocal) {
                         Text(
-                            "This device's local runtime is managed automatically.",
+                            stringResource(R.string.settings_local_runtime_managed),
                             color = LitterTheme.textSecondary,
                             fontSize = 12.sp,
                         )
                     } else if (connectionMode == ServerConnectionMode.SLINGSHOT) {
                         Text(
-                            "This connected computer comes from ChatGPT using your signed-in account. Edit its display name here, or remove and add it again to change the computer.",
+                            stringResource(R.string.settings_connected_computer_help),
                             color = LitterTheme.textSecondary,
                             fontSize = 12.sp,
                         )
@@ -991,7 +997,7 @@ private fun ServerEditSheet(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        mode.label,
+                                        stringResource(mode.labelRes),
                                         color = if (selected) LitterTheme.onAccentStrong else LitterTheme.textSecondary,
                                         fontSize = 12.sp,
                                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
@@ -1007,7 +1013,7 @@ private fun ServerEditSheet(
                                 OutlinedTextField(
                                     value = host,
                                     onValueChange = { host = it },
-                                    label = { Text("hostname or IP") },
+                                    label = { Text(stringResource(R.string.discovery_hostname_or_ip)) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
@@ -1015,7 +1021,7 @@ private fun ServerEditSheet(
                                 OutlinedTextField(
                                     value = sshPort,
                                     onValueChange = { sshPort = it },
-                                    label = { Text("SSH port") },
+                                    label = { Text(stringResource(R.string.discovery_ssh_port)) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
@@ -1023,7 +1029,7 @@ private fun ServerEditSheet(
                                 OutlinedTextField(
                                     value = wakeMAC,
                                     onValueChange = { wakeMAC = it },
-                                    label = { Text("wake MAC (optional)") },
+                                    label = { Text(stringResource(R.string.discovery_wake_mac_optional)) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
@@ -1033,7 +1039,7 @@ private fun ServerEditSheet(
                                 OutlinedTextField(
                                     value = host,
                                     onValueChange = { host = it },
-                                    label = { Text("hostname or IP") },
+                                    label = { Text(stringResource(R.string.discovery_hostname_or_ip)) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
@@ -1041,7 +1047,7 @@ private fun ServerEditSheet(
                                 OutlinedTextField(
                                     value = codexPort,
                                     onValueChange = { codexPort = it },
-                                    label = { Text("Codex port") },
+                                    label = { Text(stringResource(R.string.settings_codex_port)) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
@@ -1062,7 +1068,7 @@ private fun ServerEditSheet(
 
                         if (connectionMode == ServerConnectionMode.WEBSOCKET) {
                             Text(
-                                "Prefer SSH when possible. If you run codex manually, bind loopback and tunnel it yourself; do not expose it directly to the internet unless you know what you are doing.",
+                                stringResource(R.string.settings_manual_codex_warning),
                                 color = LitterTheme.textMuted,
                                 fontSize = 11.sp,
                                 modifier = Modifier.padding(top = 4.dp),
@@ -1090,7 +1096,7 @@ private fun ServerEditSheet(
                                 colors = ButtonDefaults.buttonColors(containerColor = LitterTheme.accent),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("Save", color = LitterTheme.onAccentStrong)
+                                Text(stringResource(R.string.common_save), color = LitterTheme.onAccentStrong)
                             }
                             if (server.isLocal || (originalSaved?.alleycatNodeId == null && originalSaved?.alleycatAgentWire != "ssh-bridge")) {
                                 Button(
@@ -1132,7 +1138,13 @@ private fun ServerEditSheet(
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     Text(
-                                        if (server.isLocal) "Save & Restart" else "Save & Reconnect",
+                                        stringResource(
+                                            if (server.isLocal) {
+                                                R.string.settings_save_restart
+                                            } else {
+                                                R.string.settings_save_reconnect
+                                            },
+                                        ),
                                         color = LitterTheme.background,
                                     )
                                 }
@@ -1149,11 +1161,11 @@ private fun ServerEditSheet(
     validationError?.let { error ->
         AlertDialog(
             onDismissRequest = { validationError = null },
-            title = { Text("Invalid Server") },
+            title = { Text(stringResource(R.string.settings_invalid_server)) },
             text = { Text(error) },
             confirmButton = {
                 TextButton(onClick = { validationError = null }) {
-                    Text("OK")
+                    Text(stringResource(R.string.common_ok))
                 }
             },
         )
@@ -1183,7 +1195,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                     if (WallpaperManager.setCustomFromUri(uri)) {
                         null
                     } else {
-                        "Unable to save wallpaper from the selected image."
+                        context.getString(R.string.settings_wallpaper_save_failed)
                     }
             }
         }
@@ -1200,7 +1212,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
             }
             Spacer(Modifier.weight(1f))
-            Text("Appearance", color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.appearance_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.width(48.dp))
         }
@@ -1218,7 +1230,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "Match the device setting, or keep Litter fixed in light or dark mode.",
+                    stringResource(R.string.settings_appearance_help),
                     color = LitterTheme.textMuted,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(start = 4.dp),
@@ -1226,7 +1238,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
             }
 
             // Font size slider
-            item { SectionHeader("Font Size") }
+            item { SectionHeader(stringResource(R.string.appearance_font_size)) }
             item {
                 Column(
                     Modifier.fillMaxWidth()
@@ -1234,7 +1246,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                         .padding(12.dp),
                 ) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Font Size", color = LitterTheme.textPrimary, fontSize = 14.sp)
+                        Text(stringResource(R.string.appearance_font_size), color = LitterTheme.textPrimary, fontSize = 14.sp)
                         Spacer(Modifier.weight(1f))
                         val label = com.litter.android.ui.ConversationTextSize.fromStep(textSizeStep.toInt()).label
                         Text(label, color = LitterTheme.textSecondary, fontSize = 13.sp)
@@ -1257,11 +1269,11 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                 }
             }
             item {
-                Text("Pinch in conversations to adjust, or use this slider.", color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+                Text(stringResource(R.string.appearance_font_size_helper), color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
             }
 
             // Wallpaper picker
-            item { SectionHeader("Chat Wallpaper") }
+            item { SectionHeader(stringResource(R.string.settings_chat_wallpaper)) }
             item {
                 Row(
                     modifier = Modifier
@@ -1287,7 +1299,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                             onClick = { wallpaperPicker.launch("image/*") },
                             contentPadding = ButtonDefaults.TextButtonContentPadding,
                         ) {
-                            Text("Choose from Library", color = LitterTheme.accent)
+                            Text(stringResource(R.string.appearance_choose_library), color = LitterTheme.accent)
                         }
                         if (WallpaperManager.isWallpaperSet) {
                             TextButton(
@@ -1297,7 +1309,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                                 },
                                 contentPadding = ButtonDefaults.TextButtonContentPadding,
                             ) {
-                                Text("Remove Wallpaper", color = LitterTheme.danger)
+                                Text(stringResource(R.string.appearance_remove_wallpaper), color = LitterTheme.danger)
                             }
                         }
                         if (!wallpaperError.isNullOrBlank()) {
@@ -1407,7 +1419,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
             }
 
             // Light theme picker
-            item { SectionHeader("Light Theme") }
+            item { SectionHeader(stringResource(R.string.appearance_light_theme)) }
             item {
                 val selectedLight = LitterThemeManager.lightThemes.firstOrNull {
                     it.slug == LitterThemeManager.lightTheme.slug
@@ -1416,7 +1428,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
             }
 
             // Dark theme picker
-            item { SectionHeader("Dark Theme") }
+            item { SectionHeader(stringResource(R.string.appearance_dark_theme)) }
             item {
                 val selectedDark = LitterThemeManager.darkThemes.firstOrNull {
                     it.slug == LitterThemeManager.darkTheme.slug
@@ -1436,7 +1448,11 @@ private fun AppearanceScreen(onBack: () -> Unit) {
             val themes = if (type == LitterColorThemeType.DARK) LitterThemeManager.darkThemes else LitterThemeManager.lightThemes
             val selectedSlug = if (type == LitterColorThemeType.DARK) LitterThemeManager.darkTheme.slug else LitterThemeManager.lightTheme.slug
             ThemePickerContent(
-                title = if (type == LitterColorThemeType.DARK) "Dark Theme" else "Light Theme",
+                title = if (type == LitterColorThemeType.DARK) {
+                    stringResource(R.string.appearance_dark_theme)
+                } else {
+                    stringResource(R.string.appearance_light_theme)
+                },
                 themes = themes,
                 selectedSlug = selectedSlug,
                 onSelect = { slug ->
@@ -1482,7 +1498,7 @@ private fun ThemePickerContent(
             Spacer(Modifier.weight(1f))
             Text(title, color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = onDismiss) { Text("Done", color = LitterTheme.accent) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done), color = LitterTheme.accent) }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -1503,7 +1519,7 @@ private fun ThemePickerContent(
                 cursorBrush = SolidColor(LitterTheme.accent),
                 modifier = Modifier.fillMaxWidth(),
                 decorationBox = { inner ->
-                    if (searchQuery.isEmpty()) Text("Search themes", color = LitterTheme.textMuted, fontSize = 14.sp)
+                    if (searchQuery.isEmpty()) Text(stringResource(R.string.appearance_search_themes), color = LitterTheme.textMuted, fontSize = 14.sp)
                     inner()
                 },
             )
@@ -1516,7 +1532,7 @@ private fun ThemePickerContent(
             Column(Modifier.fillMaxWidth().padding(top = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Default.Search, null, tint = LitterTheme.textMuted, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.height(8.dp))
-                Text("No matching themes", color = LitterTheme.textPrimary, fontSize = 14.sp)
+                Text(stringResource(R.string.appearance_no_matching_themes), color = LitterTheme.textPrimary, fontSize = 14.sp)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1584,7 +1600,7 @@ private fun ThemePickerButton(entry: LitterThemeIndexEntry?, onClick: () -> Unit
             Spacer(Modifier.width(10.dp))
             Text(entry.name, color = LitterTheme.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
         } else {
-            Text("No themes", color = LitterTheme.textMuted, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.appearance_no_themes), color = LitterTheme.textMuted, fontSize = 14.sp, modifier = Modifier.weight(1f))
         }
         Text("⇅", color = LitterTheme.textMuted, fontSize = 12.sp)
     }
@@ -1663,7 +1679,7 @@ private fun PetsScreen(onBack: () -> Unit) {
                 .onSuccess { pets = it }
                 .onFailure {
                     pets = emptyList()
-                    error = it.message ?: "Unable to load pets."
+                    error = it.message ?: context.getString(R.string.pet_load_unavailable)
                 }
             loading = false
         }
@@ -1686,7 +1702,7 @@ private fun PetsScreen(onBack: () -> Unit) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
                 }
                 Spacer(Modifier.weight(1f))
-                Text("Pet", color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.pet_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { refresh() }, enabled = selectedServerId.isNotBlank() && !loading) {
                     Icon(Icons.Default.Refresh, "Refresh", tint = LitterTheme.accent)
@@ -1697,8 +1713,8 @@ private fun PetsScreen(onBack: () -> Unit) {
         item { SectionHeader("Wake") }
         item {
             SettingsRow(
-                label = "Show Pet",
-                subtitle = PetOverlayController.selectedPet?.displayName ?: "No pet selected",
+                label = stringResource(R.string.pet_show),
+                subtitle = PetOverlayController.selectedPet?.displayName ?: stringResource(R.string.pet_none_selected),
                 icon = { Icon(Icons.Default.Pets, null, tint = LitterTheme.accent, modifier = Modifier.size(18.dp)) },
                 trailing = {
                     Switch(
@@ -1711,11 +1727,11 @@ private fun PetsScreen(onBack: () -> Unit) {
         }
         item {
             SettingsRow(
-                label = "Show Over Other Apps",
+                label = stringResource(R.string.pet_show_over_apps),
                 subtitle = if (overlayPermissionGranted) {
-                    "Overlay permission granted"
+                    stringResource(R.string.settings_overlay_granted)
                 } else {
-                    "Needs Display over other apps permission"
+                    stringResource(R.string.settings_overlay_needed)
                 },
                 icon = { Icon(Icons.Default.Widgets, null, tint = LitterTheme.accent, modifier = Modifier.size(18.dp)) },
                 trailing = {
@@ -1740,7 +1756,7 @@ private fun PetsScreen(onBack: () -> Unit) {
 
         item { SectionHeader("Server") }
         if (connectedServers.isEmpty()) {
-            item { SettingsRow(label = "Connect to a server first") }
+            item { SettingsRow(label = stringResource(R.string.settings_connect_server_first)) }
         } else {
             items(connectedServers, key = { it.serverId }) { server ->
                 SettingsRow(
@@ -1759,7 +1775,7 @@ private fun PetsScreen(onBack: () -> Unit) {
         item { SectionHeader("Pets") }
         when {
             selectedServerId.isBlank() -> {
-                item { SettingsRow(label = "No server selected") }
+                item { SettingsRow(label = stringResource(R.string.pet_no_server_selected)) }
             }
             loading -> {
                 item {
@@ -1772,15 +1788,20 @@ private fun PetsScreen(onBack: () -> Unit) {
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), color = LitterTheme.accent, strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
-                        Text("Loading pets", color = LitterTheme.textSecondary, fontSize = 13.sp)
+                        Text(stringResource(R.string.pet_loading), color = LitterTheme.textSecondary, fontSize = 13.sp)
                     }
                 }
             }
             error != null -> {
-                item { SettingsRow(label = "Unable to load pets", subtitle = error) }
+                item { SettingsRow(label = stringResource(R.string.pet_load_unavailable), subtitle = error) }
             }
             pets.isEmpty() -> {
-                item { SettingsRow(label = "No pets found", subtitle = "~/.codex/pets has no hatch-pet packages") }
+                item {
+                    SettingsRow(
+                        label = stringResource(R.string.pet_none_found),
+                        subtitle = stringResource(R.string.pet_none_found_detail),
+                    )
+                }
             }
             else -> {
                 items(pets, key = { it.id }) { pet ->
@@ -1811,7 +1832,7 @@ private fun PetsScreen(onBack: () -> Unit) {
         }
 
         PetOverlayController.errorMessage?.let { message ->
-            item { SettingsRow(label = "Pet load failed", subtitle = message) }
+            item { SettingsRow(label = stringResource(R.string.pet_load_failed), subtitle = message) }
         }
 
         item { Spacer(Modifier.height(32.dp)) }
@@ -1839,7 +1860,7 @@ private fun ExperimentalScreen(onBack: () -> Unit) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
             }
             Spacer(Modifier.weight(1f))
-            Text("Experimental", color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.experimental_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.width(48.dp))
         }
@@ -1870,7 +1891,7 @@ private fun ExperimentalScreen(onBack: () -> Unit) {
             }
         }
         Spacer(Modifier.height(8.dp))
-        Text("Experimental features may be unstable or change without notice.", color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+        Text(stringResource(R.string.experimental_warning), color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
     }
 }
 
@@ -1894,7 +1915,7 @@ private fun DebugScreen(onBack: () -> Unit) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
             }
             Spacer(Modifier.weight(1f))
-            Text("Debug", color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.debug_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.width(48.dp))
         }
@@ -1910,8 +1931,8 @@ private fun DebugScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Disable Markdown", color = LitterTheme.textPrimary, fontSize = 14.sp)
-                    Text("Show raw monospace text instead of rendered markdown", color = LitterTheme.textSecondary, fontSize = 11.sp)
+                    Text(stringResource(R.string.debug_disable_markdown), color = LitterTheme.textPrimary, fontSize = 14.sp)
+                    Text(stringResource(R.string.debug_disable_markdown_detail), color = LitterTheme.textSecondary, fontSize = 11.sp)
                 }
                 Switch(
                     checked = DebugSettings.disableMarkdown,
@@ -1925,8 +1946,8 @@ private fun DebugScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Show Turn Metrics", color = LitterTheme.textPrimary, fontSize = 14.sp)
-                    Text("Display elapsed time and token count on turn items", color = LitterTheme.textSecondary, fontSize = 11.sp)
+                    Text(stringResource(R.string.debug_show_turn_metrics), color = LitterTheme.textPrimary, fontSize = 14.sp)
+                    Text(stringResource(R.string.debug_show_turn_metrics_detail), color = LitterTheme.textSecondary, fontSize = 11.sp)
                 }
                 Switch(
                     checked = DebugSettings.showTurnMetrics,
@@ -1938,7 +1959,7 @@ private fun DebugScreen(onBack: () -> Unit) {
 
         // ── Recording ──
         Spacer(Modifier.height(12.dp))
-        SectionHeader("Recording")
+        SectionHeader(stringResource(R.string.settings_recording_section))
 
         val appModel = LocalAppModel.current
         val scope = rememberCoroutineScope()
@@ -1955,11 +1976,16 @@ private fun DebugScreen(onBack: () -> Unit) {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (isRecording) "Recording..." else "Message Recording",
+                        stringResource(
+                            if (isRecording) {
+                                R.string.settings_recording
+                            } else {
+                                R.string.settings_message_recording
+                            },
                         color = if (isRecording) LitterTheme.danger else LitterTheme.textPrimary,
                         fontSize = 14.sp,
                     )
-                    Text("Record server messages for replay", color = LitterTheme.textSecondary, fontSize = 11.sp)
+                    Text(stringResource(R.string.debug_record_server_messages), color = LitterTheme.textSecondary, fontSize = 11.sp)
                 }
                 TextButton(onClick = {
                     if (isRecording) {
@@ -1980,7 +2006,7 @@ private fun DebugScreen(onBack: () -> Unit) {
 
             if (recordings.isNotEmpty()) {
                 HorizontalDivider(color = LitterTheme.divider)
-                Text("Saved Recordings", color = LitterTheme.textSecondary, fontSize = 11.sp)
+                Text(stringResource(R.string.debug_saved_recordings), color = LitterTheme.textSecondary, fontSize = 11.sp)
                 recordings.forEach { file ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1999,7 +2025,7 @@ private fun DebugScreen(onBack: () -> Unit) {
                             MessageRecorder.deleteRecording(file)
                             recordings = MessageRecorder.listRecordings(context)
                         }) {
-                            Text("Delete", color = LitterTheme.danger, fontSize = 11.sp)
+                            Text(stringResource(R.string.common_delete), color = LitterTheme.danger, fontSize = 11.sp)
                         }
                     }
                 }
@@ -2007,7 +2033,7 @@ private fun DebugScreen(onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(8.dp))
-        Text("Debug features are for development and testing.", color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+        Text(stringResource(R.string.debug_warning), color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
     }
 }
 
@@ -2035,7 +2061,7 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             val tokens = ChatGPTOAuthActivity.parseResult(result.data)
             if (tokens == null) {
-                authError = "ChatGPT login returned incomplete credentials."
+                authError = context.getString(R.string.account_login_incomplete)
                 LLog.w("ChatGPTOAuth", "settings auth result missing tokens")
                 return@rememberLauncherForActivityResult
             }
@@ -2073,12 +2099,12 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
     }
     val authTitle = when (val acct = server.account) {
         is Account.Chatgpt -> acct.email.ifEmpty { "ChatGPT" }
-        is Account.ApiKey -> "API Key"
-        else -> "Not logged in"
+        is Account.ApiKey -> stringResource(R.string.account_api_key)
+        else -> stringResource(R.string.settings_not_logged_in)
     }
     val authSubtitle = when (server.account) {
-        is Account.Chatgpt -> "ChatGPT account"
-        is Account.ApiKey -> "OpenAI API key"
+        is Account.Chatgpt -> stringResource(R.string.settings_chatgpt_account)
+        is Account.ApiKey -> stringResource(R.string.settings_openai_api_key)
         else -> null
     }
     val allowsLocalEnvApiKey = server.isLocal
@@ -2111,13 +2137,13 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                             appModel.restartLocalServer()
                         } catch (_: Exception) {}
                     }
-                }) { Text("Logout", color = LitterTheme.danger, fontSize = 12.sp) }
+                }) { Text(stringResource(R.string.account_logout), color = LitterTheme.danger, fontSize = 12.sp) }
             }
         }
 
         if (server.isLocal && hasStoredApiKey) {
             Text(
-                "Local OpenAI API key is saved.",
+                stringResource(R.string.account_local_key_saved),
                 color = LitterTheme.accent,
                 fontSize = 11.sp,
             )
@@ -2125,7 +2151,7 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
 
         if (server.isLocal && hasStoredBaseUrl) {
             Text(
-                "OpenAI-compatible base URL is saved.",
+                stringResource(R.string.account_base_url_saved),
                 color = LitterTheme.accent,
                 fontSize = 11.sp,
             )
@@ -2153,20 +2179,20 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
             ) {
                 if (isAuthWorking) { CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = LitterTheme.textPrimary); Spacer(Modifier.width(6.dp)) }
-                Text("Login with ChatGPT", color = LitterTheme.accent, fontSize = 14.sp)
+                Text(stringResource(R.string.account_login_chatgpt), color = LitterTheme.accent, fontSize = 14.sp)
             }
         }
 
         if (allowsLocalEnvApiKey) {
             if (hasStoredApiKey) {
                 Text(
-                    "OpenAI API key saved in the local environment.",
+                    stringResource(R.string.account_key_saved_environment),
                     color = LitterTheme.textSecondary,
                     fontSize = 11.sp,
                 )
             } else if (isChatGPTAccount) {
                 Text(
-                    "Save an API key in the local Codex environment.",
+                    stringResource(R.string.account_save_key_environment),
                     color = LitterTheme.textSecondary,
                     fontSize = 11.sp,
                 )
@@ -2196,7 +2222,7 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                                 if (hasStoredApiKey) {
                                     apiKey = ""
                                 } else {
-                                    authError = "API key did not persist locally."
+                                    authError = context.getString(R.string.account_key_not_persisted)
                                     return@launch
                                 }
                                 authError = null
@@ -2209,7 +2235,13 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                     enabled = apiKey.trim().isNotEmpty() && !isAuthWorking,
                 ) {
                     Text(
-                        if (hasStoredApiKey) "Update API Key" else "Save API Key",
+                        stringResource(
+                            if (hasStoredApiKey) {
+                                R.string.account_update_api_key
+                            } else {
+                                R.string.account_save_api_key
+                            },
+                        ),
                         color = LitterTheme.accent,
                         fontSize = 12.sp,
                     )
@@ -2218,9 +2250,9 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
 
             Text(
                 if (hasStoredBaseUrl) {
-                    "Custom OpenAI-compatible endpoint saved for the local Codex server."
+                    stringResource(R.string.account_custom_endpoint_saved)
                 } else {
-                    "Optional OpenAI-compatible endpoint for local models."
+                    stringResource(R.string.account_optional_endpoint)
                 },
                 color = LitterTheme.textSecondary,
                 fontSize = 11.sp,
@@ -2239,7 +2271,7 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                     onClick = {
                         val normalized = normalizeOpenAIBaseUrl(openAIBaseUrl)
                         if (normalized == null) {
-                            authError = "Enter a valid http or https base URL."
+                            authError = context.getString(R.string.account_invalid_base_url)
                         } else {
                             scope.launch {
                                 isAuthWorking = true
@@ -2251,7 +2283,7 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                                         openAIBaseUrl = ""
                                         authError = null
                                     } else {
-                                        authError = "Base URL did not persist locally."
+                                        authError = context.getString(R.string.account_base_url_not_persisted)
                                     }
                                 } catch (e: Exception) {
                                     authError = e.message
@@ -2264,7 +2296,9 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                     enabled = openAIBaseUrl.trim().isNotEmpty() && !isAuthWorking,
                 ) {
                     Text(
-                        if (hasStoredBaseUrl) "Update" else "Save",
+                        stringResource(
+                            if (hasStoredBaseUrl) R.string.common_update else R.string.common_save,
+                        ),
                         color = LitterTheme.accent,
                         fontSize = 12.sp,
                     )
@@ -2290,12 +2324,12 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
                     },
                     enabled = !isAuthWorking,
                 ) {
-                    Text("Clear Base URL", color = LitterTheme.danger, fontSize = 12.sp)
+                    Text(stringResource(R.string.account_clear_base_url), color = LitterTheme.danger, fontSize = 12.sp)
                 }
             }
         } else {
             Text(
-                "Remote servers request their own OAuth login when needed. Settings login and API key entry stay local-only.",
+                stringResource(R.string.account_remote_login_help),
                 color = LitterTheme.textSecondary,
                 fontSize = 11.sp,
             )
@@ -2367,7 +2401,7 @@ private fun FontRow(name: String, fontFamily: FontFamily, isSelected: Boolean, o
     ) {
         Column(Modifier.weight(1f)) {
             Text(name, color = LitterTheme.textPrimary, fontSize = 14.sp)
-            Text("The quick brown fox", color = LitterTheme.textSecondary, fontSize = 13.sp, fontFamily = fontFamily)
+            Text(stringResource(R.string.appearance_font_preview), color = LitterTheme.textSecondary, fontSize = 13.sp, fontFamily = fontFamily)
         }
         if (isSelected) Icon(Icons.Default.Check, null, tint = LitterTheme.accent, modifier = Modifier.size(18.dp))
     }

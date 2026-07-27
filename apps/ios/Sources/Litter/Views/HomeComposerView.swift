@@ -221,7 +221,7 @@ struct HomeComposerView: View {
         guard !text.isEmpty || image != nil || !files.isEmpty else { return }
         guard !isSubmitting else { return }
         guard let project else {
-            errorMessage = "Pick a project before sending."
+            errorMessage = AppLanguage.localizedString("Pick a project before sending.")
             return
         }
 

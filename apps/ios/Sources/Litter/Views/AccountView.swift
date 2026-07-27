@@ -180,7 +180,11 @@ private struct AccountConnectionView: View {
                             isWorking = false
                         }
                     } label: {
-                        Text(hasStoredApiKey ? "Update API Key" : "Save API Key")
+                        Text(
+                            AppLanguage.localizedString(
+                                hasStoredApiKey ? "Update API Key" : "Save API Key"
+                            )
+                        )
                             .litterFont(.subheadline)
                             .foregroundColor(LitterTheme.textPrimary)
                             .frame(maxWidth: .infinity)
@@ -221,18 +225,18 @@ private struct AccountConnectionView: View {
         case .chatgpt(let email, _)?:
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
-            return "API Key"
+            return AppLanguage.localizedString("API Key")
         case nil:
-            return "Not logged in"
+            return AppLanguage.localizedString("Not logged in")
         }
     }
 
     private var authSubtitle: String? {
         switch server.account {
         case .chatgpt?:
-            return "ChatGPT account"
+            return AppLanguage.localizedString("ChatGPT account")
         case .apiKey?:
-            return "OpenAI API key"
+            return AppLanguage.localizedString("OpenAI API key")
         case nil:
             return nil
         }
@@ -253,7 +257,7 @@ private struct AccountConnectionView: View {
 
     private func loginWithChatGPT() async {
         guard server.isLocal else {
-            authError = "Account login is only available for the local server."
+            authError = AppLanguage.localizedString("Account login is only available for the local server.")
             return
         }
         do {
@@ -268,7 +272,7 @@ private struct AccountConnectionView: View {
 
     private func saveApiKey(_ key: String) async {
         guard server.isLocal else {
-            authError = "API keys can only be saved for the local server."
+            authError = AppLanguage.localizedString("API keys can only be saved for the local server.")
             return
         }
         do {
@@ -280,7 +284,7 @@ private struct AccountConnectionView: View {
             try await appModel.restartLocalServer()
             hasStoredApiKey = OpenAIApiKeyStore.shared.hasStoredKey
             guard hasStoredApiKey else {
-                authError = "API key did not persist locally."
+                authError = AppLanguage.localizedString("API key did not persist locally.")
                 return
             }
             dismiss()
@@ -291,7 +295,7 @@ private struct AccountConnectionView: View {
 
     private func logout() async {
         guard server.isLocal else {
-            authError = "Account logout is only available for the local server."
+            authError = AppLanguage.localizedString("Account logout is only available for the local server.")
             return
         }
         do {

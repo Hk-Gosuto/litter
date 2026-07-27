@@ -44,7 +44,10 @@ struct AppsListView: View {
                 .presentationDetents([.medium])
         }
         .alert(
-            "Delete \"\(deleteTarget?.title ?? "")\"?",
+            AppLanguage.localizedString(
+                "Delete \"%@\"?",
+                deleteTarget?.title ?? ""
+            ),
             isPresented: Binding(
                 get: { deleteTarget != nil },
                 set: { if !$0 { deleteTarget = nil } }
@@ -153,7 +156,10 @@ struct AppsListView: View {
         let date = Date(timeIntervalSince1970: TimeInterval(app.updatedAtMs) / 1000.0)
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return "Updated \(formatter.localizedString(for: date, relativeTo: Date()))"
+        return AppLanguage.localizedString(
+            "Updated %@",
+            formatter.localizedString(for: date, relativeTo: Date())
+        )
     }
 
     private var emptyState: some View {

@@ -33,12 +33,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.scaled
@@ -127,7 +129,7 @@ fun ThreadSearchBar(
                         Box {
                             if (query.isEmpty()) {
                                 Text(
-                                    text = "search threads",
+                                    text = stringResource(R.string.home_search_threads),
                                     color = LitterTheme.textSecondary,
                                     fontSize = LitterTextStyle.code.scaled,
                                     fontFamily = FontFamily.Monospace,
@@ -146,14 +148,14 @@ fun ThreadSearchBar(
                 ) {
                     Icon(
                         Icons.Default.Close,
-                        contentDescription = "Close",
+                        contentDescription = stringResource(R.string.common_close),
                         tint = LitterTheme.textMuted,
                         modifier = Modifier.size(14.dp),
                     )
                 }
             } else {
                 Text(
-                    text = "search threads",
+                    text = stringResource(R.string.home_search_threads),
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.caption.scaled,
                     fontFamily = FontFamily.Monospace,

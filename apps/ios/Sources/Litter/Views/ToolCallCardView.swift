@@ -150,11 +150,11 @@ struct ToolCallCardView: View {
     private func durationAccessibilityLabel(_ duration: String) -> String {
         switch model.status {
         case .completed:
-            return "\(duration), completed"
+            return AppLanguage.localizedString("%@, completed", duration)
         case .inProgress:
-            return "\(duration), in progress"
+            return AppLanguage.localizedString("%@, in progress", duration)
         case .failed:
-            return "\(duration), failed"
+            return AppLanguage.localizedString("%@, failed", duration)
         case .unknown:
             return duration
         }
@@ -272,7 +272,10 @@ struct ToolCallCardView: View {
     }
 
     private func sectionLabel(_ label: String) -> some View {
-        Text(label.uppercased())
+        Text(
+            AppLanguage.localizedString(label)
+                .uppercased(with: AppLanguage.current.locale)
+        )
             .litterFont(.caption2, weight: .bold)
             .foregroundColor(LitterTheme.textSecondary)
     }
@@ -375,12 +378,22 @@ struct ToolCallCardView: View {
                     }
                 }
             } label: {
-                Text(expandedLongTextIDs.contains(id) ? "Show less" : "Show more")
+                Text(
+                    AppLanguage.localizedString(
+                        expandedLongTextIDs.contains(id) ? "Show less" : "Show more"
+                    )
+                )
                     .litterFont(.caption2, weight: .semibold)
                     .foregroundColor(LitterTheme.accent)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(expandedLongTextIDs.contains(id) ? "Show less text" : "Show more text")
+            .accessibilityLabel(
+                AppLanguage.localizedString(
+                    expandedLongTextIDs.contains(id)
+                        ? "Show less text"
+                        : "Show more text"
+                )
+            )
         }
     }
 
@@ -581,7 +594,7 @@ private struct ToolCallImagePreview: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 32)
                 } else {
-                    Text(loadError ?? "Image unavailable")
+                    Text(loadError ?? AppLanguage.localizedString("Image unavailable"))
                         .litterFont(.caption)
                         .foregroundColor(loadError == nil ? LitterTheme.textSecondary : LitterTheme.danger)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -655,7 +668,7 @@ private enum ToolCallImageError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImageData:
-            return "Could not decode the image."
+            return AppLanguage.localizedString("Could not decode the image.")
         }
     }
 

@@ -120,7 +120,7 @@ struct UWBDebugView: View {
                 pairing.startForDebug()
             }
         } label: {
-            Text(pairing.isRunning ? "Stop" : "Start")
+            Text(AppLanguage.localizedString(pairing.isRunning ? "Stop" : "Start"))
                 .litterFont(.body, weight: .semibold)
                 .foregroundColor(.black)
                 .frame(maxWidth: .infinity)
@@ -135,20 +135,23 @@ struct UWBDebugView: View {
 
     private func stateLabel(_ s: NearbyMacPairingState) -> String {
         switch s {
-        case .searching: return "searching"
-        case .connecting: return "connecting"
-        case .handshaking: return "ranging"
-        case .awaitingConfirm: return "awaiting confirm"
-        case .paired: return "paired"
-        case .rejected: return "rejected"
-        case .failed: return "failed"
+        case .searching: return AppLanguage.localizedString("searching")
+        case .connecting: return AppLanguage.localizedString("connecting")
+        case .handshaking: return AppLanguage.localizedString("ranging")
+        case .awaitingConfirm: return AppLanguage.localizedString("awaiting confirm")
+        case .paired: return AppLanguage.localizedString("paired")
+        case .rejected: return AppLanguage.localizedString("rejected")
+        case .failed: return AppLanguage.localizedString("failed")
         }
     }
 
     @ViewBuilder
     private func card<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
+            Text(
+                AppLanguage.localizedString(title)
+                    .uppercased(with: AppLanguage.current.locale)
+            )
                 .litterFont(.caption, weight: .semibold)
                 .foregroundColor(LitterTheme.textSecondary)
             VStack(alignment: .leading, spacing: 6) {
@@ -163,7 +166,7 @@ struct UWBDebugView: View {
 
     private func row(_ key: String, value: String) -> some View {
         HStack {
-            Text(key)
+            Text(LocalizedStringKey(key))
                 .litterFont(.caption)
                 .foregroundColor(LitterTheme.textMuted)
             Spacer()

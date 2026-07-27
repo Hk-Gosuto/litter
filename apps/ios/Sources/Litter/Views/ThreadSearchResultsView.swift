@@ -76,7 +76,7 @@ struct ThreadSearchResultsView: View {
                     }
                     .padding(.vertical, 24)
                 } else if filtered.isEmpty {
-                    Text(sessions.isEmpty ? "No threads yet" : "No matches")
+                    Text(AppLanguage.localizedString(sessions.isEmpty ? "No threads yet" : "No matches"))
                         .litterFont(.footnote)
                         .foregroundStyle(LitterTheme.textMuted)
                         .padding(.vertical, 24)
@@ -148,7 +148,7 @@ struct ThreadSearchResultsView: View {
                     Image(systemName: "square.grid.2x2")
                         .litterFont(size: 10, weight: .semibold)
                 }
-                Text(label)
+                Text(LocalizedStringKey(label))
                     .lineLimit(1)
             }
             .litterFont(.caption)
@@ -324,7 +324,12 @@ private struct ThreadSearchClusterRow: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(cluster.members.count) branches")
+        .accessibilityLabel(
+            AppLanguage.localizedString(
+                "%lld branches",
+                Int64(cluster.members.count)
+            )
+        )
     }
 
     private var childrenList: some View {

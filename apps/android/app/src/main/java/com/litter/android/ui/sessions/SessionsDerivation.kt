@@ -1,5 +1,6 @@
 package com.litter.android.ui.sessions
 
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.home.HomeDashboardSupport
 import uniffi.codex_mobile_client.AppSessionSummary
 import uniffi.codex_mobile_client.ThreadKey
@@ -37,10 +38,10 @@ data class SessionsDerivedData(
     val parentByKey: Map<ThreadKey, AppSessionSummary>,
 )
 
-enum class WorkspaceSortMode(val title: String) {
-    RECENT("Most Recent"),
-    NAME("Name"),
-    DATE("Date"),
+enum class WorkspaceSortMode(val titleRes: Int) {
+    RECENT(R.string.sessions_sort_recent),
+    NAME(R.string.sessions_sort_name),
+    DATE(R.string.sessions_sort_date),
 }
 
 /**

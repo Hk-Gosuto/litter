@@ -37,9 +37,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.scaled
@@ -81,11 +83,11 @@ fun ProjectPickerSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = LitterTheme.textSecondary)
+                Text(stringResource(R.string.common_close), color = LitterTheme.textSecondary)
             }
             Spacer(Modifier.weight(1f))
             Text(
-                text = "Projects",
+                text = stringResource(R.string.project_title),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.subheadline.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -94,7 +96,7 @@ fun ProjectPickerSheet(
             IconButton(onClick = onCreateNew) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "New project",
+                    contentDescription = stringResource(R.string.project_new),
                     tint = LitterTheme.accent,
                 )
             }
@@ -104,7 +106,7 @@ fun ProjectPickerSheet(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Search projects", color = LitterTheme.textMuted) },
+            placeholder = { Text(stringResource(R.string.project_search), color = LitterTheme.textMuted) },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
@@ -117,7 +119,7 @@ fun ProjectPickerSheet(
                     IconButton(onClick = { query = "" }) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Clear",
+                            contentDescription = stringResource(R.string.project_clear_search),
                             tint = LitterTheme.textMuted,
                         )
                     }
@@ -147,19 +149,19 @@ fun ProjectPickerSheet(
                     modifier = Modifier.size(32.dp),
                 )
                 Text(
-                    text = "No projects yet",
+                    text = stringResource(R.string.project_empty),
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.body.scaled,
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = "Tap + to pick a directory and start your first thread.",
+                    text = stringResource(R.string.project_empty_helper),
                     color = LitterTheme.textMuted,
                     fontSize = LitterTextStyle.caption.scaled,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
                 TextButton(onClick = onCreateNew) {
-                    Text("New Project", color = LitterTheme.accent)
+                    Text(stringResource(R.string.project_new), color = LitterTheme.accent)
                 }
             }
         } else {

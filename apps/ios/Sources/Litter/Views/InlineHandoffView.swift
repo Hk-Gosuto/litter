@@ -151,12 +151,12 @@ private struct InlineHandoffEntry: Identifiable {
             self.style = .status
         case .proposedPlan:
             self.id = item.id
-            self.text = "Planning…"
+            self.text = AppLanguage.localizedString("Planning…")
             self.style = .status
         case .commandExecution(let data):
             self.id = item.id
             self.text = InlineHandoffEntry.statusText(
-                label: data.command.isEmpty ? "Working" : data.command,
+                label: data.command.isEmpty ? AppLanguage.localizedString("Working") : data.command,
                 status: data.status.displayLabel
             )
             self.style = .status
@@ -164,13 +164,15 @@ private struct InlineHandoffEntry: Identifiable {
             self.id = item.id
             let count = data.changes.count
             self.text = InlineHandoffEntry.statusText(
-                label: count > 0 ? "Changed \(count) file\(count == 1 ? "" : "s")" : "Applying changes",
+                label: count > 0
+                    ? AppLanguage.localizedString("Changed %lld files", Int64(count))
+                    : AppLanguage.localizedString("Applying changes"),
                 status: data.status.displayLabel
             )
             self.style = .status
         case .turnDiff:
             self.id = item.id
-            self.text = "Comparing changes"
+            self.text = AppLanguage.localizedString("Comparing changes")
             self.style = .status
         case .mcpToolCall(let data):
             self.id = item.id
@@ -238,7 +240,9 @@ private struct InlineHandoffEntry: Identifiable {
     private static func statusText(label: String, status: String) -> String {
         let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanStatus = status.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanLabel.isEmpty else { return cleanStatus.isEmpty ? "Working" : cleanStatus }
+        guard !cleanLabel.isEmpty else {
+            return cleanStatus.isEmpty ? AppLanguage.localizedString("Working") : cleanStatus
+        }
         guard !cleanStatus.isEmpty else { return cleanLabel }
         return "\(cleanLabel) (\(cleanStatus))"
     }
@@ -246,13 +250,15 @@ private struct InlineHandoffEntry: Identifiable {
     private static func dividerText(_ kind: ConversationDividerKind) -> String? {
         switch kind {
         case .contextCompaction(let isComplete):
-            return isComplete ? "Context compacted" : "Compacting context"
+            return AppLanguage.localizedString(
+                isComplete ? "Context compacted" : "Compacting context"
+            )
         case .modelRerouted(_, let toModel, _):
-            return "Switched to \(toModel)"
+            return AppLanguage.localizedString("Switched to %@", toModel)
         case .reviewEntered(let review):
-            return "Entered \(review)"
+            return AppLanguage.localizedString("Entered %@", review)
         case .reviewExited(let review):
-            return "Exited \(review)"
+            return AppLanguage.localizedString("Exited %@", review)
         case .workedFor(let duration):
             return duration
         case .generic(let title, let detail):

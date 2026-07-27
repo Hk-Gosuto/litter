@@ -269,7 +269,9 @@ private struct ConversationComposerFileChipStrip: View {
                                 .background(Circle().fill(LitterTheme.accent.opacity(0.18)))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Remove file \(file.label)")
+                        .accessibilityLabel(
+                            AppLanguage.localizedString("Remove file %@", file.label)
+                        )
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -309,7 +311,9 @@ private struct ConversationComposerPluginChipStrip: View {
                                 .background(Circle().fill(LitterTheme.accent.opacity(0.18)))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Remove plugin \(plugin.displayTitle)")
+                        .accessibilityLabel(
+                            AppLanguage.localizedString("Remove plugin %@", plugin.displayTitle)
+                        )
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -330,9 +334,9 @@ struct ConversationComposerModeChip: View {
     private var label: String {
         switch mode {
         case .plan:
-            return "Plan"
+            return AppLanguage.localizedString("Plan")
         case .`default`:
-            return "Default"
+            return AppLanguage.localizedString("Default")
         }
     }
 
@@ -372,7 +376,9 @@ private struct ConversationComposerPlanProgressView: View {
     private var currentStepText: String {
         guard let step = currentStep?.step.trimmingCharacters(in: .whitespacesAndNewlines),
               !step.isEmpty else {
-            return progress.plan.isEmpty ? "No plan task" : "Plan complete"
+            return AppLanguage.localizedString(
+                progress.plan.isEmpty ? "No plan task" : "Plan complete"
+            )
         }
         return step
     }
@@ -396,7 +402,11 @@ private struct ConversationComposerPlanProgressView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Collapse plan progress" : "Expand plan progress")
+            .accessibilityLabel(
+                AppLanguage.localizedString(
+                    isExpanded ? "Collapse plan progress" : "Expand plan progress"
+                )
+            )
 
             if isExpanded {
                 expandedContent
@@ -416,7 +426,7 @@ private struct ConversationComposerPlanProgressView: View {
             Image(systemName: "list.bullet.clipboard")
                 .litterFont(size: 12, weight: .semibold)
                 .foregroundStyle(LitterTheme.accent)
-            Text(isExpanded ? "Plan Progress" : "Plan")
+            Text(AppLanguage.localizedString(isExpanded ? "Plan Progress" : "Plan"))
                 .litterFont(.caption, weight: .semibold)
                 .foregroundStyle(LitterTheme.textPrimary)
             Text("\(completedCount)/\(progress.plan.count)")
@@ -719,22 +729,22 @@ private struct ConversationComposerGoalRowView: View {
 
     private var pauseToggleAccessibilityLabel: String {
         switch goal.status {
-        case .active: return "Pause goal"
-        case .paused: return "Resume goal"
-        case .blocked: return "Resume goal (override block)"
-        case .usageLimited: return "Resume goal (override usage cap)"
-        case .budgetLimited: return "Resume goal (override budget cap)"
-        case .complete: return "Goal complete"
+        case .active: return AppLanguage.localizedString("Pause goal")
+        case .paused: return AppLanguage.localizedString("Resume goal")
+        case .blocked: return AppLanguage.localizedString("Resume goal (override block)")
+        case .usageLimited: return AppLanguage.localizedString("Resume goal (override usage cap)")
+        case .budgetLimited: return AppLanguage.localizedString("Resume goal (override budget cap)")
+        case .complete: return AppLanguage.localizedString("Goal complete")
         }
     }
 
     private var pauseResumeMenuItem: (label: String, systemImage: String)? {
         switch goal.status {
-        case .active: return ("Pause Goal", "pause.circle")
-        case .paused: return ("Resume Goal", "play.circle")
-        case .blocked: return ("Resume Goal (override block)", "play.circle")
-        case .usageLimited: return ("Resume Goal (override usage cap)", "play.circle")
-        case .budgetLimited: return ("Resume Goal (override cap)", "play.circle")
+        case .active: return (AppLanguage.localizedString("Pause Goal"), "pause.circle")
+        case .paused: return (AppLanguage.localizedString("Resume Goal"), "play.circle")
+        case .blocked: return (AppLanguage.localizedString("Resume Goal (override block)"), "play.circle")
+        case .usageLimited: return (AppLanguage.localizedString("Resume Goal (override usage cap)"), "play.circle")
+        case .budgetLimited: return (AppLanguage.localizedString("Resume Goal (override cap)"), "play.circle")
         case .complete: return nil
         }
     }
@@ -750,12 +760,12 @@ private struct ConversationComposerGoalRowView: View {
 
     private var statusLabel: String {
         switch goal.status {
-        case .active: return "active"
-        case .paused: return "paused"
-        case .blocked: return "blocked"
-        case .usageLimited: return "usage limit"
-        case .budgetLimited: return "limited"
-        case .complete: return "complete"
+        case .active: return AppLanguage.localizedString("active")
+        case .paused: return AppLanguage.localizedString("paused")
+        case .blocked: return AppLanguage.localizedString("blocked")
+        case .usageLimited: return AppLanguage.localizedString("usage limit")
+        case .budgetLimited: return AppLanguage.localizedString("limited")
+        case .complete: return AppLanguage.localizedString("complete")
         }
     }
 

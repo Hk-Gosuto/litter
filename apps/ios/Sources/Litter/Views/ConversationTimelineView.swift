@@ -686,7 +686,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
 
         return ToolCallCardModel(
             kind: .fileChange,
-            title: "File Change",
+            title: AppLanguage.localizedString("File Change"),
             summary: summary.plainText,
             attributedSummary: summary.attributedText,
             status: data.status.toolCallStatus,
@@ -756,13 +756,13 @@ private struct ConversationTimelineItemRow: View, Equatable {
     private func fileChangeVerb(for kind: String) -> String {
         switch kind.lowercased() {
         case "add":
-            return "Added"
+            return AppLanguage.localizedString("Added")
         case "delete":
-            return "Deleted"
+            return AppLanguage.localizedString("Deleted")
         case "update":
-            return "Edited"
+            return AppLanguage.localizedString("Edited")
         default:
-            return "Changed"
+            return AppLanguage.localizedString("Changed")
         }
     }
 
@@ -793,7 +793,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
 
         return ToolCallCardModel(
             kind: .mcpToolCall,
-            title: "MCP Tool Call",
+            title: AppLanguage.localizedString("MCP Tool Call"),
             summary: summary,
             status: data.status.toolCallStatus,
             duration: formatDuration(data.durationMs),
@@ -824,7 +824,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
         if let contentSummary = data.contentSummary, !contentSummary.isEmpty {
             sections.append(.text(label: "Result", content: contentSummary))
         }
-        let title = data.display?.title ?? "Dynamic Tool Call"
+        let title = data.display?.title ?? AppLanguage.localizedString("Dynamic Tool Call")
         let summary = data.display?.summary
             ?? data.namespace.map { "\($0).\(data.tool)" }
             ?? data.tool
@@ -849,7 +849,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
         }
         return ToolCallCardModel(
             kind: .webSearch,
-            title: "Web Search",
+            title: AppLanguage.localizedString("Web Search"),
             summary: data.query.isEmpty ? "Web search" : "Web search for \(data.query)",
             status: data.isInProgress ? .inProgress : .completed,
             duration: nil,
@@ -862,7 +862,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
         let displayName = workspaceTitle(for: trimmedPath)
         return ToolCallCardModel(
             kind: .imageView,
-            title: "Image View",
+            title: AppLanguage.localizedString("Image View"),
             summary: displayName.isEmpty ? "Image" : displayName,
             status: .completed,
             duration: nil,
@@ -984,7 +984,7 @@ private struct ConversationExplorationGroupRow: View {
     }
 
     private var summaryText: String {
-        let prefix = isActive ? "Exploring" : "Explored"
+        let prefix = AppLanguage.localizedString(isActive ? "Exploring" : "Explored")
         return explorationSummaryText(prefix: prefix)
     }
 
@@ -1107,10 +1107,15 @@ private struct ConversationExplorationGroupRow: View {
             return action.path.map { "Read \(workspaceTitle(for: $0))\(suffix)" } ?? fallback
         case .search:
             if let query = action.query, let path = action.path {
-                return "Searched for \(query) in \(workspaceTitle(for: path))\(suffix)"
+                        return AppLanguage.localizedString(
+                            "Searched for %@ in %@%@",
+                            query,
+                            workspaceTitle(for: path),
+                            suffix
+                        )
             }
             if let query = action.query {
-                return "Searched for \(query)\(suffix)"
+                    return AppLanguage.localizedString("Searched for %@%@", query, suffix)
             }
             return fallback
         case .listFiles:
@@ -1387,7 +1392,7 @@ private struct ConversationTurnDiffRow: View {
         Button {
             presented = PresentedDiff(
                 id: "turn-diff",
-                title: "Turn Diff",
+                title: AppLanguage.localizedString("Turn Diff"),
                 diff: data.diff,
                 stats: DiffStats(additions: data.additions, deletions: data.deletions),
                 sections: presentedDiffSections(from: data.diff)
@@ -1500,7 +1505,7 @@ private struct ConversationCommandExecutionRow: View {
         if !trimmed.isEmpty {
             return trimmed
         }
-        return data.isInProgress ? "Waiting for output…" : "No output"
+        return AppLanguage.localizedString(data.isInProgress ? "Waiting for output…" : "No output")
     }
 
     private var displayedCommand: String {
@@ -1627,12 +1632,18 @@ private struct ConversationCommandOutputViewport: View {
                             expandedLongOutput.toggle()
                         }
                     } label: {
-                        Text(expandedLongOutput ? "Show less" : "Show more")
+                        Text(AppLanguage.localizedString(expandedLongOutput ? "Show less" : "Show more"))
                             .litterFont(.caption2, weight: .semibold)
                             .foregroundColor(LitterTheme.accent)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(expandedLongOutput ? "Show less command output" : "Show more command output")
+                    .accessibilityLabel(
+                        AppLanguage.localizedString(
+                            expandedLongOutput
+                                ? "Show less command output"
+                                : "Show more command output"
+                        )
+                    )
                 }
             }
         }
@@ -1769,17 +1780,24 @@ private struct ConversationDividerRow: View {
     private var title: String {
         switch kind {
         case .contextCompaction:
-            return effectiveContextCompactionComplete ? "Context compacted" : "Compacting context"
+            return AppLanguage.localizedString(
+                effectiveContextCompactionComplete ? "Context compacted" : "Compacting context"
+            )
         case .modelRerouted(let fromModel, let toModel, let reason):
-            let base = fromModel.map { "\($0) -> \(toModel)" } ?? "Routed to \(toModel)"
+            let base = fromModel.map { "\($0) -> \(toModel)" }
+                ?? AppLanguage.localizedString("Routed to %@", toModel)
             if let reason, !reason.isEmpty {
                 return "\(base) · \(reason)"
             }
             return base
         case .reviewEntered(let review):
-            return review.isEmpty ? "Entered review" : "Entered review: \(review)"
+            return review.isEmpty
+                ? AppLanguage.localizedString("Entered review")
+                : AppLanguage.localizedString("Entered review: %@", review)
         case .reviewExited(let review):
-            return review.isEmpty ? "Exited review" : "Exited review: \(review)"
+            return review.isEmpty
+                ? AppLanguage.localizedString("Exited review")
+                : AppLanguage.localizedString("Exited review: %@", review)
         case .workedFor(let duration):
             return duration
         case .generic(let title, let detail):
@@ -2012,7 +2030,7 @@ struct ConversationPinnedContextStrip: View {
         }
         return PresentedDiff(
             id: "session-diff",
-            title: "Session Diff",
+            title: AppLanguage.localizedString("Session Diff"),
             diff: nil,
             stats: stats,
             sections: sections
@@ -2026,9 +2044,16 @@ struct ConversationPinnedContextStrip: View {
             let total = data.steps.count
             let summary: String = {
                 if completed == 0 {
-                    return "To do list created with \(total) tasks"
+            return AppLanguage.localizedString(
+                "To do list created with %lld tasks",
+                Int64(total)
+            )
                 }
-                return "\(completed) out of \(total) tasks completed"
+        return AppLanguage.localizedString(
+            "%lld out of %lld tasks completed",
+            Int64(completed),
+            Int64(total)
+        )
             }()
 
             VStack(alignment: .leading, spacing: 0) {
@@ -2205,9 +2230,13 @@ private struct DiffIndicatorLabel: View {
 
     private var accessibilityLabel: String {
         if stats.hasChanges {
-            return "Show diff details. \(stats.additions) additions, \(stats.deletions) deletions."
+            return AppLanguage.localizedString(
+                "Show diff details. %lld additions, %lld deletions.",
+                Int64(stats.additions),
+                Int64(stats.deletions)
+            )
         }
-        return "Show diff details."
+        return AppLanguage.localizedString("Show diff details.")
     }
 }
 

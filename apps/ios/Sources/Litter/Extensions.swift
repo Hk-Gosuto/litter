@@ -118,8 +118,8 @@ enum FontFamilyOption: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .mono: return "Monospaced"
-        case .system: return "System (SF Pro)"
+        case .mono: return AppLanguage.localizedString("Monospaced")
+        case .system: return AppLanguage.localizedString("System (SF Pro)")
         }
     }
 
@@ -255,13 +255,13 @@ enum ConversationTextSize: Int, CaseIterable {
 
     var label: String {
         switch self {
-        case .tiny:     return "Tiny"
-        case .small:    return "Small"
-        case .medium:   return "Medium"
-        case .large:    return "Large"
-        case .larger:   return "Larger"
-        case .xLarge:   return "X-Large"
-        case .huge:     return "Huge"
+        case .tiny:     return AppLanguage.localizedString("Tiny")
+        case .small:    return AppLanguage.localizedString("Small")
+        case .medium:   return AppLanguage.localizedString("Medium")
+        case .large:    return AppLanguage.localizedString("Large")
+        case .larger:   return AppLanguage.localizedString("Larger")
+        case .xLarge:   return AppLanguage.localizedString("X-Large")
+        case .huge:     return AppLanguage.localizedString("Huge")
         }
     }
 

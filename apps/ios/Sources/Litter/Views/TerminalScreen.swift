@@ -171,7 +171,7 @@ struct TerminalScreen: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: selectedBackend?.systemImage ?? "terminal")
-                    Text(selectedBackend?.title ?? "Local iSH")
+                    Text(AppLanguage.localizedString(selectedBackend?.title ?? "Local iSH"))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .bold))
@@ -184,7 +184,7 @@ struct TerminalScreen: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
-            Text(selectedBackend?.subtitle ?? "On device")
+            Text(AppLanguage.localizedString(selectedBackend?.subtitle ?? "On device"))
                 .font(.custom("SFMono-Regular", size: 11))
                 .foregroundColor(.white.opacity(0.48))
                 .lineLimit(1)
@@ -309,7 +309,13 @@ struct TerminalScreen: View {
                                 Button {
                                     Task { await controller.trustUnknownSshHostAndRetry() }
                                 } label: {
-                                    Label("Trust \(challenge.fingerprint)", systemImage: "key.fill")
+                                    Label(
+                                        AppLanguage.localizedString(
+                                            "Trust %@",
+                                            challenge.fingerprint
+                                        ),
+                                        systemImage: "key.fill"
+                                    )
                                         .font(.custom("SFMono-Regular", size: 12))
                                         .foregroundColor(.black)
                                         .lineLimit(1)
@@ -375,13 +381,13 @@ struct TerminalScreen: View {
         }
         switch controller.phase {
         case .idle, .connecting:
-            return "Connecting...\n"
+            return AppLanguage.localizedString("Connecting...\n")
         case .running:
             return ""
         case .exited(let code):
-            return "\n[process exited \(code)]\n"
+            return AppLanguage.localizedString("\n[process exited %lld]\n", Int64(code))
         case .failed(let message):
-            return "\n[terminal failed: \(message)]\n"
+            return AppLanguage.localizedString("\n[terminal failed: %@]\n", message)
         }
     }
 
@@ -417,11 +423,12 @@ struct TerminalScreen: View {
 
     private var phaseLabel: String {
         switch controller.phase {
-        case .idle: return "idle"
-        case .connecting: return "connecting"
+        case .idle: return AppLanguage.localizedString("idle")
+        case .connecting: return AppLanguage.localizedString("connecting")
         case .running: return selectedBackend?.runningLabel ?? "running"
-        case .exited(let code): return "exited \(code)"
-        case .failed: return "failed"
+        case .exited(let code):
+            return AppLanguage.localizedString("exited %lld", Int64(code))
+        case .failed: return AppLanguage.localizedString("failed")
         }
     }
 

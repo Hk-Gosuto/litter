@@ -43,9 +43,11 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.VideoWallpaperPlayer
 import com.litter.android.ui.WallpaperConfig
@@ -137,8 +139,8 @@ fun WallpaperAdjustScreen(
                 .padding(start = 32.dp, end = 32.dp, top = 104.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SampleBubble("Can you help me refactor this module?", isUser = true)
-            SampleBubble("Sure! I'll analyze the code structure.", isUser = false)
+            SampleBubble(stringResource(R.string.wallpaper_sample_user), isUser = true)
+            SampleBubble(stringResource(R.string.wallpaper_sample_assistant_short), isUser = false)
         }
 
         // Top bar
@@ -153,14 +155,14 @@ fun WallpaperAdjustScreen(
             IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = LitterTheme.textPrimary,
                     modifier = Modifier.size(20.dp),
                 )
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "Adjust Wallpaper",
+                text = stringResource(R.string.wallpaper_adjust),
                 color = LitterTheme.textPrimary,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -194,7 +196,13 @@ fun WallpaperAdjustScreen(
                 IconButton(onClick = { sheetMinimized = !sheetMinimized }, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = if (sheetMinimized) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (sheetMinimized) "Expand controls" else "Minimize controls",
+                        contentDescription = stringResource(
+                            if (sheetMinimized) {
+                                R.string.wallpaper_expand_controls
+                            } else {
+                                R.string.wallpaper_minimize_controls
+                            },
+                        ),
                         tint = LitterTheme.textPrimary,
                     )
                 }
@@ -210,16 +218,16 @@ fun WallpaperAdjustScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Wallpaper Controls",
+                        text = stringResource(R.string.wallpaper_controls),
                         color = LitterTheme.textPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = if (sheetMinimized) {
-                            "Tap to expand blur, motion, brightness, and apply controls."
+                            stringResource(R.string.wallpaper_controls_collapsed_help)
                         } else {
-                            "Adjust the current wallpaper, or minimize this sheet to inspect it full-screen."
+                            stringResource(R.string.wallpaper_controls_help)
                         },
                         color = LitterTheme.textMuted,
                         fontSize = 12.sp,
@@ -227,7 +235,13 @@ fun WallpaperAdjustScreen(
                 }
                 Icon(
                     imageVector = if (sheetMinimized) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (sheetMinimized) "Expand controls" else "Minimize controls",
+                    contentDescription = stringResource(
+                        if (sheetMinimized) {
+                            R.string.wallpaper_expand_controls
+                        } else {
+                            R.string.wallpaper_minimize_controls
+                        },
+                    ),
                     tint = LitterTheme.textPrimary,
                 )
             }
@@ -250,7 +264,7 @@ fun WallpaperAdjustScreen(
                                 uncheckedColor = LitterTheme.textMuted,
                             ),
                         )
-                        Text("Blurred", color = LitterTheme.textPrimary, fontSize = 13.sp)
+                        Text(stringResource(R.string.wallpaper_blurred), color = LitterTheme.textPrimary, fontSize = 13.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
@@ -261,7 +275,7 @@ fun WallpaperAdjustScreen(
                                 uncheckedColor = LitterTheme.textMuted,
                             ),
                         )
-                        Text("Motion", color = LitterTheme.textPrimary, fontSize = 13.sp)
+                        Text(stringResource(R.string.wallpaper_motion), color = LitterTheme.textPrimary, fontSize = 13.sp)
                     }
                 }
 
@@ -307,7 +321,7 @@ fun WallpaperAdjustScreen(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Apply for This Thread", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.wallpaper_apply_thread), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -333,7 +347,7 @@ fun WallpaperAdjustScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "Apply for This Server",
+                            stringResource(R.string.wallpaper_apply_server),
                             fontSize = 13.sp,
                             fontWeight = if (isServerOnly) FontWeight.SemiBold else FontWeight.Normal,
                         )

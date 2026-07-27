@@ -31,12 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.OutlinedTextField
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -152,10 +154,10 @@ private fun ApprovalCard(
     val context = androidx.compose.ui.platform.LocalContext.current
     val isLocal = snap.value?.servers?.firstOrNull { it.serverId == approval.serverId }?.isLocal == true
     val title = when (approval.kind) {
-        ApprovalKind.COMMAND -> "Run command?"
-        ApprovalKind.FILE_CHANGE -> "File change?"
-        ApprovalKind.PERMISSIONS -> "Grant permission?"
-        ApprovalKind.MCP_ELICITATION -> "Tool request"
+        ApprovalKind.COMMAND -> stringResource(R.string.approval_run_command)
+        ApprovalKind.FILE_CHANGE -> stringResource(R.string.approval_file_change)
+        ApprovalKind.PERMISSIONS -> stringResource(R.string.approval_grant_permission)
+        ApprovalKind.MCP_ELICITATION -> stringResource(R.string.approval_tool_request)
     }
 
     // Bare layout (no card background) to match iOS ConversationView prompt.
@@ -192,7 +194,10 @@ private fun ApprovalCard(
         // CWD
         approval.cwd?.let { cwd ->
             Text(
-                text = "in " + com.litter.android.state.PathDisplay.display(cwd, isLocal, context),
+                text = stringResource(
+                    R.string.approval_in_path,
+                    com.litter.android.state.PathDisplay.display(cwd, isLocal, context),
+                ),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.caption.scaled,
             )
@@ -218,14 +223,14 @@ private fun ApprovalCard(
                 enabled = !isSubmitting,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Deny")
+                Text(stringResource(R.string.conversation_deny))
             }
             OutlinedButton(
                 onClick = { onDecision(ApprovalDecisionValue.ACCEPT_FOR_SESSION) },
                 enabled = !isSubmitting,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Allow session")
+                Text(stringResource(R.string.conversation_allow_session))
             }
             Button(
                 onClick = { onDecision(ApprovalDecisionValue.ACCEPT) },
@@ -236,7 +241,7 @@ private fun ApprovalCard(
                     contentColor = Color.Black,
                 ),
             ) {
-                Text("Allow")
+                Text(stringResource(R.string.conversation_allow))
             }
         }
     }
@@ -251,6 +256,8 @@ private fun UserInputCard(
     onDismiss: (() -> Unit)? = null,
 ) {
     val answers = remember { mutableMapOf<String, String>() }
+    val dismissInputRequestDescription =
+        stringResource(R.string.conversation_dismiss_input_request)
 
     // Bare layout (no card background) to match iOS ConversationView prompt.
     Column(
@@ -288,7 +295,7 @@ private fun UserInputCard(
                     modifier = Modifier
                         .clickable { onDismiss() }
                         .padding(4.dp)
-                        .semantics { contentDescription = "Dismiss input request" },
+                        .semantics { contentDescription = dismissInputRequestDescription },
                 )
             }
         }
@@ -357,7 +364,7 @@ private fun UserInputCard(
             ),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Submit")
+            Text(stringResource(R.string.common_submit))
         }
     }
 }

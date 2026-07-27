@@ -26,12 +26,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.sigkitten.litter.android.R
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.ChatGPTOAuthTokenStore
@@ -76,7 +78,7 @@ fun AccountSheet(
         if (result.resultCode == Activity.RESULT_OK) {
             val tokens = ChatGPTOAuthActivity.parseResult(result.data)
             if (tokens == null) {
-                error = "ChatGPT login returned incomplete credentials."
+                error = context.getString(R.string.account_login_incomplete)
                 LLog.w("ChatGPTOAuth", "account sheet auth result missing tokens")
                 return@rememberLauncherForActivityResult
             }
@@ -134,7 +136,7 @@ fun AccountSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = "Account",
+            text = stringResource(R.string.settings_account_section),
             color = LitterTheme.textPrimary,
             fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold,
@@ -155,7 +157,7 @@ fun AccountSheet(
                         .background(LitterTheme.surface, RoundedCornerShape(8.dp))
                         .padding(12.dp),
                 ) {
-                    Text("Logged in", color = LitterTheme.accent, fontSize = 13.sp)
+                    Text(stringResource(R.string.account_logged_in), color = LitterTheme.accent, fontSize = 13.sp)
                     Text(account.email, color = LitterTheme.textPrimary, fontSize = 14.sp)
                 }
             }
@@ -167,7 +169,7 @@ fun AccountSheet(
                         .background(LitterTheme.surface, RoundedCornerShape(8.dp))
                         .padding(12.dp),
                 ) {
-                    Text("API key configured", color = LitterTheme.accent, fontSize = 13.sp)
+                    Text(stringResource(R.string.account_api_key_configured), color = LitterTheme.accent, fontSize = 13.sp)
                 }
             }
 
@@ -176,7 +178,7 @@ fun AccountSheet(
 
         if (server?.isLocal == true && hasStoredApiKey) {
             Text(
-                "Local OpenAI API key is saved.",
+                stringResource(R.string.account_local_key_saved),
                 color = LitterTheme.accent,
                 fontSize = 12.sp,
             )
@@ -184,7 +186,7 @@ fun AccountSheet(
 
         if (server?.isLocal == true && hasStoredBaseUrl) {
             Text(
-                "OpenAI-compatible base URL is saved.",
+                stringResource(R.string.account_base_url_saved),
                 color = LitterTheme.accent,
                 fontSize = 12.sp,
             )
@@ -202,7 +204,7 @@ fun AccountSheet(
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Logout")
+                Text(stringResource(R.string.account_logout))
             }
         }
 
@@ -230,31 +232,31 @@ fun AccountSheet(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isAuthWorking,
             ) {
-                Text("Login with ChatGPT")
+                Text(stringResource(R.string.account_login_chatgpt))
             }
         }
 
         if (allowsLocalEnvApiKey) {
             if (hasStoredApiKey) {
                 Text(
-                    "OpenAI API key saved in the local environment.",
+                    stringResource(R.string.account_key_saved_environment),
                     color = LitterTheme.textSecondary,
                     fontSize = 12.sp,
                 )
             } else if (isChatGPTAccount) {
                 Text(
-                    "Save an OpenAI API key in the local Codex environment.",
+                    stringResource(R.string.account_save_key_environment),
                     color = LitterTheme.textSecondary,
                     fontSize = 12.sp,
                 )
             } else {
-                Text("Or save an API key for the local environment:", color = LitterTheme.textSecondary, fontSize = 12.sp)
+                Text(stringResource(R.string.account_api_key_helper), color = LitterTheme.textSecondary, fontSize = 12.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
-                    label = { Text("API Key") },
+                    label = { Text(stringResource(R.string.account_api_key)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.weight(1f),
@@ -272,7 +274,7 @@ fun AccountSheet(
                                 if (hasStoredApiKey) {
                                     apiKey = ""
                                 } else {
-                                    error = "API key did not persist locally."
+                                    error = context.getString(R.string.account_key_not_persisted)
                                     return@launch
                                 }
                                 error = null
@@ -287,15 +289,23 @@ fun AccountSheet(
                         contentColor = Color.Black,
                     ),
                 ) {
-                    Text(if (hasStoredApiKey) "Update API Key" else "Save API Key")
+                    Text(
+                        stringResource(
+                            if (hasStoredApiKey) {
+                                R.string.account_update_api_key
+                            } else {
+                                R.string.account_save_api_key
+                            },
+                        ),
+                    )
                 }
             }
 
             Text(
                 if (hasStoredBaseUrl) {
-                    "Custom OpenAI-compatible endpoint saved for the local Codex server."
+                    stringResource(R.string.account_custom_endpoint_saved)
                 } else {
-                    "Optional OpenAI-compatible endpoint for local models."
+                    stringResource(R.string.account_optional_endpoint)
                 },
                 color = LitterTheme.textSecondary,
                 fontSize = 12.sp,
@@ -304,7 +314,7 @@ fun AccountSheet(
                 OutlinedTextField(
                     value = openAIBaseUrl,
                     onValueChange = { openAIBaseUrl = it },
-                    label = { Text("Base URL") },
+                    label = { Text(stringResource(R.string.account_base_url)) },
                     placeholder = { Text("http://host:port/v1") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
@@ -313,7 +323,7 @@ fun AccountSheet(
                     onClick = {
                         val normalized = normalizeOpenAIBaseUrl(openAIBaseUrl)
                         if (normalized == null) {
-                            error = "Enter a valid http or https base URL."
+                            error = context.getString(R.string.account_invalid_base_url)
                         } else {
                             scope.launch {
                                 isAuthWorking = true
@@ -325,7 +335,7 @@ fun AccountSheet(
                                         openAIBaseUrl = ""
                                         error = null
                                     } else {
-                                        error = "Base URL did not persist locally."
+                                        error = context.getString(R.string.account_base_url_not_persisted)
                                     }
                                 } catch (e: Exception) {
                                     error = e.message
@@ -365,12 +375,12 @@ fun AccountSheet(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isAuthWorking,
                 ) {
-                    Text("Clear Base URL")
+                    Text(stringResource(R.string.account_clear_base_url))
                 }
             }
         } else if (server?.isLocal == false) {
             Text(
-                "Remote servers request their own OAuth login when needed. Account login and API key entry stay local-only.",
+                stringResource(R.string.account_remote_login_help),
                 color = LitterTheme.textSecondary,
                 fontSize = 12.sp,
             )

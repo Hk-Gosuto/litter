@@ -37,8 +37,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.sigkitten.litter.android.R
 import kotlinx.coroutines.delay
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -104,7 +106,11 @@ fun SavedAppUpdateOverlay(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (isSubmitting) "Updating \"$currentTitle\"" else "Update App",
+                    text = if (isSubmitting) {
+                        stringResource(R.string.apps_updating, currentTitle)
+                    } else {
+                        stringResource(R.string.apps_update_title)
+                    },
                     color = LitterTheme.textPrimary,
                     fontSize = LitterTextStyle.headline.scaled,
                     fontWeight = FontWeight.SemiBold,
@@ -114,7 +120,7 @@ fun SavedAppUpdateOverlay(
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.common_close),
                             tint = LitterTheme.textSecondary,
                         )
                     }
@@ -132,21 +138,21 @@ fun SavedAppUpdateOverlay(
                         color = LitterTheme.accent,
                     )
                     Text(
-                        text = "Working on your update…",
+                        text = stringResource(R.string.apps_update_working),
                         color = LitterTheme.textSecondary,
                         fontSize = LitterTextStyle.footnote.scaled,
                     )
                 }
             } else {
                 Text(
-                    text = "Describe the change. The model keeps your saved state.",
+                    text = stringResource(R.string.apps_update_helper),
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.footnote.scaled,
                 )
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { prompt = it },
-                    placeholder = { Text("e.g. make the buttons bigger") },
+                    placeholder = { Text(stringResource(R.string.apps_update_placeholder)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focusRequester),
@@ -156,7 +162,7 @@ fun SavedAppUpdateOverlay(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = LitterTheme.textSecondary)
+                        Text(stringResource(R.string.common_cancel), color = LitterTheme.textSecondary)
                     }
                     Spacer(Modifier.size(8.dp))
                     TextButton(
@@ -166,7 +172,7 @@ fun SavedAppUpdateOverlay(
                             if (value.isNotEmpty()) onSubmit(value)
                         },
                     ) {
-                        Text("Submit", color = LitterTheme.accent)
+                        Text(stringResource(R.string.common_submit), color = LitterTheme.accent)
                     }
                 }
             }

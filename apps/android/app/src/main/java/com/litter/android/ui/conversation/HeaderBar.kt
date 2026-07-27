@@ -54,9 +54,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.accentColor
 import com.litter.android.state.displayModelLabel
 import com.litter.android.state.resolvedModel
@@ -145,7 +147,7 @@ fun HeaderBar(
             IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = LitterTheme.textPrimary,
                     modifier = Modifier.size(20.dp),
                 )
@@ -212,7 +214,7 @@ fun HeaderBar(
                     Spacer(Modifier.width(2.dp))
                     Icon(
                         Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Open model selector",
+                        contentDescription = stringResource(R.string.conversation_open_model_selector),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(14.dp),
                     )
@@ -233,7 +235,7 @@ fun HeaderBar(
                         if (thread?.collaborationMode == AppModeKind.PLAN) {
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "plan",
+                                text = stringResource(R.string.conversation_plan),
                                 color = Color.Black,
                                 fontSize = 10f.scaled,
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
@@ -263,7 +265,7 @@ fun HeaderBar(
                             Spacer(Modifier.width(6.dp))
                             Icon(
                                 imageVector = Icons.Default.LockOpen,
-                                contentDescription = "Full access permissions",
+                                contentDescription = stringResource(R.string.conversation_full_access_permissions),
                                 tint = LitterTheme.danger,
                                 modifier = Modifier.size(10.dp),
                             )
@@ -311,7 +313,7 @@ fun HeaderBar(
                 } else {
                     Icon(
                         Icons.Default.Refresh,
-                        contentDescription = "Reload",
+                        contentDescription = stringResource(R.string.conversation_reload),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(18.dp),
                     )
@@ -326,7 +328,7 @@ fun HeaderBar(
                 ) {
                     Icon(
                         Icons.Outlined.Info,
-                        contentDescription = "Info",
+                        contentDescription = stringResource(R.string.conversation_info),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(18.dp),
                     )

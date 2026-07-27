@@ -145,7 +145,12 @@ struct AlleycatAddServerSheet: View {
 
     @ViewBuilder
     private var pasteJSONPairingControls: some View {
-        Text("Run \(Self.pairCommandLabel) on the host you want to connect to, then paste the JSON it prints below.")
+        Text(
+            AppLanguage.localizedString(
+                "Run %@ on the host you want to connect to, then paste the JSON it prints below.",
+                Self.pairCommandLabel
+            )
+        )
             .litterFont(.caption)
             .foregroundColor(LitterTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -161,7 +166,11 @@ struct AlleycatAddServerSheet: View {
             HStack {
                 Image(systemName: "qrcode.viewfinder")
                     .foregroundColor(LitterTheme.accent)
-                Text(parsedParams == nil ? "Scan Pairing QR" : "Rescan QR")
+                Text(
+                    AppLanguage.localizedString(
+                        parsedParams == nil ? "Scan Pairing QR" : "Rescan QR"
+                    )
+                )
                     .litterFont(.subheadline)
                     .foregroundColor(LitterTheme.accent)
             }
@@ -209,7 +218,11 @@ struct AlleycatAddServerSheet: View {
 
             Spacer()
 
-            Button(parsedParams == nil ? "Parse JSON" : "Reparse JSON") {
+            Button(
+                AppLanguage.localizedString(
+                    parsedParams == nil ? "Parse JSON" : "Reparse JSON"
+                )
+            ) {
                 handleScannedPayload(pasteJSON)
             }
             .litterFont(.footnote)
@@ -299,7 +312,11 @@ struct AlleycatAddServerSheet: View {
                 Text("Agents")
                 Spacer()
                 if !availableAgents.isEmpty {
-                    Button(selectedAgents.count == availableAgents.count ? "None" : "All") {
+                    Button(
+                        AppLanguage.localizedString(
+                            selectedAgents.count == availableAgents.count ? "None" : "All"
+                        )
+                    ) {
                         if selectedAgents.count == availableAgents.count {
                             selectedAgentNames = []
                         } else {
@@ -317,7 +334,7 @@ struct AlleycatAddServerSheet: View {
 
     private func previewRow(label: String, value: String) -> some View {
         HStack {
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .litterFont(.caption)
                 .foregroundColor(LitterTheme.textSecondary)
             Spacer()
@@ -620,7 +637,7 @@ private struct QRScannerScreen: View {
                 .foregroundColor(.black)
                 .frame(width: 20, height: 20)
                 .background(LitterTheme.accent, in: Circle())
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.92))
                 .frame(maxWidth: .infinity, alignment: .leading)

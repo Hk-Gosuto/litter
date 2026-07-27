@@ -324,7 +324,7 @@ enum HomeDashboardSupport {
 
     static func serverSubtitle(for server: HomeDashboardServer) -> String {
         if server.isLocal {
-            return "In-process server"
+            return AppLanguage.localizedString("In-process server")
         }
 
         return "\(server.host):\(server.port) | \(server.sourceLabel)"
@@ -351,7 +351,7 @@ enum HomeDashboardSupport {
             return userMessage
         }
 
-        return "New thread"
+        return AppLanguage.localizedString("New thread")
     }
 }
 

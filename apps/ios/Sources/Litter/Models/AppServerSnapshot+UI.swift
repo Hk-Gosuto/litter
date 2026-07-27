@@ -15,8 +15,8 @@ extension AppServerSnapshot {
     }
 
     var connectionModeLabel: String {
-        guard !isLocal else { return "local" }
-        return "remote"
+        guard !isLocal else { return AppLanguage.localizedString("local") }
+        return AppLanguage.localizedString("remote")
     }
 
     var currentConnectionStep: AppConnectionStepSnapshot? {
@@ -32,17 +32,17 @@ extension AppServerSnapshot {
         guard let step = currentConnectionStep else { return nil }
         switch step.kind {
         case .connectingToSsh:
-            return "connecting"
+            return AppLanguage.localizedString("connecting")
         case .findingCodex:
-            return "finding codex"
+            return AppLanguage.localizedString("finding codex")
         case .installingCodex:
-            return "installing"
+            return AppLanguage.localizedString("installing")
         case .startingAppServer:
-            return "starting"
+            return AppLanguage.localizedString("starting")
         case .openingTunnel:
-            return "tunneling"
+            return AppLanguage.localizedString("tunneling")
         case .connected:
-            return "connected"
+            return AppLanguage.localizedString("connected")
         }
     }
 
@@ -55,7 +55,7 @@ extension AppServerSnapshot {
             return connectionProgressLabel
         }
         if transportState == .connected, !isLocal, account == nil {
-            return "Sign in required"
+            return AppLanguage.localizedString("Sign in required")
         }
         return transportState.displayLabel
     }

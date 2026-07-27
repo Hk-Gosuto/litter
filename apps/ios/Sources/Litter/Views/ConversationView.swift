@@ -177,7 +177,7 @@ struct ConversationView: View {
         )) {
             Button("OK", role: .cancel) { messageActionError = nil }
         } message: {
-            Text(messageActionError ?? "Unknown error")
+            Text(messageActionError ?? AppLanguage.localizedString("Unknown error"))
         }
         .onAppear {
             guard !hasLoggedFirstRender else { return }
@@ -290,7 +290,11 @@ struct ConversationView: View {
                     throw NSError(
                         domain: "Litter",
                         code: 1020,
-                        userInfo: [NSLocalizedDescriptionKey: "Only user messages can be edited"]
+                        userInfo: [
+                            NSLocalizedDescriptionKey: AppLanguage.localizedString(
+                                "Only user messages can be edited"
+                            )
+                        ]
                     )
                 }
                 let result = try await appModel.store.editMessage(
@@ -312,7 +316,11 @@ struct ConversationView: View {
                     throw NSError(
                         domain: "Litter",
                         code: 1016,
-                        userInfo: [NSLocalizedDescriptionKey: "Fork from here is only supported for user messages"]
+                        userInfo: [
+                            NSLocalizedDescriptionKey: AppLanguage.localizedString(
+                                "Fork from here is only supported for user messages"
+                            )
+                        ]
                     )
                 }
                 let nextKey = try await appModel.store.forkThreadFromMessage(
@@ -2142,7 +2150,7 @@ private struct ConversationInputBar: View {
                     params: AppThreadGoalGetRequest(threadId: snapshot.threadKey.threadId)
                 )
                 guard let goal else {
-                    slashErrorMessage = "No goal is set for this thread."
+                    slashErrorMessage = AppLanguage.localizedString("No goal is set for this thread.")
                     return
                 }
                 slashErrorMessage = goalSummary(goal)
@@ -2189,24 +2197,29 @@ private struct ConversationInputBar: View {
 
     private func goalSummary(_ goal: AppThreadGoal) -> String {
         var lines = [
-            "Goal: \(goal.objective)",
-            "Status: \(goalStatusLabel(goal.status))",
-            "Tokens used: \(goal.tokensUsed)"
+            AppLanguage.localizedString("Goal: %@", goal.objective),
+            AppLanguage.localizedString("Status: %@", goalStatusLabel(goal.status)),
+            AppLanguage.localizedString("Tokens used: %lld", Int64(clamping: goal.tokensUsed))
         ]
         if let tokenBudget = goal.tokenBudget {
-            lines.append("Token budget: \(tokenBudget)")
+            lines.append(
+                AppLanguage.localizedString(
+                    "Token budget: %lld",
+                    Int64(clamping: tokenBudget)
+                )
+            )
         }
         return lines.joined(separator: "\n")
     }
 
     private func goalStatusLabel(_ status: AppThreadGoalStatus) -> String {
         switch status {
-        case .active: return "active"
-        case .paused: return "paused"
-        case .blocked: return "blocked"
-        case .usageLimited: return "limited by usage"
-        case .budgetLimited: return "limited by budget"
-        case .complete: return "complete"
+        case .active: return AppLanguage.localizedString("active")
+        case .paused: return AppLanguage.localizedString("paused")
+        case .blocked: return AppLanguage.localizedString("blocked")
+        case .usageLimited: return AppLanguage.localizedString("limited by usage")
+        case .budgetLimited: return AppLanguage.localizedString("limited by budget")
+        case .complete: return AppLanguage.localizedString("complete")
         }
     }
 
@@ -2320,7 +2333,7 @@ private struct ConversationInputBar: View {
     private func loadExperimentalFeatures() async {
         guard appModel.snapshot?.servers.first(where: { $0.serverId == snapshot.threadKey.serverId })?.canUseTransportActions == true else {
             experimentalFeatures = []
-            slashErrorMessage = "Not connected to a server"
+            slashErrorMessage = AppLanguage.localizedString("Not connected to a server")
             return
         }
         experimentalFeaturesLoading = true
@@ -2346,7 +2359,7 @@ private struct ConversationInputBar: View {
 
     private func setExperimentalFeature(named featureName: String, enabled: Bool) async {
         guard appModel.snapshot?.servers.first(where: { $0.serverId == snapshot.threadKey.serverId })?.canUseTransportActions == true else {
-            slashErrorMessage = "Not connected to a server"
+            slashErrorMessage = AppLanguage.localizedString("Not connected to a server")
             return
         }
         guard let currentIndex = experimentalFeatures.firstIndex(where: { $0.name == featureName }) else {
@@ -2400,7 +2413,7 @@ private struct ConversationInputBar: View {
             skills = []
             mentionSkillPathsByName = [:]
             if showErrors {
-                slashErrorMessage = "Not connected to a server"
+                slashErrorMessage = AppLanguage.localizedString("Not connected to a server")
             }
             return
         }
@@ -2638,21 +2651,21 @@ private struct CollaborationModeSelectorSheet: View {
 private func collaborationModeEffortLabel(_ effort: ReasoningEffort) -> String {
     switch effort {
     case .none:
-        return "None"
+        return AppLanguage.localizedString("None")
     case .minimal:
-        return "Minimal"
+        return AppLanguage.localizedString("Minimal")
     case .low:
-        return "Low"
+        return AppLanguage.localizedString("Low")
     case .medium:
-        return "Medium"
+        return AppLanguage.localizedString("Medium")
     case .high:
-        return "High"
+        return AppLanguage.localizedString("High")
     case .xHigh:
-        return "XHigh"
+        return AppLanguage.localizedString("XHigh")
     case .max:
-        return "Max"
+        return AppLanguage.localizedString("Max")
     case .ultra:
-        return "Ultra"
+        return AppLanguage.localizedString("Ultra")
     }
 }
 
@@ -2687,17 +2700,17 @@ enum ComposerSlashCommand: CaseIterable {
 
     var description: String {
         switch self {
-        case .plan: return "switch collaboration mode"
-        case .model: return "choose what model and reasoning effort to use"
-        case .permissions: return "choose what Codex is allowed to do"
-        case .experimental: return "toggle experimental features"
-        case .skills: return "use skills to improve how Codex performs specific tasks"
-        case .review: return "review my current changes and find issues"
-        case .goal: return "set or manage the current thread goal"
-        case .rename: return "rename the current thread"
-        case .new: return "start a new chat during a conversation"
-        case .fork: return "fork the current conversation into a new session"
-        case .resume: return "resume a saved chat"
+        case .plan: return AppLanguage.localizedString("switch collaboration mode")
+        case .model: return AppLanguage.localizedString("choose what model and reasoning effort to use")
+        case .permissions: return AppLanguage.localizedString("choose what Codex is allowed to do")
+        case .experimental: return AppLanguage.localizedString("toggle experimental features")
+        case .skills: return AppLanguage.localizedString("use skills to improve how Codex performs specific tasks")
+        case .review: return AppLanguage.localizedString("review my current changes and find issues")
+        case .goal: return AppLanguage.localizedString("set or manage the current thread goal")
+        case .rename: return AppLanguage.localizedString("rename the current thread")
+        case .new: return AppLanguage.localizedString("start a new chat during a conversation")
+        case .fork: return AppLanguage.localizedString("fork the current conversation into a new session")
+        case .resume: return AppLanguage.localizedString("resume a saved chat")
         }
     }
 
@@ -2730,21 +2743,21 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .default: return "Default"
-        case .untrusted: return "Untrusted"
-        case .onFailure: return "On failure"
-        case .onRequest: return "On request"
-        case .never: return "Never"
+        case .default: return AppLanguage.localizedString("Default")
+        case .untrusted: return AppLanguage.localizedString("Untrusted")
+        case .onFailure: return AppLanguage.localizedString("On failure")
+        case .onRequest: return AppLanguage.localizedString("On request")
+        case .never: return AppLanguage.localizedString("Never")
         }
     }
 
     var description: String {
         switch self {
-        case .default: return "Use the thread or server default"
-        case .untrusted: return "Always ask before taking action"
-        case .onFailure: return "Ask only when a command fails"
-        case .onRequest: return "Ask when escalation is requested"
-        case .never: return "Run without asking for approval"
+        case .default: return AppLanguage.localizedString("Use the thread or server default")
+        case .untrusted: return AppLanguage.localizedString("Always ask before taking action")
+        case .onFailure: return AppLanguage.localizedString("Ask only when a command fails")
+        case .onRequest: return AppLanguage.localizedString("Ask when escalation is requested")
+        case .never: return AppLanguage.localizedString("Run without asking for approval")
         }
     }
 
@@ -2769,19 +2782,19 @@ enum ComposerSandboxOption: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .default: return "Default"
-        case .readOnly: return "Read only"
-        case .workspaceWrite: return "Workspace write"
-        case .fullAccess: return "Full access"
+        case .default: return AppLanguage.localizedString("Default")
+        case .readOnly: return AppLanguage.localizedString("Read only")
+        case .workspaceWrite: return AppLanguage.localizedString("Workspace write")
+        case .fullAccess: return AppLanguage.localizedString("Full access")
         }
     }
 
     var description: String {
         switch self {
-        case .default: return "Use the thread or server default"
-        case .readOnly: return "Can read files, but cannot edit them"
-        case .workspaceWrite: return "Can edit files, but only in this workspace"
-        case .fullAccess: return "Can edit files outside this workspace"
+        case .default: return AppLanguage.localizedString("Use the thread or server default")
+        case .readOnly: return AppLanguage.localizedString("Can read files, but cannot edit them")
+        case .workspaceWrite: return AppLanguage.localizedString("Can edit files, but only in this workspace")
+        case .fullAccess: return AppLanguage.localizedString("Can edit files outside this workspace")
         }
     }
 
@@ -3040,9 +3053,9 @@ struct PendingUserInputPromptView: View {
     private var promptTitle: String {
         let firstQuestion = request.questions.first?.question.lowercased() ?? ""
         if firstQuestion.contains("implement") && firstQuestion.contains("plan") {
-            return "Implement Plan"
+            return AppLanguage.localizedString("Implement Plan")
         }
-        return "Input Required"
+        return AppLanguage.localizedString("Input Required")
     }
 
     private var requesterLabel: String? {
@@ -3136,7 +3149,9 @@ struct PendingUserInputPromptView: View {
 
                             if question.isOtherAllowed {
                                 TextField(
-                                    question.options.isEmpty ? "Enter response" : "Other response",
+                                    AppLanguage.localizedString(
+                                        question.options.isEmpty ? "Enter response" : "Other response"
+                                    ),
                                     text: otherAnswerBinding(for: question)
                                 )
                                 .litterFont(.caption2)
@@ -3282,7 +3297,7 @@ struct QueuedFollowUpsPreviewView: View {
                         HStack(spacing: 6) {
                             Image(systemName: style.symbol)
                                 .font(.system(size: 11, weight: .semibold))
-                            Text(style.title)
+                            Text(LocalizedStringKey(style.title))
                                 .litterFont(.caption2, weight: .semibold)
                         }
                         .foregroundColor(style.tint)
@@ -3391,7 +3406,7 @@ private struct ConversationLoadingIndicator: View {
     @State private var shimmerOffset: CGFloat = -1
 
     var body: some View {
-        Text(label)
+        Text(LocalizedStringKey(label))
             .litterFont(.body, weight: .medium)
             .foregroundStyle(
                 LinearGradient(
@@ -3518,7 +3533,7 @@ private struct SubagentBreadcrumbBar: View {
                 Image(systemName: "person.fill")
                     .litterFont(size: 10, weight: .semibold)
                     .foregroundColor(LitterTheme.success)
-                Text(thread.agentDisplayLabel ?? "Agent")
+                Text(thread.agentDisplayLabel ?? AppLanguage.localizedString("Agent"))
                     .litterFont(.caption, weight: .medium)
                     .foregroundColor(LitterTheme.textPrimary)
                     .lineLimit(1)

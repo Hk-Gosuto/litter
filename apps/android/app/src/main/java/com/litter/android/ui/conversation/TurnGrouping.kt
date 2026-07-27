@@ -36,10 +36,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalTextScale
@@ -289,7 +291,7 @@ fun CollapsedTurnCard(
                 MetadataBadge(dur, LitterTheme.textMuted)
             }
             Spacer(Modifier.weight(1f))
-            Text("Tap to expand", color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
+            Text(stringResource(R.string.conversation_tap_to_expand), color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
         }
     }
 }
