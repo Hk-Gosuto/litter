@@ -1,0 +1,158 @@
+name: iOS Unsigned IPA
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+
+      - name: Install build dependencies
+        run: brew install xcodegen meson ninja llvm lld
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,i686-unknown-linux-musl,aarch64-unknown-linux-musl
+
+      - name: Prepare iOS device assets
+        env:
+          CARGO_INCREMENTAL: "0"
+          CARGO_BUILD_JOBS: "1"
+          IOS_RUST_PROFILE: mobile-release
+        run: |
+          set -uo pipefail
+          mkdir -p artifacts/unsigned-ios
+          LOG_PATH=artifacts/unsigned-ios/prepare-ios.log
+
+          set +e
+          (
+            set -euo pipefail
+            ./apps/ios/scripts/build-rust.sh --preserve-current --device-only
+            make alpine-fs xcgen
+          ) 2>&1 | tee "$LOG_PATH"
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [[ "$status" -ne 0 ]]; then
+            message="$(tail -c 50000 "$LOG_PATH")"
+            message="${message//'%'/'%25'}"
+            message="${message//$'\r'/'%0D'}"
+            message="${message//$'\n'/'%0A'}"
+            echo "::error title=iOS device preparation failed::$message"
+            exit "$status"
+          fi
+
+      - name: Build unsigned archive
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project apps/ios/Litter.xcodeproj \
+            -scheme Litter \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/Litter.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean archive
+
+      - name: Package unsigned IPA
+        id: package
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/Litter.xcarchive/Products/Applications/Litter.app"
+          OUTPUT_DIR="$GITHUB_WORKSPACE/artifacts/unsigned-ios"
+          PAYLOAD_ROOT="$RUNNER_TEMP/unsigned-ipa"
+          RELEASE_LABEL="${GITHUB_REF_NAME//\//-}"
+          IPA_RELATIVE_PATH="artifacts/unsigned-ios/Litter-${RELEASE_LABEL}-unsigned.ipa"
+          IPA_PATH="$GITHUB_WORKSPACE/$IPA_RELATIVE_PATH"
+
+          test -d "$APP_PATH"
+          rm -rf "$PAYLOAD_ROOT"
+          mkdir -p "$PAYLOAD_ROOT/Payload" "$OUTPUT_DIR"
+          ditto "$APP_PATH" "$PAYLOAD_ROOT/Payload/Litter.app"
+
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q "Mach-O"; then
+              codesign --remove-signature "$candidate" 2>/dev/null || true
+            fi
+          done < <(find "$PAYLOAD_ROOT/Payload/Litter.app" -type f -print0)
+
+          find "$PAYLOAD_ROOT/Payload/Litter.app" -type d -name _CodeSignature -prune -exec rm -rf {} +
+          find "$PAYLOAD_ROOT/Payload/Litter.app" -type f -name embedded.mobileprovision -delete
+
+          if find "$PAYLOAD_ROOT/Payload/Litter.app" -type d -name _CodeSignature -print -quit | grep -q .; then
+            echo "A code-signature directory remains in the app bundle" >&2
+            exit 1
+          fi
+          if find "$PAYLOAD_ROOT/Payload/Litter.app" -type f -name embedded.mobileprovision -print -quit | grep -q .; then
+            echo "A provisioning profile remains in the app bundle" >&2
+            exit 1
+          fi
+
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q "Mach-O" && codesign --verify "$candidate" >/dev/null 2>&1; then
+              echo "A signed Mach-O remains: $candidate" >&2
+              exit 1
+            fi
+          done < <(find "$PAYLOAD_ROOT/Payload/Litter.app" -type f -print0)
+
+          (
+            cd "$PAYLOAD_ROOT"
+            /usr/bin/zip -qry "$IPA_PATH" Payload
+          )
+          shasum -a 256 "$IPA_PATH" | tee "$IPA_PATH.sha256"
+          echo "ipa_path=$IPA_RELATIVE_PATH" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=$IPA_RELATIVE_PATH.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload unsigned IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Litter-unsigned-${{ github.run_number }}
+          path: artifacts/unsigned-ios/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish unsigned IPA to GitHub Release
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.ipa_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
