@@ -61,7 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import com.litter.android.R
+import com.sigkitten.litter.android.R
 import com.litter.android.state.displayTitle
 import com.litter.android.state.isConnected
 import com.litter.android.ui.LocalAppModel

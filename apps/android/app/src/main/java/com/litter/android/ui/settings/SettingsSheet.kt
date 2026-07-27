@@ -79,7 +79,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.litter.android.auth.ChatGPTOAuthActivity
-import com.litter.android.R
+import com.sigkitten.litter.android.R
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.ChatGPTOAuthTokenStore
 import com.litter.android.state.DebugSettings
