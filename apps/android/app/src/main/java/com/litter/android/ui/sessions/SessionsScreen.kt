@@ -60,6 +60,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.litter.android.R
 import com.litter.android.state.displayTitle
 import com.litter.android.state.isConnected
 import com.litter.android.ui.LocalAppModel
@@ -267,7 +269,7 @@ fun SessionsScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = LitterTheme.textPrimary,
                 )
             }
@@ -298,7 +300,7 @@ fun SessionsScreen(
                             modifier = Modifier.size(14.dp),
                         )
                     } else {
-                        Text("Fork", color = LitterTheme.accent, fontSize = 12.sp)
+                        Text(stringResource(R.string.sessions_fork), color = LitterTheme.accent, fontSize = 12.sp)
                     }
                 }
             }
@@ -316,7 +318,7 @@ fun SessionsScreen(
                 } else {
                     Icon(
                         Icons.Default.Refresh,
-                        contentDescription = "Refresh sessions",
+                        contentDescription = stringResource(R.string.sessions_refresh),
                         tint = if (connectedServerIds.isEmpty()) {
                             LitterTheme.textMuted
                         } else {
@@ -330,7 +332,7 @@ fun SessionsScreen(
                 IconButton(onClick = onInfo, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Outlined.Info,
-                        contentDescription = "Server Info",
+                        contentDescription = stringResource(R.string.sessions_server_info),
                         tint = LitterTheme.accent,
                         modifier = Modifier.size(18.dp),
                     )
@@ -355,7 +357,7 @@ fun SessionsScreen(
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text("New Session")
+                Text(stringResource(R.string.sessions_new))
             }
         }
 
@@ -374,7 +376,7 @@ fun SessionsScreen(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 if (searchQuery.isEmpty()) {
-                    Text("Search sessions\u2026", color = LitterTheme.textMuted, fontSize = 13.sp)
+                    Text(stringResource(R.string.sessions_search), color = LitterTheme.textMuted, fontSize = 13.sp)
                 }
                 BasicTextField(
                     value = searchQuery,
@@ -387,7 +389,7 @@ fun SessionsScreen(
             FilterChip(
                 selected = sessionsUiState.showOnlyForks,
                 onClick = { sessionsUiState.showOnlyForks = !sessionsUiState.showOnlyForks },
-                label = { Text("Forks", fontSize = 11.sp) },
+                label = { Text(stringResource(R.string.sessions_forks), fontSize = 11.sp) },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = LitterTheme.accent,
                     selectedLabelColor = Color.Black,
@@ -433,7 +435,7 @@ fun SessionsScreen(
                     )
                 } else {
                     Text(
-                        text = "No sessions yet",
+                        text = stringResource(R.string.sessions_empty),
                         color = LitterTheme.textMuted,
                         fontSize = 13.sp,
                     )
@@ -454,7 +456,7 @@ fun SessionsScreen(
                         modifier = Modifier.size(14.dp),
                     )
                     Text(
-                        text = "Loading more sessions...",
+                        text = stringResource(R.string.sessions_loading_more),
                         color = LitterTheme.textMuted,
                         fontSize = 12.sp,
                     )
@@ -638,18 +640,18 @@ private fun SessionNodeRow(
 
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             DropdownMenuItem(
-                text = { Text("Fork") },
+                text = { Text(stringResource(R.string.sessions_fork)) },
                 onClick = {
                     showMenu = false
                     onFork()
                 },
             )
             DropdownMenuItem(
-                text = { Text("Rename") },
+                text = { Text(stringResource(R.string.sessions_rename)) },
                 onClick = { showMenu = false; showRenameDialog = true },
             )
             DropdownMenuItem(
-                text = { Text("Archive") },
+                text = { Text(stringResource(R.string.sessions_archive)) },
                 onClick = { showMenu = false; showArchiveDialog = true },
             )
         }
@@ -660,12 +662,12 @@ private fun SessionNodeRow(
         var newName by remember { mutableStateOf(summary.title ?: "") }
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename Session") },
+            title = { Text(stringResource(R.string.sessions_rename_title)) },
             text = {
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.settings_name)) },
                     singleLine = true,
                 )
             },
@@ -684,10 +686,12 @@ private fun SessionNodeRow(
                             appModel.refreshThreadSnapshot(summary.key)
                         } catch (_: Exception) {}
                     }
-                }) { Text("Rename") }
+                }) { Text(stringResource(R.string.sessions_rename)) }
             },
             dismissButton = {
-                TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text(stringResource(R.string.directory_picker_cancel))
+                }
             },
         )
     }
@@ -696,8 +700,8 @@ private fun SessionNodeRow(
     if (showArchiveDialog) {
         AlertDialog(
             onDismissRequest = { showArchiveDialog = false },
-            title = { Text("Archive Session") },
-            text = { Text("Are you sure you want to archive this session?") },
+            title = { Text(stringResource(R.string.sessions_archive_title)) },
+            text = { Text(stringResource(R.string.sessions_archive_confirmation)) },
             confirmButton = {
                 TextButton(onClick = {
                     showArchiveDialog = false
@@ -715,10 +719,12 @@ private fun SessionNodeRow(
                             appModel.refreshSnapshot()
                         } catch (_: Exception) {}
                     }
-                }) { Text("Archive", color = LitterTheme.danger) }
+                }) { Text(stringResource(R.string.sessions_archive), color = LitterTheme.danger) }
             },
             dismissButton = {
-                TextButton(onClick = { showArchiveDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showArchiveDialog = false }) {
+                    Text(stringResource(R.string.directory_picker_cancel))
+                }
             },
         )
     }

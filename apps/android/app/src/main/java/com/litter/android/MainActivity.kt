@@ -1,5 +1,6 @@
 package com.litter.android
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -27,6 +28,7 @@ import com.litter.android.state.AppModel
 import com.litter.android.state.OpenAIApiKeyStore
 import com.litter.android.state.PetOverlayController
 import com.litter.android.ui.AnimatedSplashScreen
+import com.litter.android.ui.AppLanguagePreferences
 import com.litter.android.ui.ExperimentalFeatures
 import com.litter.android.ui.LitterApp
 import com.litter.android.ui.LitterAppTheme
@@ -46,6 +48,10 @@ class MainActivity : ComponentActivity() {
     private var appModel: AppModel? = null
     private val lifecycleController = AppLifecycleController()
     private var openPetSettingsRequest by mutableStateOf(0)
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguagePreferences.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must be called before super.onCreate to hand off the system splash

@@ -1,5 +1,6 @@
 package com.litter.android.ui.settings
 
+import android.app.Activity
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pets
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.MoreVert
@@ -69,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +79,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.litter.android.auth.ChatGPTOAuthActivity
+import com.litter.android.R
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.ChatGPTOAuthTokenStore
 import com.litter.android.state.DebugSettings
@@ -92,6 +96,8 @@ import com.litter.android.state.statusColor
 import com.litter.android.state.statusLabel
 import com.litter.android.state.toRecord
 import com.litter.android.ui.LocalAppModel
+import com.litter.android.ui.AppLanguage
+import com.litter.android.ui.AppLanguagePreferences
 import com.litter.android.ui.LitterAppearanceMode
 import com.litter.android.ui.LitterColorThemeType
 import com.litter.android.ui.BerkeleyMono
@@ -181,6 +187,8 @@ private fun SettingsTopLevel(
     val collapseTurns = ConversationPrefs.areTurnsCollapsed
     var renameTarget by remember { mutableStateOf<AppServerSnapshot?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var currentLanguage by remember { mutableStateOf(AppLanguagePreferences.current(context)) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
 
     val currentServer = remember(snapshot) {
         val activeServerId = snapshot?.activeThread?.serverId
@@ -202,28 +210,54 @@ private fun SettingsTopLevel(
         // Title
         item {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("Settings", color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.settings_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) {
-                    Text("Done", color = LitterTheme.accent)
+                    Text(stringResource(R.string.settings_done), color = LitterTheme.accent)
                 }
             }
             Spacer(Modifier.height(8.dp))
         }
 
         // ── Support ──
-        item { SectionHeader("Support") }
+        item { SectionHeader(stringResource(R.string.settings_support_section)) }
         item {
-            NavRow(icon = Icons.Default.Pets, label = "Tip the Kitty", onClick = onOpenTipJar)
+            NavRow(icon = Icons.Default.Pets, label = stringResource(R.string.settings_tip_the_kitty), onClick = onOpenTipJar)
         }
 
         // ── Theme ──
-        item { SectionHeader("Theme") }
+        item { SectionHeader(stringResource(R.string.settings_theme_section)) }
         item {
-            NavRow(icon = Icons.Default.Palette, label = "Appearance", onClick = onOpenAppearance)
+            NavRow(icon = Icons.Default.Palette, label = stringResource(R.string.settings_appearance), onClick = onOpenAppearance)
+        }
+
+        // ── Language ──
+        item { SectionHeader(stringResource(R.string.settings_language_section)) }
+        item {
+            SettingsRow(
+                icon = {
+                    Icon(
+                        Icons.Default.Language,
+                        contentDescription = null,
+                        tint = LitterTheme.accent,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                label = stringResource(R.string.settings_app_language),
+                subtitle = currentLanguage.nativeDisplayName,
+                trailing = {
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = LitterTheme.textMuted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = { showLanguagePicker = true },
+            )
         }
 
         // ── Font ──
-        item { SectionHeader("Font") }
+        item { SectionHeader(stringResource(R.string.settings_font_section)) }
         item {
             Column(
                 Modifier.fillMaxWidth().background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
@@ -235,11 +269,12 @@ private fun SettingsTopLevel(
         }
 
         // ── Conversation ──
-        item { SectionHeader("Conversation") }
+        item { SectionHeader(stringResource(R.string.settings_conversation_section)) }
         item {
             SettingsRow(
                 icon = { Text("⊟", color = LitterTheme.accent, fontSize = 16.sp) },
-                label = "Collapse Turns", subtitle = "Collapse previous turns into cards",
+                label = stringResource(R.string.settings_collapse_turns),
+                subtitle = stringResource(R.string.settings_collapse_turns_description),
                 trailing = {
                     Switch(
                         checked = collapseTurns,
@@ -251,12 +286,13 @@ private fun SettingsTopLevel(
         }
 
         // ── Pets ──
-        item { SectionHeader("Pet") }
+        item { SectionHeader(stringResource(R.string.settings_pet_section)) }
         item {
             SettingsRow(
                 icon = { Icon(Icons.Default.Pets, null, tint = LitterTheme.accent, modifier = Modifier.size(18.dp)) },
-                label = "Wake Pet",
-                subtitle = PetOverlayController.selectedPet?.displayName ?: "Choose a Codex pet",
+                label = stringResource(R.string.settings_wake_pet),
+                subtitle = PetOverlayController.selectedPet?.displayName
+                    ?: stringResource(R.string.settings_choose_pet),
                 trailing = {
                     Switch(
                         checked = PetOverlayController.visible,
@@ -270,11 +306,11 @@ private fun SettingsTopLevel(
 
         // ── Apps ──
         if (onOpenApps != null) {
-            item { SectionHeader("Apps") }
+            item { SectionHeader(stringResource(R.string.settings_apps_section)) }
             item {
                 NavRow(
                     icon = Icons.Default.Widgets,
-                    label = "Saved Apps",
+                    label = stringResource(R.string.settings_saved_apps),
                     onClick = {
                         onDismiss()
                         onOpenApps()
@@ -284,27 +320,37 @@ private fun SettingsTopLevel(
         }
 
         // ── Experimental ──
-        item { SectionHeader("Experimental") }
+        item { SectionHeader(stringResource(R.string.settings_experimental_section)) }
         item {
-            NavRow(icon = Icons.Default.Science, label = "Experimental Features", onClick = onOpenExperimental)
+            NavRow(
+                icon = Icons.Default.Science,
+                label = stringResource(R.string.settings_experimental_features),
+                onClick = onOpenExperimental,
+            )
         }
 
         // ── Debug ──
         if (DebugSettings.enabled) {
-            item { SectionHeader("Debug") }
+            item { SectionHeader(stringResource(R.string.settings_debug_section)) }
             item {
-                NavRow(icon = Icons.Default.Science, label = "Debug Settings", onClick = onOpenDebug)
+                NavRow(
+                    icon = Icons.Default.Science,
+                    label = stringResource(R.string.settings_debug_settings),
+                    onClick = onOpenDebug,
+                )
             }
         }
 
         // ── Account ──
-        item { SectionHeader("Account") }
+        item { SectionHeader(stringResource(R.string.settings_account_section)) }
         item {
             if (currentServer != null) {
                 val accountStatus = when (val account = currentServer!!.account) {
-                    is Account.Chatgpt -> account.email.ifEmpty { "ChatGPT account" }
-                    is Account.ApiKey -> "OpenAI API key"
-                    null -> "Not logged in"
+                    is Account.Chatgpt -> account.email.ifEmpty {
+                        context.getString(R.string.settings_chatgpt_account)
+                    }
+                    is Account.ApiKey -> stringResource(R.string.settings_openai_api_key)
+                    null -> stringResource(R.string.settings_not_logged_in)
                 }
                 SettingsRow(
                     icon = { Text("@", color = LitterTheme.accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
@@ -321,15 +367,15 @@ private fun SettingsTopLevel(
                     onClick = { onOpenAccount(currentServer!!.serverId) },
                 )
             } else {
-                SettingsRow(label = "Connect to a server first")
+                SettingsRow(label = stringResource(R.string.settings_connect_server_first))
             }
         }
 
         // ── Servers ──
-        item { SectionHeader("Servers") }
+        item { SectionHeader(stringResource(R.string.settings_servers_section)) }
         val servers = snapshot?.servers ?: emptyList()
         if (servers.isEmpty()) {
-            item { SettingsRow(label = "No servers connected") }
+            item { SettingsRow(label = stringResource(R.string.settings_no_servers_connected)) }
         } else {
             items(servers, key = { it.serverId }) { server ->
                 ServerSettingsRow(
@@ -356,15 +402,59 @@ private fun SettingsTopLevel(
         item { Spacer(Modifier.height(32.dp)) }
     }
 
+    if (showLanguagePicker) {
+        AlertDialog(
+            onDismissRequest = { showLanguagePicker = false },
+            title = { Text(stringResource(R.string.settings_choose_language)) },
+            text = {
+                Column {
+                    AppLanguage.entries.forEach { language ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    currentLanguage = language
+                                    AppLanguagePreferences.set(context, language)
+                                    showLanguagePicker = false
+                                    (context as? Activity)?.recreate()
+                                }
+                                .padding(vertical = 12.dp),
+                        ) {
+                            Text(
+                                text = language.nativeDisplayName,
+                                color = LitterTheme.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (currentLanguage == language) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = LitterTheme.accent,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showLanguagePicker = false }) {
+                    Text(stringResource(R.string.directory_picker_cancel))
+                }
+            },
+        )
+    }
+
     renameTarget?.let { server ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename Server") },
+            title = { Text(stringResource(R.string.settings_rename_server)) },
             text = {
                 OutlinedTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.settings_name)) },
                     singleLine = true,
                 )
             },
@@ -378,12 +468,12 @@ private fun SettingsTopLevel(
                     }
                     renameTarget = null
                 }) {
-                    Text("Save")
+                    Text(stringResource(R.string.settings_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { renameTarget = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.directory_picker_cancel))
                 }
             },
         )

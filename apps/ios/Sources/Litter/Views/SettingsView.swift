@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.textScale) private var textScale
+    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.defaultValue
     @AppStorage("fontFamily") private var fontFamily = FontFamilyOption.mono.rawValue
     @AppStorage("collapseTurns") private var collapseTurns = false
     @AppStorage(ConversationDisplayPreferenceKey.reasoning) private var reasoningDisplayMode = ConversationDetailDisplayMode.collapsed.rawValue
@@ -35,6 +36,7 @@ struct SettingsView: View {
                 Form {
                     supportSection
                     appearanceSection
+                    languageSection
                     fontSection
                     conversationSection
                     petSection
@@ -119,6 +121,33 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Language Section
+
+    private var languageSection: some View {
+        Section {
+            Picker(selection: $appLanguage) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.nativeDisplayName).tag(language.rawValue)
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "globe")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("App Language")
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(LitterTheme.accent)
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Language")
+                .foregroundColor(LitterTheme.textSecondary)
+        }
+    }
+
     // MARK: - Conversation Section
 
     private var conversationSection: some View {
@@ -168,14 +197,14 @@ struct SettingsView: View {
     }
 
     private func transcriptDisplayPicker(
-        title: String,
-        subtitle: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
         systemImage: String,
         selection: Binding<String>
     ) -> some View {
         Picker(selection: selection) {
             ForEach(ConversationDetailDisplayMode.allCases) { mode in
-                Text(mode.displayName).tag(mode.rawValue)
+                Text(LocalizedStringKey(mode.displayName)).tag(mode.rawValue)
             }
         } label: {
             HStack(spacing: 10) {
@@ -208,7 +237,7 @@ struct SettingsView: View {
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(option.displayName)
+                            Text(LocalizedStringKey(option.displayName))
                                 .litterFont(.subheadline)
                                 .foregroundColor(LitterTheme.textPrimary)
                             Text("The quick brown fox")

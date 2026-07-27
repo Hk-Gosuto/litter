@@ -39,6 +39,20 @@ Current automated checks:
 | Thread turn pagination (v0.125+ remote) | Conversation opens with last 5 turns; "Load earlier messages" button fetches older 5-turn pages via `thread/turns/list` | Same |
 | Thread turn pagination fallback (v0.124 remote) | Capability flips off via response inspection; embedded turns load fully; "Load earlier" button hidden | Same |
 
+## App Language (iOS + Android)
+
+English and Simplified Chinese are supported from the top-level Settings
+screen. The initial selection follows the device language and an explicit
+choice persists across relaunches.
+
+| Check | iOS | Android |
+|---|---|---|
+| Switch to Simplified Chinese | Settings updates immediately through the SwiftUI locale environment | Selection persists and the Activity recreates with a `zh-CN` configuration |
+| Switch back to English | Settings and directory/session surfaces update immediately | Activity recreates with an `en` configuration |
+| Relaunch | The selected `AppLanguage` is restored from `UserDefaults` | The selected language tag is restored from `SharedPreferences` before `MainActivity.onCreate` |
+| First launch | Chinese device locales select Simplified Chinese; all others select English | Same |
+| Localized surfaces | Top-level Settings, session list actions, and directory picker | Same |
+
 ## Terminal UX Matrix
 
 The terminal screen renders through Ghostty on both platforms; this section

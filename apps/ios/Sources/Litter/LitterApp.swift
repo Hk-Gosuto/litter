@@ -333,6 +333,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 @main
 struct LitterApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.defaultValue
     @State private var appModel = AppModel.shared
     @State private var voiceRuntime = VoiceRuntimeController.shared
     @State private var appRuntime = AppRuntimeController.shared
@@ -365,6 +366,7 @@ struct LitterApp: App {
                 .environment(voiceRuntime)
                 .environment(themeManager)
                 .environment(wallpaperManager)
+                .environment(\.locale, AppLanguage.resolve(appLanguage).locale)
                 .task {
                     appModel.start()
                     voiceRuntime.bind(appModel: appModel)
