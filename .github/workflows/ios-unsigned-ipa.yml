@@ -55,9 +55,26 @@ jobs:
           IOS_RUST_PROFILE: mobile-release
           RUSTC_WRAPPER: sccache
         run: |
-          set -euo pipefail
-          ./apps/ios/scripts/build-rust.sh --preserve-current --device-only
-          make alpine-fs xcgen
+          set -uo pipefail
+          mkdir -p artifacts/unsigned-ios
+          LOG_PATH=artifacts/unsigned-ios/prepare-ios.log
+
+          set +e
+          {
+            ./apps/ios/scripts/build-rust.sh --preserve-current --device-only
+            make alpine-fs xcgen
+          } 2>&1 | tee "$LOG_PATH"
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [[ "$status" -ne 0 ]]; then
+            message="$(tail -c 50000 "$LOG_PATH")"
+            message="${message//'%'/'%25'}"
+            message="${message//$'\r'/'%0D'}"
+            message="${message//$'\n'/'%0A'}"
+            echo "::error title=iOS device preparation failed::$message"
+            exit "$status"
+          fi
 
       - name: Build unsigned archive
         run: |
@@ -120,6 +137,7 @@ jobs:
           shasum -a 256 "$IPA_PATH" | tee "$IPA_PATH.sha256"
 
       - name: Upload unsigned IPA
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Litter-gpt56-unsigned
