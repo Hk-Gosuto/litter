@@ -396,7 +396,7 @@ struct SavedAppDetailView: View {
             showUpdateOverlay = false
             updateError = nil
             reloadPayload()
-            withAnimation { updateSuccessMessage = "Updated" }
+            withAnimation { updateSuccessMessage = AppLanguage.localizedString("Updated") }
             Task {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 withAnimation { updateSuccessMessage = nil }

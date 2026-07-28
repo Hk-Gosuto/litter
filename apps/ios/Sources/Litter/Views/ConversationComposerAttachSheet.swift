@@ -45,7 +45,7 @@ struct ConversationComposerAttachSheet: View {
                 .foregroundColor(LitterTheme.accent)
                 .frame(width: 20)
 
-            Text(title)
+            Text(AppLanguage.localizedString(title))
                 .litterFont(.body, weight: .medium)
                 .foregroundColor(LitterTheme.textPrimary)
 

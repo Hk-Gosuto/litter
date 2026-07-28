@@ -61,16 +61,16 @@ struct ConversationComposerPopupOverlayView: View {
                 let cappedPlugins = Array(plugins.prefix(6))
                 let cappedFiles = Array(suggestions.prefix(8))
                 if cappedPlugins.isEmpty && loading {
-                    popupStateText("Searching files...")
+                    popupStateText(AppLanguage.localizedString("Searching files..."))
                 } else if cappedPlugins.isEmpty && cappedFiles.isEmpty {
                     if let error, !error.isEmpty {
                         popupStateText(error, color: .red)
                     } else {
-                        popupStateText("No matches")
+                        popupStateText(AppLanguage.localizedString("No matches"))
                     }
                 } else {
                     if !cappedPlugins.isEmpty {
-                        sectionHeader("Plugins")
+                        sectionHeader(AppLanguage.localizedString("Plugins"))
                         let indexedPlugins = Array(cappedPlugins.enumerated())
                         ForEach(indexedPlugins, id: \.element.id) { item in
                             let index = item.offset
@@ -111,7 +111,7 @@ struct ConversationComposerPopupOverlayView: View {
 
                     if !cappedFiles.isEmpty {
                         if !cappedPlugins.isEmpty {
-                            sectionHeader("Files")
+                            sectionHeader(AppLanguage.localizedString("Files"))
                         }
                         let indexedSuggestions = Array(cappedFiles.enumerated())
                         ForEach(indexedSuggestions, id: \.offset) { item in
@@ -148,9 +148,9 @@ struct ConversationComposerPopupOverlayView: View {
         case .skill(let loading, let suggestions):
             suggestionPopup {
                 if loading && suggestions.isEmpty {
-                    popupStateText("Loading skills...")
+                    popupStateText(AppLanguage.localizedString("Loading skills..."))
                 } else if suggestions.isEmpty {
-                    popupStateText("No skills found")
+                    popupStateText(AppLanguage.localizedString("No skills found"))
                 } else {
                     let indexedSuggestions = Array(Array(suggestions.prefix(8)).enumerated())
                     ForEach(indexedSuggestions, id: \.offset) { item in

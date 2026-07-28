@@ -42,7 +42,10 @@ struct CrossServerToolResultView: View {
     }
 
     private func emptyRow(_ text: String) -> some View {
-        Text(text).litterFont(.caption).foregroundColor(LitterTheme.textMuted).padding(.vertical, 4)
+        Text(AppLanguage.localizedString(text))
+            .litterFont(.caption)
+            .foregroundColor(LitterTheme.textMuted)
+            .padding(.vertical, 4)
     }
 
     // MARK: - Decoding
@@ -67,7 +70,7 @@ struct CrossServerToolResultView: View {
         var threadId: String { id }
         var title: String {
             let t = (preview ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return t.isEmpty ? "Untitled session" : t
+            return t.isEmpty ? AppLanguage.localizedString("Untitled session") : t
         }
         var model: String { modelProvider ?? "" }
         var parsedDate: Date? {

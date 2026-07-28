@@ -29,7 +29,7 @@ final class VoiceTranscriptionManager {
             try session.setCategory(.playAndRecord, options: .defaultToSpeaker)
             try session.setActive(true)
         } catch {
-            self.error = "Failed to configure audio session."
+            self.error = AppLanguage.localizedString("Failed to configure audio session.")
             return
         }
 
@@ -51,7 +51,7 @@ final class VoiceTranscriptionManager {
         do {
             try engine.start()
         } catch {
-            self.error = "Failed to start audio engine."
+            self.error = AppLanguage.localizedString("Failed to start audio engine.")
             return
         }
 
@@ -64,12 +64,12 @@ final class VoiceTranscriptionManager {
         teardownEngine()
 
         guard let wav = encodeWAV() else {
-            error = "Failed to encode audio."
+            error = AppLanguage.localizedString("Failed to encode audio.")
             return nil
         }
 
         guard let authToken, !authToken.isEmpty else {
-            error = "Not logged in."
+            error = AppLanguage.localizedString("Not logged in.")
             return nil
         }
 

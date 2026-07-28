@@ -116,12 +116,12 @@ final class StreamingPiPController: NSObject {
     func start() {
         guard !isActive else { return }
         guard isSupported else {
-            lastErrorMessage = "PiP not supported on this device."
+            lastErrorMessage = AppLanguage.localizedString("PiP not supported on this device.")
             LLog.warn("pip", "start: device does not support PiP")
             return
         }
         guard ensureSetup() else {
-            lastErrorMessage = "Could not initialize PiP."
+            lastErrorMessage = AppLanguage.localizedString("Could not initialize PiP.")
             return
         }
 

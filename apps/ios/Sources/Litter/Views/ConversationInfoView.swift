@@ -354,9 +354,25 @@ struct ConversationInfoView: View {
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12)
             ], spacing: 12) {
-                statCard("Messages", value: "\(stats?.totalMessages ?? 0)", detail: "\(stats?.userMessageCount ?? 0) user · \(stats?.assistantMessageCount ?? 0) assistant")
+                statCard(
+                    "Messages",
+                    value: "\(stats?.totalMessages ?? 0)",
+                    detail: AppLanguage.localizedString(
+                        "%lld user · %lld assistant",
+                        Int64(stats?.userMessageCount ?? 0),
+                        Int64(stats?.assistantMessageCount ?? 0)
+                    )
+                )
                 statCard("Turns", value: "\(stats?.turnCount ?? 0)")
-                statCard("Commands", value: "\(stats?.commandsExecuted ?? 0)", detail: "\(stats?.commandsSucceeded ?? 0) ok · \(stats?.commandsFailed ?? 0) fail")
+                statCard(
+                    "Commands",
+                    value: "\(stats?.commandsExecuted ?? 0)",
+                    detail: AppLanguage.localizedString(
+                        "%lld ok · %lld fail",
+                        Int64(stats?.commandsSucceeded ?? 0),
+                        Int64(stats?.commandsFailed ?? 0)
+                    )
+                )
                 statCard("Files Changed", value: "\(stats?.filesChanged ?? 0)", detail: "+\(stats?.diffAdditions ?? 0) / -\(stats?.diffDeletions ?? 0)")
                 statCard("MCP Calls", value: "\(stats?.mcpToolCallCount ?? 0)")
                 statCard("Exec Time", value: formatDuration(Int64(stats?.totalCommandDurationMs ?? 0)))
@@ -371,7 +387,7 @@ struct ConversationInfoView: View {
             Text(value)
                 .litterFont(size: 20, weight: .bold)
                 .foregroundStyle(LitterTheme.accent)
-            Text(title)
+            Text(AppLanguage.localizedString(title))
                 .litterFont(size: 12, weight: .medium)
                 .foregroundStyle(LitterTheme.textSecondary)
             if let detail {
@@ -657,7 +673,7 @@ struct ConversationInfoView: View {
 
     private func infoRow(_ label: String, value: String) -> some View {
         HStack {
-            Text(label)
+            Text(AppLanguage.localizedString(label))
                 .litterFont(size: 12)
                 .foregroundStyle(LitterTheme.textMuted)
             Spacer()

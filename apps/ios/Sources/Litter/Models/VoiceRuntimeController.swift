@@ -583,15 +583,15 @@ final class VoiceRuntimeController: VoiceActions {
         let message: String
         switch reason {
         case "":
-            message = "Voice session closed unexpectedly"
+            message = AppLanguage.localizedString("Voice session closed unexpectedly")
         case "requested":
-            message = "Voice session ended by the server"
+            message = AppLanguage.localizedString("Voice session ended by the server")
         case "transport_closed":
-            message = "Realtime transport closed unexpectedly"
+            message = AppLanguage.localizedString("Realtime transport closed unexpectedly")
         case "error":
-            message = "Realtime session ended with an error"
+            message = AppLanguage.localizedString("Realtime session ended with an error")
         default:
-            message = "Voice session closed: \(reason)"
+            message = AppLanguage.localizedString("Voice session closed: %@", reason)
         }
         failVoiceSession(message)
     }
@@ -801,8 +801,8 @@ final class VoiceRuntimeController: VoiceActions {
         session.isSpeaking = false
         session.inputLevel = 0
         session.outputLevel = 0
-        session.transcriptSpeaker = "System"
-        session.transcriptText = "Hanging up..."
+        session.transcriptSpeaker = AppLanguage.localizedString("voice_system")
+        session.transcriptText = AppLanguage.localizedString("Hanging up...")
         session.lastError = nil
         activeVoiceSession = session
         syncVoiceCallActivity()

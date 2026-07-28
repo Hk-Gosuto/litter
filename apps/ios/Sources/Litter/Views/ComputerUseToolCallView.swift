@@ -201,7 +201,7 @@ struct ComputerUseToolCallView: View {
     }
 
     private func placeholderTile(_ message: String, tone: Color) -> some View {
-        Text(message)
+        Text(AppLanguage.localizedString(message))
             .litterFont(.caption)
             .foregroundColor(tone)
             .frame(maxWidth: .infinity, alignment: .center)

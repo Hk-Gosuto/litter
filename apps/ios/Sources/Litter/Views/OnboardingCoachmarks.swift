@@ -39,8 +39,8 @@ struct OnboardingCoachmarksView: View {
 
     private struct Item: Identifiable {
         let id: CoachmarkTarget
-        let primary: String
-        let secondary: String?
+        let primaryKey: String
+        let secondaryKey: String?
         /// Label center as a fraction of the container size (0..1 in each
         /// axis). The bottom three labels sit close to their target buttons
         /// so the arrows are short; addServer sits below the pill with
@@ -61,8 +61,8 @@ struct OnboardingCoachmarksView: View {
     private let items: [Item] = [
         Item(
             id: .addServer,
-            primary: "add a remote computer",
-            secondary: "if you have one",
+            primaryKey: "onboarding_add_computer",
+            secondaryKey: "onboarding_if_available",
             position: UnitPoint(x: 0.55, y: 0.20),
             labelWidth: 200,
             labelAlignment: .center,
@@ -71,8 +71,8 @@ struct OnboardingCoachmarksView: View {
         ),
         Item(
             id: .search,
-            primary: "see all\nyour threads",
-            secondary: nil,
+            primaryKey: "onboarding_all_threads",
+            secondaryKey: nil,
             position: UnitPoint(x: 0.92, y: 0.62),
             labelWidth: 110,
             labelAlignment: .trailing,
@@ -81,8 +81,8 @@ struct OnboardingCoachmarksView: View {
         ),
         Item(
             id: .newThread,
-            primary: "start a new thread",
-            secondary: "or just type a message",
+            primaryKey: "onboarding_new_thread",
+            secondaryKey: "onboarding_type_message",
             position: UnitPoint(x: 0.50, y: 0.70),
             labelWidth: 220,
             labelAlignment: .center,
@@ -91,8 +91,8 @@ struct OnboardingCoachmarksView: View {
         ),
         Item(
             id: .voice,
-            primary: "realtime voice",
-            secondary: "needs OpenAI key in Settings",
+            primaryKey: "onboarding_realtime_voice",
+            secondaryKey: "onboarding_voice_key",
             position: UnitPoint(x: 0.20, y: 0.78),
             labelWidth: 160,
             labelAlignment: .leading,
@@ -177,13 +177,13 @@ struct OnboardingCoachmarksView: View {
             )
 
             VStack(alignment: item.labelAlignment, spacing: 2) {
-                Text(item.primary)
+                Text(AppLanguage.localizedString(item.primaryKey))
                     .litterMonoFont(size: 12, weight: .semibold)
                     .foregroundStyle(LitterTheme.accent)
                     .multilineTextAlignment(textAlignment(for: item.labelAlignment))
                     .fixedSize(horizontal: false, vertical: true)
-                if let secondary = item.secondary {
-                    Text(secondary)
+                if let secondaryKey = item.secondaryKey {
+                    Text(AppLanguage.localizedString(secondaryKey))
                         .litterMonoFont(size: 10, weight: .regular)
                         .foregroundStyle(LitterTheme.textSecondary)
                         .multilineTextAlignment(textAlignment(for: item.labelAlignment))
