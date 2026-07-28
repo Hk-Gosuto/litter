@@ -1,0 +1,2606 @@
+diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
+index 17edbbfb2..5554041b8 100644
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -291,7 +291,7 @@ clatter = { version = "2.2.0", default-features = false, features = [
+     "getrandom",
+     "use-25519",
+     "use-aes-gcm",
+-    "use-rust-crypto-ml-kem",
++    "use-pqclean-ml-kem",
+     "use-sha",
+ ] }
+ color-eyre = "0.6.3"
+diff --git a/codex-rs/app-server-client/src/lib.rs b/codex-rs/app-server-client/src/lib.rs
+index a46feb544..eabc6d9cc 100644
+--- a/codex-rs/app-server-client/src/lib.rs
++++ b/codex-rs/app-server-client/src/lib.rs
+@@ -64,6 +64,7 @@ use toml::Value as TomlValue;
+ use tracing::warn;
+ 
+ pub use crate::path::AppServerPath;
++pub use crate::remote::JsonRpcWire;
+ pub use crate::remote::RemoteAppServerClient;
+ pub use crate::remote::RemoteAppServerConnectArgs;
+ pub use crate::remote::RemoteAppServerEndpoint;
+@@ -144,6 +145,7 @@ pub(crate) fn server_notification_requires_delivery(notification: &ServerNotific
+             | ServerNotification::ItemCompleted(_)
+             | ServerNotification::ExternalAgentConfigImportCompleted(_)
+             | ServerNotification::AgentMessageDelta(_)
++            | ServerNotification::DynamicToolCallArgumentsDelta(_)
+             | ServerNotification::PlanDelta(_)
+             | ServerNotification::ReasoningSummaryTextDelta(_)
+             | ServerNotification::ReasoningTextDelta(_)
+diff --git a/codex-rs/app-server-client/src/remote.rs b/codex-rs/app-server-client/src/remote.rs
+index 5575fe4ad..c251e344a 100644
+--- a/codex-rs/app-server-client/src/remote.rs
++++ b/codex-rs/app-server-client/src/remote.rs
+@@ -12,6 +12,7 @@ higher-level session logic.
+ 
+ use std::collections::HashMap;
+ use std::collections::VecDeque;
++use std::future::Future;
+ use std::io::Error as IoError;
+ use std::io::ErrorKind;
+ use std::io::Result as IoResult;
+@@ -53,7 +54,6 @@ use tokio_tungstenite::MaybeTlsStream;
+ use tokio_tungstenite::WebSocketStream;
+ use tokio_tungstenite::client_async_with_config;
+ use tokio_tungstenite::connect_async_with_config;
+-use tokio_tungstenite::tungstenite::Error as TungsteniteError;
+ use tokio_tungstenite::tungstenite::Message;
+ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+ use tokio_tungstenite::tungstenite::http::HeaderValue;
+@@ -162,24 +162,114 @@ pub struct RemoteAppServerRequestHandle {
+     command_tx: mpsc::Sender<RemoteClientCommand>,
+ }
+ 
++pub trait JsonRpcWire: Send + 'static {
++    fn send_message<'a>(
++        &'a mut self,
++        message: JSONRPCMessage,
++        label: &'a str,
++    ) -> impl Future<Output = IoResult<()>> + Send + 'a;
++
++    fn next_message<'a>(
++        &'a mut self,
++        label: &'a str,
++    ) -> impl Future<Output = IoResult<Option<JSONRPCMessage>>> + Send + 'a;
++
++    fn close<'a>(&'a mut self, label: &'a str) -> impl Future<Output = IoResult<()>> + Send + 'a;
++}
++
++struct WebSocketWire<S> {
++    stream: WebSocketStream<S>,
++}
++
++impl<S> JsonRpcWire for WebSocketWire<S>
++where
++    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
++{
++    fn send_message<'a>(
++        &'a mut self,
++        message: JSONRPCMessage,
++        label: &'a str,
++    ) -> impl Future<Output = IoResult<()>> + Send + 'a {
++        async move {
++            let payload = serde_json::to_string(&message).map_err(IoError::other)?;
++            self.stream
++                .send(Message::Text(payload.into()))
++                .await
++                .map_err(|err| {
++                    IoError::other(format!(
++                        "failed to write websocket message to `{label}`: {err}"
++                    ))
++                })
++        }
++    }
++
++    fn next_message<'a>(
++        &'a mut self,
++        label: &'a str,
++    ) -> impl Future<Output = IoResult<Option<JSONRPCMessage>>> + Send + 'a {
++        async move {
++            loop {
++                match self.stream.next().await {
++                    Some(Ok(Message::Text(text))) => {
++                        return serde_json::from_str::<JSONRPCMessage>(&text)
++                            .map(Some)
++                            .map_err(|err| {
++                                IoError::other(format!(
++                                    "remote app server at `{label}` sent invalid JSON-RPC: {err}"
++                                ))
++                            });
++                    }
++                    Some(Ok(Message::Close(frame))) => {
++                        let reason = frame
++                            .as_ref()
++                            .map(|frame| frame.reason.to_string())
++                            .filter(|reason| !reason.is_empty())
++                            .unwrap_or_else(|| "connection closed".to_string());
++                        return Err(IoError::new(
++                            ErrorKind::ConnectionAborted,
++                            format!("remote app server at `{label}` disconnected: {reason}"),
++                        ));
++                    }
++                    Some(Ok(Message::Binary(_)))
++                    | Some(Ok(Message::Ping(_)))
++                    | Some(Ok(Message::Pong(_)))
++                    | Some(Ok(Message::Frame(_))) => {}
++                    Some(Err(err)) => {
++                        return Err(IoError::other(format!(
++                            "remote app server at `{label}` transport failed: {err}"
++                        )));
++                    }
++                    None => return Ok(None),
++                }
++            }
++        }
++    }
++
++    fn close<'a>(&'a mut self, label: &'a str) -> impl Future<Output = IoResult<()>> + Send + 'a {
++        async move {
++            self.stream.close(None).await.map_err(|err| {
++                IoError::other(format!(
++                    "failed to close websocket app server `{label}`: {err}"
++                ))
++            })
++        }
++    }
++}
++
+ impl RemoteAppServerClient {
+     pub async fn connect(args: RemoteAppServerConnectArgs) -> IoResult<Self> {
+-        let channel_capacity = args.channel_capacity.max(1);
+-        let initialize_params = args.initialize_params();
+-        match args.endpoint {
++        match args.endpoint.clone() {
+             RemoteAppServerEndpoint::WebSocket {
+                 websocket_url,
+                 auth_token,
+             } => {
+                 let (endpoint, stream) =
+                     connect_websocket_endpoint(websocket_url, auth_token).await?;
+-                Self::connect_with_stream(channel_capacity, endpoint, stream, initialize_params)
+-                    .await
++                Self::connect_with_wire(args, endpoint, WebSocketWire { stream }).await
+             }
+             RemoteAppServerEndpoint::UnixSocket { socket_path } => {
+                 let (endpoint, stream) = connect_unix_socket_endpoint(socket_path).await?;
+-                Self::connect_with_stream(channel_capacity, endpoint, stream, initialize_params)
+-                    .await
++                Self::connect_with_wire(args, endpoint, WebSocketWire { stream }).await
+             }
+         }
+     }
+@@ -192,16 +282,71 @@ impl RemoteAppServerClient {
+         self.codex_home.as_deref()
+     }
+ 
+-    async fn connect_with_stream<S>(
+-        channel_capacity: usize,
+-        endpoint: String,
+-        stream: WebSocketStream<S>,
+-        initialize_params: InitializeParams,
++    pub async fn connect_websocket_stream<S>(
++        stream: S,
++        args: RemoteAppServerConnectArgs,
++        label: String,
+     ) -> IoResult<Self>
+     where
+         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+     {
+-        let mut stream = stream;
++        let (handshake_url, auth_token) = match &args.endpoint {
++            RemoteAppServerEndpoint::WebSocket {
++                websocket_url,
++                auth_token,
++            } => (websocket_url.clone(), auth_token.clone()),
++            RemoteAppServerEndpoint::UnixSocket { .. } => (label.clone(), None),
++        };
++        let mut request = handshake_url
++            .as_str()
++            .into_client_request()
++            .map_err(|err| {
++                IoError::new(
++                    ErrorKind::InvalidInput,
++                    format!("invalid websocket URL `{handshake_url}`: {err}"),
++                )
++            })?;
++        if let Some(auth_token) = auth_token.as_deref() {
++            let header_value =
++                HeaderValue::from_str(&format!("Bearer {auth_token}")).map_err(|err| {
++                    IoError::new(
++                        ErrorKind::InvalidInput,
++                        format!("invalid remote authorization header value: {err}"),
++                    )
++                })?;
++            request.headers_mut().insert(AUTHORIZATION, header_value);
++        }
++        let stream = timeout(
++            CONNECT_TIMEOUT,
++            client_async_with_config(request, stream, Some(remote_websocket_config())),
++        )
++        .await
++        .map_err(|_| {
++            IoError::new(
++                ErrorKind::TimedOut,
++                format!("timed out upgrading remote app server at `{label}`"),
++            )
++        })?
++        .map(|(stream, _response)| stream)
++        .map_err(|err| {
++            IoError::other(format!(
++                "failed to upgrade remote app server at `{label}`: {err}"
++            ))
++        })?;
++        Self::connect_with_wire(args, label, WebSocketWire { stream }).await
++    }
++
++    pub async fn connect_with_wire<W>(
++        args: RemoteAppServerConnectArgs,
++        endpoint: String,
++        wire: W,
++    ) -> IoResult<Self>
++    where
++        W: JsonRpcWire,
++    {
++        let channel_capacity = args.channel_capacity.max(1);
++        let initialize_params = args.initialize_params();
++        let mut stream = wire;
+         let (pending_events, server_version, codex_home) = initialize_remote_connection(
+             &mut stream,
+             &endpoint,
+@@ -220,7 +365,7 @@ impl RemoteAppServerClient {
+                 tokio::select! {
+                     command = command_rx.recv() => {
+                         let Some(command) = command else {
+-                            let _ = stream.close(None).await;
++                            let _ = stream.close(&endpoint).await;
+                             break;
+                         };
+                         match command {
+@@ -234,8 +379,7 @@ impl RemoteAppServerClient {
+                                     continue;
+                                 }
+                                 pending_requests.insert(request_id.clone(), response_tx);
+-                                if let Err(err) = write_jsonrpc_message(
+-                                    &mut stream,
++                                if let Err(err) = stream.send_message(
+                                     JSONRPCMessage::Request(*request),
+                                     &endpoint,
+                                 )
+@@ -259,8 +403,7 @@ impl RemoteAppServerClient {
+                                 }
+                             }
+                             RemoteClientCommand::Notify { notification, response_tx } => {
+-                                let result = write_jsonrpc_message(
+-                                    &mut stream,
++                                let result = stream.send_message(
+                                     JSONRPCMessage::Notification(
+                                         jsonrpc_notification_from_client_notification(notification),
+                                     ),
+@@ -274,8 +417,7 @@ impl RemoteAppServerClient {
+                                 result,
+                                 response_tx,
+                             } => {
+-                                let result = write_jsonrpc_message(
+-                                    &mut stream,
++                                let result = stream.send_message(
+                                     JSONRPCMessage::Response(JSONRPCResponse {
+                                         id: request_id,
+                                         result,
+@@ -290,8 +432,7 @@ impl RemoteAppServerClient {
+                                 error,
+                                 response_tx,
+                             } => {
+-                                let result = write_jsonrpc_message(
+-                                    &mut stream,
++                                let result = stream.send_message(
+                                     JSONRPCMessage::Error(JSONRPCError {
+                                         error,
+                                         id: request_id,
+@@ -302,150 +443,105 @@ impl RemoteAppServerClient {
+                                 let _ = response_tx.send(result);
+                             }
+                             RemoteClientCommand::Shutdown { response_tx } => {
+-                                let close_result = stream.close(None).await.or_else(|err| {
+-                                    if websocket_close_error_is_already_closed(&err) {
+-                                        Ok(())
+-                                    } else {
+-                                        Err(IoError::other(format!(
+-                                            "failed to close websocket app server `{endpoint}`: {err}"
+-                                        )))
+-                                    }
+-                                });
++                                let close_result = stream.close(&endpoint).await;
+                                 let _ = response_tx.send(close_result);
+                                 break;
+                             }
+                         }
+                     }
+-                    message = stream.next() => {
++                    message = stream.next_message(&endpoint) => {
+                         match message {
+-                            Some(Ok(Message::Text(text))) => {
+-                                match serde_json::from_str::<JSONRPCMessage>(&text) {
+-                                    Ok(JSONRPCMessage::Response(response)) => {
+-                                        if let Some(response_tx) = pending_requests.remove(&response.id) {
+-                                            let _ = response_tx.send(Ok(Ok(response.result)));
+-                                        }
+-                                    }
+-                                    Ok(JSONRPCMessage::Error(error)) => {
+-                                        if let Some(response_tx) = pending_requests.remove(&error.id) {
+-                                            let _ = response_tx.send(Ok(Err(error.error)));
++                            Ok(Some(JSONRPCMessage::Response(response))) => {
++                                if let Some(response_tx) = pending_requests.remove(&response.id) {
++                                    let _ = response_tx.send(Ok(Ok(response.result)));
++                                }
++                            }
++                            Ok(Some(JSONRPCMessage::Error(error))) => {
++                                if let Some(response_tx) = pending_requests.remove(&error.id) {
++                                    let _ = response_tx.send(Ok(Err(error.error)));
++                                }
++                            }
++                            Ok(Some(JSONRPCMessage::Notification(notification))) => {
++                                if let Some(event) =
++                                    app_server_event_from_notification(notification)
++                                    && let Err(err) = deliver_event(
++                                        &event_tx,
++                                        event,
++                                    )
++                                {
++                                    warn!(%err, "failed to deliver remote app-server event");
++                                    break;
++                                }
++                            }
++                            Ok(Some(JSONRPCMessage::Request(request))) => {
++                                let request_id = request.id.clone();
++                                let method = request.method.clone();
++                                match ServerRequest::try_from(request) {
++                                    Ok(request) => {
++                                        if let Err(err) = deliver_event(
++                                            &event_tx,
++                                            AppServerEvent::ServerRequest(request),
++                                        )
++                                        {
++                                            warn!(%err, "failed to deliver remote app-server server request");
++                                            break;
+                                         }
+                                     }
+-                                    Ok(JSONRPCMessage::Notification(notification)) => {
+-                                        if let Some(event) =
+-                                            app_server_event_from_notification(notification)
+-                                            && let Err(err) = deliver_event(
++                                    Err(err) => {
++                                        warn!(%err, method, "rejecting unknown remote app-server request");
++                                        if let Err(reject_err) = stream.send_message(
++                                            JSONRPCMessage::Error(JSONRPCError {
++                                                error: JSONRPCErrorError {
++                                                    code: -32601,
++                                                    message: format!(
++                                                        "unsupported remote app-server request `{method}`"
++                                                    ),
++                                                    data: None,
++                                                },
++                                                id: request_id,
++                                            }),
++                                            &endpoint,
++                                        )
++                                        .await
++                                        {
++                                            let err_message = reject_err.to_string();
++                                            let message = format!(
++                                                "remote app server at `{endpoint}` write failed: {err_message}"
++                                            );
++                                            let _ = deliver_event(
+                                                 &event_tx,
+-                                                event,
+-                                            )
+-                                            {
+-                                                warn!(%err, "failed to deliver remote app-server event");
+-                                                break;
+-                                            }
+-                                    }
+-                                    Ok(JSONRPCMessage::Request(request)) => {
+-                                        let request_id = request.id.clone();
+-                                        let method = request.method.clone();
+-                                        match ServerRequest::try_from(request) {
+-                                            Ok(request) => {
+-                                                if let Err(err) = deliver_event(
+-                                                    &event_tx,
+-                                                    AppServerEvent::ServerRequest(request),
+-                                                )
+-                                                {
+-                                                    warn!(%err, "failed to deliver remote app-server server request");
+-                                                    break;
+-                                                }
+-                                            }
+-                                            Err(err) => {
+-                                                warn!(%err, method, "rejecting unknown remote app-server request");
+-                                                if let Err(reject_err) = write_jsonrpc_message(
+-                                                    &mut stream,
+-                                                    JSONRPCMessage::Error(JSONRPCError {
+-                                                        error: JSONRPCErrorError {
+-                                                            code: -32601,
+-                                                            message: format!(
+-                                                                "unsupported remote app-server request `{method}`"
+-                                                            ),
+-                                                            data: None,
+-                                                        },
+-                                                        id: request_id,
+-                                                    }),
+-                                                    &endpoint,
+-                                                )
+-                                                .await
+-                                                {
+-                                                    let err_message = reject_err.to_string();
+-                                                    let message = format!(
+-                                                        "remote app server at `{endpoint}` write failed: {err_message}"
+-                                                    );
+-                                                    let _ = deliver_event(
+-                                                        &event_tx,
+-                                                        AppServerEvent::Disconnected {
+-                                                            message: message.clone(),
+-                                                        },
+-                                                    );
+-                                                    worker_exit_error =
+-                                                        Some((ErrorKind::BrokenPipe, message));
+-                                                    break;
+-                                                }
+-                                            }
++                                                AppServerEvent::Disconnected {
++                                                    message: message.clone(),
++                                                },
++                                            );
++                                            worker_exit_error =
++                                                Some((ErrorKind::BrokenPipe, message));
++                                            break;
+                                         }
+                                     }
+-                                    Err(err) => {
++                                }
++                            }
++                            Err(err) => {
++                                let err_kind = err.kind();
++                                let message = match err_kind {
++                                    ErrorKind::ConnectionAborted => err.to_string(),
++                                    _ => {
+                                         let message = format!(
+-                                            "remote app server at `{endpoint}` sent invalid JSON-RPC: {err}"
+-                                        );
+-                                        let _ = deliver_event(
+-                                            &event_tx,
+-                                            AppServerEvent::Disconnected {
+-                                                message: message.clone(),
+-                                            },
++                                            "remote app server at `{endpoint}` transport failed: {err}"
+                                         );
+-                                        worker_exit_error =
+-                                            Some((ErrorKind::InvalidData, message));
+-                                        break;
++                                        message
+                                     }
+-                                }
+-                            }
+-                            Some(Ok(Message::Close(frame))) => {
+-                                let reason = frame
+-                                    .as_ref()
+-                                    .map(|frame| frame.reason.to_string())
+-                                    .filter(|reason| !reason.is_empty())
+-                                    .unwrap_or_else(|| "connection closed".to_string());
+-                                let message = format!(
+-                                    "remote app server at `{endpoint}` disconnected: {reason}"
+-                                );
+-                                let _ = deliver_event(
+-                                    &event_tx,
+-                                    AppServerEvent::Disconnected {
+-                                        message: message.clone(),
+-                                    },
+-                                );
+-                                worker_exit_error = Some((
+-                                    ErrorKind::ConnectionAborted,
+-                                    message,
+-                                ));
+-                                break;
+-                            }
+-                            Some(Ok(Message::Binary(_)))
+-                            | Some(Ok(Message::Ping(_)))
+-                            | Some(Ok(Message::Pong(_)))
+-                            | Some(Ok(Message::Frame(_))) => {}
+-                            Some(Err(err)) => {
+-                                let message = format!(
+-                                    "remote app server at `{endpoint}` transport failed: {err}"
+-                                );
++                                };
+                                 let _ = deliver_event(
+                                     &event_tx,
+                                     AppServerEvent::Disconnected {
+                                         message: message.clone(),
+                                     },
+                                 );
+-                                worker_exit_error = Some((ErrorKind::InvalidData, message));
++                                worker_exit_error = Some((err_kind, message));
+                                 break;
+                             }
+-                            None => {
++                            Ok(None) => {
+                                 let message = format!(
+                                     "remote app server at `{endpoint}` closed the connection"
+                                 );
+@@ -791,40 +887,35 @@ fn remote_websocket_config() -> WebSocketConfig {
+         .max_message_size(Some(REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE))
+ }
+ 
+-async fn initialize_remote_connection<S>(
+-    stream: &mut WebSocketStream<S>,
++async fn initialize_remote_connection<W>(
++    stream: &mut W,
+     endpoint: &str,
+     params: InitializeParams,
+     initialize_timeout: Duration,
+ ) -> IoResult<(Vec<AppServerEvent>, Option<String>, Option<String>)>
+ where
+-    S: AsyncRead + AsyncWrite + Unpin,
++    W: JsonRpcWire,
+ {
+     let initialize_request_id = RequestId::String("initialize".to_string());
+     let mut pending_events = Vec::new();
+     let mut server_version = None;
+     let mut codex_home = None;
+-    write_jsonrpc_message(
+-        stream,
+-        JSONRPCMessage::Request(jsonrpc_request_from_client_request(
+-            ClientRequest::Initialize {
+-                request_id: initialize_request_id.clone(),
+-                params,
+-            },
+-        )),
+-        endpoint,
+-    )
+-    .await?;
++    stream
++        .send_message(
++            JSONRPCMessage::Request(jsonrpc_request_from_client_request(
++                ClientRequest::Initialize {
++                    request_id: initialize_request_id.clone(),
++                    params,
++                },
++            )),
++            endpoint,
++        )
++        .await?;
+ 
+     timeout(initialize_timeout, async {
+         loop {
+-            match stream.next().await {
+-                Some(Ok(Message::Text(text))) => {
+-                    let message = serde_json::from_str::<JSONRPCMessage>(&text).map_err(|err| {
+-                        IoError::other(format!(
+-                            "remote app server at `{endpoint}` sent invalid initialize response: {err}"
+-                        ))
+-                    })?;
++            match stream.next_message(endpoint).await {
++                Ok(Some(message)) => {
+                     match message {
+                         JSONRPCMessage::Response(response) if response.id == initialize_request_id => {
+                             server_version = response
+@@ -863,8 +954,7 @@ where
+                                 }
+                                 Err(err) => {
+                                     warn!(%err, method, "rejecting unknown remote app-server request during initialize");
+-                                    write_jsonrpc_message(
+-                                        stream,
++                                    stream.send_message(
+                                         JSONRPCMessage::Error(JSONRPCError {
+                                             error: JSONRPCErrorError {
+                                                 code: -32601,
+@@ -884,29 +974,8 @@ where
+                         JSONRPCMessage::Response(_) | JSONRPCMessage::Error(_) => {}
+                     }
+                 }
+-                Some(Ok(Message::Binary(_)))
+-                | Some(Ok(Message::Ping(_)))
+-                | Some(Ok(Message::Pong(_)))
+-                | Some(Ok(Message::Frame(_))) => {}
+-                Some(Ok(Message::Close(frame))) => {
+-                    let reason = frame
+-                        .as_ref()
+-                        .map(|frame| frame.reason.to_string())
+-                        .filter(|reason| !reason.is_empty())
+-                        .unwrap_or_else(|| "connection closed during initialize".to_string());
+-                    break Err(IoError::new(
+-                        ErrorKind::ConnectionAborted,
+-                        format!(
+-                            "remote app server at `{endpoint}` closed during initialize: {reason}"
+-                        ),
+-                    ));
+-                }
+-                Some(Err(err)) => {
+-                    break Err(IoError::other(format!(
+-                        "remote app server at `{endpoint}` transport failed during initialize: {err}"
+-                    )));
+-                }
+-                None => {
++                Err(err) => break Err(err),
++                Ok(None) => {
+                     break Err(IoError::new(
+                         ErrorKind::UnexpectedEof,
+                         format!("remote app server at `{endpoint}` closed during initialize"),
+@@ -923,14 +992,14 @@ where
+         )
+     })??;
+ 
+-    write_jsonrpc_message(
+-        stream,
+-        JSONRPCMessage::Notification(jsonrpc_notification_from_client_notification(
+-            ClientNotification::Initialized,
+-        )),
+-        endpoint,
+-    )
+-    .await?;
++    stream
++        .send_message(
++            JSONRPCMessage::Notification(jsonrpc_notification_from_client_notification(
++                ClientNotification::Initialized,
++            )),
++            endpoint,
++        )
++        .await?;
+ 
+     Ok((pending_events, server_version, codex_home))
+ }
+@@ -978,35 +1047,6 @@ fn jsonrpc_notification_from_client_notification(
+     }
+ }
+ 
+-async fn write_jsonrpc_message<S>(
+-    stream: &mut WebSocketStream<S>,
+-    message: JSONRPCMessage,
+-    endpoint: &str,
+-) -> IoResult<()>
+-where
+-    S: AsyncRead + AsyncWrite + Unpin,
+-{
+-    let payload = serde_json::to_string(&message).map_err(IoError::other)?;
+-    stream
+-        .send(Message::Text(payload.into()))
+-        .await
+-        .map_err(|err| {
+-            IoError::other(format!(
+-                "failed to write websocket message to `{endpoint}`: {err}"
+-            ))
+-        })
+-}
+-
+-fn websocket_close_error_is_already_closed(err: &TungsteniteError) -> bool {
+-    match err {
+-        TungsteniteError::ConnectionClosed | TungsteniteError::AlreadyClosed => true,
+-        TungsteniteError::Io(err) => matches!(
+-            err.kind(),
+-            ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::NotConnected
+-        ),
+-        _ => false,
+-    }
+-}
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
+index a4d87e202..773d84d76 100644
+--- a/codex-rs/app-server-protocol/src/protocol/common.rs
++++ b/codex-rs/app-server-protocol/src/protocol/common.rs
+@@ -866,6 +866,18 @@ client_request_definitions! {
+         serialization: thread_id(params.thread_id),
+         response: v2::ThreadRealtimeStopResponse,
+     },
++    #[experimental("thread/realtime/resolveHandoff")]
++    ThreadRealtimeResolveHandoff => "thread/realtime/resolveHandoff" {
++        params: v2::ThreadRealtimeResolveHandoffParams,
++        serialization: thread_id(params.thread_id),
++        response: v2::ThreadRealtimeResolveHandoffResponse,
++    },
++    #[experimental("thread/realtime/finalizeHandoff")]
++    ThreadRealtimeFinalizeHandoff => "thread/realtime/finalizeHandoff" {
++        params: v2::ThreadRealtimeFinalizeHandoffParams,
++        serialization: thread_id(params.thread_id),
++        response: v2::ThreadRealtimeFinalizeHandoffResponse,
++    },
+     #[experimental("thread/realtime/listVoices")]
+     ThreadRealtimeListVoices => "thread/realtime/listVoices" {
+         params: v2::ThreadRealtimeListVoicesParams,
+@@ -1669,6 +1681,8 @@ server_notification_definitions! {
+     /// This event is internal-only. Used by clients that need exact upstream usage.
+     RawResponseCompleted => "rawResponse/completed" (v2::RawResponseCompletedNotification),
+     AgentMessageDelta => "item/agentMessage/delta" (v2::AgentMessageDeltaNotification),
++    /// Streaming delta for a dynamic tool call's argument JSON.
++    DynamicToolCallArgumentsDelta => "item/dynamicToolCall/argumentsDelta" (v2::DynamicToolCallArgumentsDeltaNotification),
+     /// EXPERIMENTAL - proposed plan streaming deltas for plan items.
+     PlanDelta => "item/plan/delta" (v2::PlanDeltaNotification),
+     /// Stream base64-encoded stdout/stderr chunks for a running `command/exec` session.
+diff --git a/codex-rs/app-server-protocol/src/protocol/event_mapping.rs b/codex-rs/app-server-protocol/src/protocol/event_mapping.rs
+index b32b15272..44d38c904 100644
+--- a/codex-rs/app-server-protocol/src/protocol/event_mapping.rs
++++ b/codex-rs/app-server-protocol/src/protocol/event_mapping.rs
+@@ -7,6 +7,7 @@ use crate::protocol::v2::CollabAgentState;
+ use crate::protocol::v2::CollabAgentTool;
+ use crate::protocol::v2::CollabAgentToolCallStatus;
+ use crate::protocol::v2::CommandExecutionOutputDeltaNotification;
++use crate::protocol::v2::DynamicToolCallArgumentsDeltaNotification;
+ use crate::protocol::v2::DynamicToolCallOutputContentItem;
+ use crate::protocol::v2::DynamicToolCallStatus;
+ use crate::protocol::v2::FileChangePatchUpdatedNotification;
+@@ -369,6 +370,17 @@ pub fn item_event_to_server_notification(
+                 delta,
+             })
+         }
++        EventMsg::DynamicToolCallArgumentsDelta(event) => {
++            ServerNotification::DynamicToolCallArgumentsDelta(
++                DynamicToolCallArgumentsDeltaNotification {
++                    thread_id,
++                    turn_id,
++                    item_id: event.item_id,
++                    call_id: event.call_id,
++                    delta: event.delta,
++                },
++            )
++        }
+         EventMsg::PlanDelta(event) => ServerNotification::PlanDelta(PlanDeltaNotification {
+             thread_id,
+             turn_id,
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/item.rs b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+index e26fa35ba..d2ef55f8c 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/item.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+@@ -1243,6 +1243,7 @@ pub struct ItemGuardianApprovalReviewStartedNotification {
+     pub thread_id: String,
+     pub turn_id: String,
+     /// Unix timestamp (in milliseconds) when this review started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Stable identifier for this review.
+@@ -1272,9 +1273,11 @@ pub struct ItemGuardianApprovalReviewCompletedNotification {
+     pub thread_id: String,
+     pub turn_id: String,
+     /// Unix timestamp (in milliseconds) when this review started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Unix timestamp (in milliseconds) when this review completed.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub completed_at_ms: i64,
+     /// Stable identifier for this review.
+@@ -1328,6 +1331,20 @@ pub struct AgentMessageDeltaNotification {
+     pub delta: String,
+ }
+ 
++/// Streaming delta for a dynamic tool call's argument JSON.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct DynamicToolCallArgumentsDeltaNotification {
++    pub thread_id: String,
++    pub turn_id: String,
++    pub item_id: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    #[ts(optional = nullable)]
++    pub call_id: Option<String>,
++    pub delta: String,
++}
++
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+ #[serde(rename_all = "camelCase")]
+ #[ts(export_to = "v2/")]
+@@ -1427,6 +1444,7 @@ pub struct CommandExecutionRequestApprovalParams {
+     pub turn_id: String,
+     pub item_id: String,
+     /// Unix timestamp (in milliseconds) when this approval request started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Unique identifier for this specific approval callback.
+@@ -1506,6 +1524,7 @@ pub struct FileChangeRequestApprovalParams {
+     pub turn_id: String,
+     pub item_id: String,
+     /// Unix timestamp (in milliseconds) when this approval request started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Optional explanatory reason (e.g. request for extra write access).
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs b/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs
+index a6976c9c0..973250ff5 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs
+@@ -764,6 +764,7 @@ pub struct PermissionsRequestApprovalParams {
+     #[serde(default)]
+     pub environment_id: Option<String>,
+     /// Unix timestamp (in milliseconds) when this approval request started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     pub cwd: AbsolutePathBuf,
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/realtime.rs b/codex-rs/app-server-protocol/src/protocol/v2/realtime.rs
+index 234b2089e..b05dfe07f 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/realtime.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/realtime.rs
+@@ -1,3 +1,4 @@
++use codex_protocol::dynamic_tools::DynamicToolSpec;
+ use codex_protocol::protocol::CodexResponseHandoffMode;
+ use codex_protocol::protocol::ConversationTextRole;
+ use codex_protocol::protocol::RealtimeAudioFrame as CoreRealtimeAudioFrame;
+@@ -118,6 +119,9 @@ pub struct ThreadRealtimeStartParams {
+     pub version: Option<RealtimeConversationVersion>,
+     #[ts(optional = nullable)]
+     pub voice: Option<RealtimeVoice>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    #[ts(optional = nullable)]
++    pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
+ }
+ 
+ /// EXPERIMENTAL - role-bearing text item included when a realtime V3 session starts.
+@@ -209,6 +213,35 @@ pub struct ThreadRealtimeStopParams {
+ #[ts(export_to = "v2/")]
+ pub struct ThreadRealtimeStopResponse {}
+ 
++/// EXPERIMENTAL - resolve a client-managed handoff with tool output.
++#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct ThreadRealtimeResolveHandoffParams {
++    pub thread_id: String,
++    pub tool_call_output: String,
++}
++
++/// EXPERIMENTAL - response for resolving a handoff.
++#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct ThreadRealtimeResolveHandoffResponse {}
++
++/// EXPERIMENTAL - finalize a client-managed handoff.
++#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct ThreadRealtimeFinalizeHandoffParams {
++    pub thread_id: String,
++}
++
++/// EXPERIMENTAL - response for finalizing a handoff.
++#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct ThreadRealtimeFinalizeHandoffResponse {}
++
+ /// EXPERIMENTAL - list voices supported by thread realtime.
+ #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
+ #[serde(rename_all = "camelCase")]
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+index acebeb546..51d4f704d 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+@@ -1362,6 +1362,10 @@ pub struct ThreadReadParams {
+ #[ts(export_to = "v2/")]
+ pub struct ThreadReadResponse {
+     pub thread: Thread,
++    #[serde(default)]
++    pub approval_policy: Option<AskForApproval>,
++    #[serde(default)]
++    pub sandbox: Option<SandboxPolicy>,
+ }
+ 
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
+index c51fd7ffd..f511da014 100644
+--- a/codex-rs/app-server/src/bespoke_event_handling.rs
++++ b/codex-rs/app-server/src/bespoke_event_handling.rs
+@@ -512,6 +512,55 @@ pub(crate) async fn apply_bespoke_event_handling(
+                     .await;
+             }
+             RealtimeEvent::ConversationItemDone { .. } | RealtimeEvent::NoopRequested(_) => {}
++            RealtimeEvent::ToolCallRequested(item) => {
++                let call_id = item
++                    .get("call_id")
++                    .or_else(|| item.get("id"))
++                    .and_then(serde_json::Value::as_str)
++                    .unwrap_or("")
++                    .to_string();
++                let tool = item
++                    .get("name")
++                    .and_then(serde_json::Value::as_str)
++                    .unwrap_or("")
++                    .to_string();
++                let arguments = item
++                    .get("arguments")
++                    .and_then(serde_json::Value::as_str)
++                    .and_then(|arguments| serde_json::from_str(arguments).ok())
++                    .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
++                let params = DynamicToolCallParams {
++                    thread_id: conversation_id.to_string(),
++                    turn_id: String::new(),
++                    call_id: call_id.clone(),
++                    namespace: None,
++                    tool,
++                    arguments,
++                };
++                let (_, rx) = outgoing
++                    .send_request(ServerRequestPayload::DynamicToolCall(params))
++                    .await;
++                let conversation = conversation.clone();
++                tokio::spawn(async move {
++                    let output = match rx.await {
++                        Ok(Ok(value)) => value
++                            .get("contentItems")
++                            .and_then(serde_json::Value::as_array)
++                            .and_then(|items| items.first())
++                            .and_then(|item| item.get("text"))
++                            .and_then(serde_json::Value::as_str)
++                            .unwrap_or("")
++                            .to_string(),
++                        _ => "Tool call failed".to_string(),
++                    };
++                    let _ = conversation
++                        .submit(codex_protocol::protocol::Op::RealtimeResolveDynamicTool {
++                            call_id,
++                            output,
++                        })
++                        .await;
++                });
++            }
+             RealtimeEvent::HandoffRequested(handoff) => {
+                 let notification = ThreadRealtimeItemAddedNotification {
+                     thread_id: conversation_id.to_string(),
+@@ -521,6 +570,7 @@ pub(crate) async fn apply_bespoke_event_handling(
+                         "item_id": handoff.item_id,
+                         "input_transcript": handoff.input_transcript,
+                         "active_transcript": handoff.active_transcript,
++                        "server": handoff.server,
+                     }),
+                 };
+                 outgoing
+@@ -869,6 +919,7 @@ pub(crate) async fn apply_bespoke_event_handling(
+             // App-server v2 receives the canonical TurnItem::McpToolCall lifecycle instead.
+         }
+         msg @ (EventMsg::AgentMessageContentDelta(_)
++        | EventMsg::DynamicToolCallArgumentsDelta(_)
+         | EventMsg::PlanDelta(_)
+         | EventMsg::ReasoningContentDelta(_)
+         | EventMsg::ReasoningRawContentDelta(_)
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index 133c0c84f..0c28ad356 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -1309,6 +1309,16 @@ impl MessageProcessor {
+                     .thread_realtime_stop(&request_id, params)
+                     .await
+             }
++            ClientRequest::ThreadRealtimeResolveHandoff { params, .. } => {
++                self.turn_processor
++                    .thread_realtime_resolve_handoff(&request_id, params)
++                    .await
++            }
++            ClientRequest::ThreadRealtimeFinalizeHandoff { params, .. } => {
++                self.turn_processor
++                    .thread_realtime_finalize_handoff(&request_id, params)
++                    .await
++            }
+             ClientRequest::ThreadRealtimeListVoices { params: _, .. } => {
+                 self.turn_processor.thread_realtime_list_voices().await
+             }
+diff --git a/codex-rs/app-server/src/request_processors.rs b/codex-rs/app-server/src/request_processors.rs
+index a6d1794af..b9a84be02 100644
+--- a/codex-rs/app-server/src/request_processors.rs
++++ b/codex-rs/app-server/src/request_processors.rs
+@@ -249,7 +249,11 @@ use codex_app_server_protocol::ThreadRealtimeAppendSpeechParams;
+ use codex_app_server_protocol::ThreadRealtimeAppendSpeechResponse;
+ use codex_app_server_protocol::ThreadRealtimeAppendTextParams;
+ use codex_app_server_protocol::ThreadRealtimeAppendTextResponse;
++use codex_app_server_protocol::ThreadRealtimeFinalizeHandoffParams;
++use codex_app_server_protocol::ThreadRealtimeFinalizeHandoffResponse;
+ use codex_app_server_protocol::ThreadRealtimeListVoicesResponse;
++use codex_app_server_protocol::ThreadRealtimeResolveHandoffParams;
++use codex_app_server_protocol::ThreadRealtimeResolveHandoffResponse;
+ use codex_app_server_protocol::ThreadRealtimeStartParams;
+ use codex_app_server_protocol::ThreadRealtimeStartResponse;
+ use codex_app_server_protocol::ThreadRealtimeStartTransport;
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 7f1a30a39..a9d4e9c00 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -2268,7 +2268,21 @@ impl ThreadRequestProcessor {
+             .read_thread_view(thread_uuid, include_turns)
+             .await
+             .map_err(thread_read_view_error)?;
+-        Ok(ThreadReadResponse { thread })
++        let live_config_snapshot =
++            if let Ok(thread) = self.thread_manager.get_thread(thread_uuid).await {
++                Some(thread.config_snapshot().await)
++            } else {
++                None
++            };
++        Ok(ThreadReadResponse {
++            thread,
++            approval_policy: live_config_snapshot
++                .as_ref()
++                .map(|config| config.approval_policy.into()),
++            sandbox: live_config_snapshot
++                .as_ref()
++                .map(|config| config.sandbox_policy().into()),
++        })
+     }
+ 
+     /// Builds the API view for `thread/read` from persisted metadata plus optional live state.
+diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
+index 663c4604f..2666733e8 100644
+--- a/codex-rs/app-server/src/request_processors/turn_processor.rs
++++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
+@@ -281,6 +281,26 @@ impl TurnRequestProcessor {
+             .map(|response| response.map(Into::into))
+     }
+ 
++    pub(crate) async fn thread_realtime_resolve_handoff(
++        &self,
++        request_id: &ConnectionRequestId,
++        params: ThreadRealtimeResolveHandoffParams,
++    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
++        self.thread_realtime_resolve_handoff_inner(request_id, params)
++            .await
++            .map(|response| response.map(Into::into))
++    }
++
++    pub(crate) async fn thread_realtime_finalize_handoff(
++        &self,
++        request_id: &ConnectionRequestId,
++        params: ThreadRealtimeFinalizeHandoffParams,
++    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
++        self.thread_realtime_finalize_handoff_inner(request_id, params)
++            .await
++            .map(|response| response.map(Into::into))
++    }
++
+     pub(crate) async fn thread_realtime_list_voices(
+         &self,
+     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+@@ -1102,6 +1122,7 @@ impl TurnRequestProcessor {
+                 }),
+                 version: params.version,
+                 voice: params.voice,
++                dynamic_tools: params.dynamic_tools,
+             }),
+         )
+         .await
+@@ -1208,6 +1229,50 @@ impl TurnRequestProcessor {
+         Ok(Some(ThreadRealtimeStopResponse::default()))
+     }
+ 
++    async fn thread_realtime_resolve_handoff_inner(
++        &self,
++        request_id: &ConnectionRequestId,
++        params: ThreadRealtimeResolveHandoffParams,
++    ) -> Result<Option<ThreadRealtimeResolveHandoffResponse>, JSONRPCErrorError> {
++        let Some((_, thread)) = self
++            .prepare_realtime_conversation_thread(request_id, &params.thread_id)
++            .await?
++        else {
++            return Ok(None);
++        };
++        self.submit_core_op(
++            request_id,
++            thread.as_ref(),
++            Op::RealtimeConversationResolveHandoff {
++                tool_call_output: params.tool_call_output,
++            },
++        )
++        .await
++        .map_err(|err| internal_error(format!("failed to resolve realtime handoff: {err}")))?;
++        Ok(Some(ThreadRealtimeResolveHandoffResponse::default()))
++    }
++
++    async fn thread_realtime_finalize_handoff_inner(
++        &self,
++        request_id: &ConnectionRequestId,
++        params: ThreadRealtimeFinalizeHandoffParams,
++    ) -> Result<Option<ThreadRealtimeFinalizeHandoffResponse>, JSONRPCErrorError> {
++        let Some((_, thread)) = self
++            .prepare_realtime_conversation_thread(request_id, &params.thread_id)
++            .await?
++        else {
++            return Ok(None);
++        };
++        self.submit_core_op(
++            request_id,
++            thread.as_ref(),
++            Op::RealtimeConversationFinalizeHandoff,
++        )
++        .await
++        .map_err(|err| internal_error(format!("failed to finalize realtime handoff: {err}")))?;
++        Ok(Some(ThreadRealtimeFinalizeHandoffResponse::default()))
++    }
++
+     fn build_review_turn(turn_id: String, display_text: &str) -> Turn {
+         let items = if display_text.is_empty() {
+             Vec::new()
+diff --git a/codex-rs/code-mode/Cargo.toml b/codex-rs/code-mode/Cargo.toml
+index be1442418..508eff4d3 100644
+--- a/codex-rs/code-mode/Cargo.toml
++++ b/codex-rs/code-mode/Cargo.toml
+@@ -18,12 +18,14 @@ workspace = true
+ [dependencies]
+ codex-code-mode-protocol = { workspace = true }
+ codex-protocol = { workspace = true }
+-deno_core_icudata = { workspace = true }
+ futures = { workspace = true }
+ serde_json = { workspace = true }
+ tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+ tokio-util = { workspace = true, features = ["rt"] }
+ tracing = { workspace = true }
++
++[target.'cfg(not(any(target_os = "ios", target_os = "android", target_os = "linux", target_os = "windows")))'.dependencies]
++deno_core_icudata = { workspace = true }
+ v8 = { workspace = true }
+ 
+ [dev-dependencies]
+diff --git a/codex-rs/code-mode/src/lib.rs b/codex-rs/code-mode/src/lib.rs
+index 6d332bf0c..f01233f7e 100644
+--- a/codex-rs/code-mode/src/lib.rs
++++ b/codex-rs/code-mode/src/lib.rs
+@@ -1,8 +1,54 @@
++#[cfg(not(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++)))]
+ mod cell_actor;
+ mod remote_session;
++#[cfg(not(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++)))]
+ mod runtime;
++#[cfg(not(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++)))]
+ mod service;
++#[cfg(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++))]
++#[path = "service_stub.rs"]
++mod service;
++#[cfg(not(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++)))]
+ mod session_runtime;
++#[cfg(not(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++)))]
++mod v8_init;
++#[cfg(any(
++    target_os = "ios",
++    target_os = "android",
++    target_os = "linux",
++    target_os = "windows"
++))]
++#[path = "v8_init_stub.rs"]
+ mod v8_init;
+ 
+ pub(crate) type TaskFailureHandler = std::sync::Arc<dyn Fn(String) + Send + Sync>;
+diff --git a/codex-rs/code-mode/src/service_stub.rs b/codex-rs/code-mode/src/service_stub.rs
+new file mode 100644
+index 000000000..b96915035
+--- /dev/null
++++ b/codex-rs/code-mode/src/service_stub.rs
+@@ -0,0 +1,174 @@
++use std::sync::Arc;
++use std::sync::atomic::{AtomicU64, Ordering};
++
++use codex_code_mode_protocol::CellId;
++use codex_code_mode_protocol::CodeModeNestedToolCall;
++use codex_code_mode_protocol::CodeModeSession;
++use codex_code_mode_protocol::CodeModeSessionDelegate;
++use codex_code_mode_protocol::CodeModeSessionProvider;
++use codex_code_mode_protocol::CodeModeSessionProviderFuture;
++use codex_code_mode_protocol::CodeModeSessionResultFuture;
++use codex_code_mode_protocol::ExecuteRequest;
++use codex_code_mode_protocol::ExecuteToPendingOutcome;
++use codex_code_mode_protocol::NotificationFuture;
++use codex_code_mode_protocol::RuntimeResponse;
++use codex_code_mode_protocol::StartedCell;
++use codex_code_mode_protocol::ToolInvocationFuture;
++use codex_code_mode_protocol::WaitOutcome;
++use codex_code_mode_protocol::WaitRequest;
++use codex_code_mode_protocol::WaitToPendingOutcome;
++use codex_code_mode_protocol::WaitToPendingRequest;
++use tokio::sync::oneshot;
++use tokio_util::sync::CancellationToken;
++
++const MOBILE_UNSUPPORTED_MESSAGE: &str = "exec is unavailable on mobile targets in this build";
++
++pub struct NoopCodeModeSessionDelegate;
++
++impl CodeModeSessionDelegate for NoopCodeModeSessionDelegate {
++    fn invoke_tool<'a>(
++        &'a self,
++        _invocation: CodeModeNestedToolCall,
++        cancellation_token: CancellationToken,
++    ) -> ToolInvocationFuture<'a> {
++        Box::pin(async move {
++            cancellation_token.cancelled().await;
++            Err("code mode nested tools are unavailable".to_string())
++        })
++    }
++
++    fn notify<'a>(
++        &'a self,
++        _call_id: String,
++        _cell_id: CellId,
++        _text: String,
++        _cancellation_token: CancellationToken,
++    ) -> NotificationFuture<'a> {
++        Box::pin(async { Ok(()) })
++    }
++
++    fn cell_closed(&self, _cell_id: &CellId) {}
++}
++
++#[derive(Default)]
++pub struct InProcessCodeModeSessionProvider;
++
++impl CodeModeSessionProvider for InProcessCodeModeSessionProvider {
++    fn create_session<'a>(
++        &'a self,
++        delegate: Arc<dyn CodeModeSessionDelegate>,
++    ) -> CodeModeSessionProviderFuture<'a> {
++        Box::pin(async move {
++            let session: Arc<dyn CodeModeSession> =
++                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
++            Ok(session)
++        })
++    }
++}
++
++pub struct InProcessCodeModeSession {
++    _delegate: Arc<dyn CodeModeSessionDelegate>,
++    next_cell_id: AtomicU64,
++}
++
++impl InProcessCodeModeSession {
++    pub fn new() -> Self {
++        Self::with_delegate(Arc::new(NoopCodeModeSessionDelegate))
++    }
++
++    pub fn with_delegate(delegate: Arc<dyn CodeModeSessionDelegate>) -> Self {
++        Self {
++            _delegate: delegate,
++            next_cell_id: AtomicU64::new(1),
++        }
++    }
++
++    pub fn with_delegate_and_task_failure_handler(
++        delegate: Arc<dyn CodeModeSessionDelegate>,
++        _task_failure_handler: Arc<dyn Fn(String) + Send + Sync>,
++    ) -> Self {
++        Self::with_delegate(delegate)
++    }
++
++    pub async fn execute(&self, _request: ExecuteRequest) -> Result<StartedCell, String> {
++        let cell_id = self.allocate_cell_id();
++        let (response_tx, response_rx) = oneshot::channel();
++        let _ = response_tx.send(unsupported_response(cell_id.clone()));
++        Ok(StartedCell::new(cell_id, response_rx))
++    }
++
++    pub async fn execute_to_pending(
++        &self,
++        _request: ExecuteRequest,
++    ) -> Result<ExecuteToPendingOutcome, String> {
++        Ok(ExecuteToPendingOutcome::Completed(unsupported_response(
++            self.allocate_cell_id(),
++        )))
++    }
++
++    pub async fn wait(&self, request: WaitRequest) -> Result<WaitOutcome, String> {
++        Ok(WaitOutcome::MissingCell(unsupported_response(
++            request.cell_id,
++        )))
++    }
++
++    pub async fn terminate(&self, cell_id: CellId) -> Result<WaitOutcome, String> {
++        Ok(WaitOutcome::MissingCell(unsupported_response(cell_id)))
++    }
++
++    pub async fn wait_to_pending(
++        &self,
++        request: WaitToPendingRequest,
++    ) -> Result<WaitToPendingOutcome, String> {
++        Ok(WaitToPendingOutcome::MissingCell(unsupported_response(
++            request.cell_id,
++        )))
++    }
++
++    pub async fn shutdown(&self) -> Result<(), String> {
++        Ok(())
++    }
++
++    fn allocate_cell_id(&self) -> CellId {
++        CellId::new(
++            self.next_cell_id
++                .fetch_add(1, Ordering::Relaxed)
++                .to_string(),
++        )
++    }
++}
++
++impl Default for InProcessCodeModeSession {
++    fn default() -> Self {
++        Self::new()
++    }
++}
++
++impl CodeModeSession for InProcessCodeModeSession {
++    fn execute<'a>(
++        &'a self,
++        request: ExecuteRequest,
++    ) -> CodeModeSessionResultFuture<'a, StartedCell> {
++        Box::pin(InProcessCodeModeSession::execute(self, request))
++    }
++
++    fn wait<'a>(&'a self, request: WaitRequest) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
++        Box::pin(InProcessCodeModeSession::wait(self, request))
++    }
++
++    fn terminate<'a>(&'a self, cell_id: CellId) -> CodeModeSessionResultFuture<'a, WaitOutcome> {
++        Box::pin(InProcessCodeModeSession::terminate(self, cell_id))
++    }
++
++    fn shutdown<'a>(&'a self) -> CodeModeSessionResultFuture<'a, ()> {
++        Box::pin(InProcessCodeModeSession::shutdown(self))
++    }
++}
++
++fn unsupported_response(cell_id: CellId) -> RuntimeResponse {
++    RuntimeResponse::Result {
++        cell_id,
++        content_items: Vec::new(),
++        error_text: Some(MOBILE_UNSUPPORTED_MESSAGE.to_string()),
++    }
++}
+diff --git a/codex-rs/code-mode/src/v8_init_stub.rs b/codex-rs/code-mode/src/v8_init_stub.rs
+new file mode 100644
+index 000000000..0bff2f9bd
+--- /dev/null
++++ b/codex-rs/code-mode/src/v8_init_stub.rs
+@@ -0,0 +1,11 @@
++/// Controls whether V8 may generate executable code at runtime.
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++pub enum V8JitMode {
++    #[default]
++    Enabled,
++    Disabled,
++}
++
++pub fn initialize_v8(_jit_mode: V8JitMode) -> Result<(), String> {
++    Ok(())
++}
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
+index fa33f3524..be40a56f8 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
+@@ -383,6 +383,7 @@ impl RealtimeWebsocketWriter {
+         session_mode: RealtimeSessionMode,
+         output_modality: RealtimeOutputModality,
+         voice: RealtimeVoice,
++        dynamic_tools: Option<Vec<codex_protocol::dynamic_tools::DynamicToolSpec>>,
+     ) -> Result<(), ApiError> {
+         let session_mode = normalized_session_mode(self.event_parser, session_mode);
+         let message = session_update_message(
+@@ -392,6 +393,7 @@ impl RealtimeWebsocketWriter {
+             session_mode,
+             output_modality,
+             voice,
++            dynamic_tools,
+         );
+         self.send_json(&message).await
+     }
+@@ -622,6 +624,7 @@ impl RealtimeWebsocketEvents {
+             | RealtimeEvent::ResponseDone(_)
+             | RealtimeEvent::ConversationItemDone { .. }
+             | RealtimeEvent::NoopRequested(_)
++            | RealtimeEvent::ToolCallRequested(_)
+             | RealtimeEvent::ConversationItemAdded(_)
+             | RealtimeEvent::Error(_) => {}
+         }
+@@ -848,6 +851,7 @@ impl RealtimeWebsocketClient {
+                     config.session_mode,
+                     config.output_modality,
+                     config.voice,
++                    config.dynamic_tools,
+                 )
+                 .await?;
+         }
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_common.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_common.rs
+index c2cad2aac..0552abbda 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_common.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_common.rs
+@@ -118,6 +118,7 @@ pub(super) fn session_update_message(
+     session_mode: RealtimeSessionMode,
+     output_modality: RealtimeOutputModality,
+     voice: RealtimeVoice,
++    dynamic_tools: Option<Vec<codex_protocol::dynamic_tools::DynamicToolSpec>>,
+ ) -> RealtimeOutboundMessage {
+     let session_mode = normalized_session_mode(wire_adapter, session_mode);
+     match wire_adapter {
+@@ -128,7 +129,13 @@ pub(super) fn session_update_message(
+             frameless_session_update_message(instructions, initial_items, voice)
+         }
+         RealtimeWireAdapter::RealtimeV2 => RealtimeOutboundMessage::SessionUpdate {
+-            session: v2_session_update_session(instructions, session_mode, output_modality, voice),
++            session: v2_session_update_session(
++                instructions,
++                session_mode,
++                output_modality,
++                voice,
++                dynamic_tools,
++            ),
+         },
+     }
+ }
+@@ -145,6 +152,7 @@ pub fn session_update_session_json(config: RealtimeSessionConfig) -> JsonResult<
+                     config.session_mode,
+                     config.output_modality,
+                     config.voice,
++                    config.dynamic_tools,
+                 ),
+                 RealtimeWireAdapter::FramelessBidi => unreachable!(),
+             };
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_v2.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_v2.rs
+index ee5d5031a..c054716e2 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_v2.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods_v2.rs
+@@ -24,6 +24,8 @@ use crate::endpoint::realtime_websocket::protocol::SessionTurnDetection;
+ use crate::endpoint::realtime_websocket::protocol::SessionType;
+ use crate::endpoint::realtime_websocket::protocol::SessionUpdateSession;
+ use crate::endpoint::realtime_websocket::protocol::TurnDetectionType;
++use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
++use codex_protocol::dynamic_tools::DynamicToolSpec;
+ use codex_protocol::protocol::ConversationTextRole;
+ use serde_json::json;
+ 
+@@ -77,6 +79,7 @@ pub(super) fn session_update_session(
+     session_mode: RealtimeSessionMode,
+     output_modality: RealtimeOutputModality,
+     voice: RealtimeVoice,
++    dynamic_tools: Option<Vec<DynamicToolSpec>>,
+ ) -> SessionUpdateSession {
+     match session_mode {
+         RealtimeSessionMode::Conversational => SessionUpdateSession {
+@@ -112,34 +115,7 @@ pub(super) fn session_update_session(
+                     voice,
+                 }),
+             },
+-            tools: Some(vec![
+-                SessionFunctionTool {
+-                    r#type: SessionToolType::Function,
+-                    name: REALTIME_V2_BACKGROUND_AGENT_TOOL_NAME.to_string(),
+-                    description: REALTIME_V2_BACKGROUND_AGENT_TOOL_DESCRIPTION.to_string(),
+-                    parameters: json!({
+-                        "type": "object",
+-                        "properties": {
+-                            "prompt": {
+-                                "type": "string",
+-                                "description": "The user request to delegate to the background agent."
+-                            }
+-                        },
+-                        "required": ["prompt"],
+-                        "additionalProperties": false
+-                    }),
+-                },
+-                SessionFunctionTool {
+-                    r#type: SessionToolType::Function,
+-                    name: REALTIME_V2_SILENCE_TOOL_NAME.to_string(),
+-                    description: REALTIME_V2_SILENCE_TOOL_DESCRIPTION.to_string(),
+-                    parameters: json!({
+-                        "type": "object",
+-                        "properties": {},
+-                        "additionalProperties": false
+-                    }),
+-                },
+-            ]),
++            tools: Some(realtime_v2_session_tools(dynamic_tools)),
+             tool_choice: Some(REALTIME_V2_TOOL_CHOICE.to_string()),
+         },
+         RealtimeSessionMode::Transcription => SessionUpdateSession {
+@@ -168,6 +144,67 @@ pub(super) fn session_update_session(
+     }
+ }
+ 
++fn realtime_v2_session_tools(
++    dynamic_tools: Option<Vec<DynamicToolSpec>>,
++) -> Vec<SessionFunctionTool> {
++    let mut tools = vec![
++        SessionFunctionTool {
++            r#type: SessionToolType::Function,
++            name: REALTIME_V2_BACKGROUND_AGENT_TOOL_NAME.to_string(),
++            description: REALTIME_V2_BACKGROUND_AGENT_TOOL_DESCRIPTION.to_string(),
++            parameters: json!({
++                "type": "object",
++                "properties": {
++                    "prompt": {
++                        "type": "string",
++                        "description": "The user request to delegate to the background agent."
++                    },
++                    "server": {
++                        "type": "string",
++                        "description": "Target server identifier for routing the handoff."
++                    }
++                },
++                "required": ["prompt", "server"],
++                "additionalProperties": false
++            }),
++        },
++        SessionFunctionTool {
++            r#type: SessionToolType::Function,
++            name: REALTIME_V2_SILENCE_TOOL_NAME.to_string(),
++            description: REALTIME_V2_SILENCE_TOOL_DESCRIPTION.to_string(),
++            parameters: json!({
++                "type": "object",
++                "properties": {},
++                "additionalProperties": false
++            }),
++        },
++    ];
++    tools.extend(
++        dynamic_tools
++            .unwrap_or_default()
++            .into_iter()
++            .filter_map(|tool| match tool {
++                DynamicToolSpec::Function(function) => Some(function),
++                DynamicToolSpec::Namespace(_) => None,
++            })
++            .filter(|tool| !tool.defer_loading)
++            .map(
++                |DynamicToolFunctionSpec {
++                     name,
++                     description,
++                     input_schema,
++                     ..
++                 }| SessionFunctionTool {
++                    r#type: SessionToolType::Function,
++                    name,
++                    description,
++                    parameters: input_schema,
++                },
++            ),
++    );
++    tools
++}
++
+ fn output_modality_value(output_modality: RealtimeOutputModality) -> &'static str {
+     match output_modality {
+         RealtimeOutputModality::Text => REALTIME_V2_OUTPUT_MODALITY_TEXT,
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol.rs
+index a4b0037d1..961b4bb41 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol.rs
+@@ -34,7 +34,7 @@ pub enum RealtimeContextAppendChannel {
+     Commentary,
+ }
+ 
+-#[derive(Debug, Clone, PartialEq, Eq)]
++#[derive(Debug, Clone, PartialEq)]
+ pub struct RealtimeSessionConfig {
+     pub instructions: String,
+     pub initial_items: Vec<ConversationTextParams>,
+@@ -44,6 +44,7 @@ pub struct RealtimeSessionConfig {
+     pub session_mode: RealtimeSessionMode,
+     pub output_modality: RealtimeOutputModality,
+     pub voice: RealtimeVoice,
++    pub dynamic_tools: Option<Vec<codex_protocol::dynamic_tools::DynamicToolSpec>>,
+ }
+ 
+ #[derive(Debug, Clone, Serialize)]
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_frameless_bidi.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_frameless_bidi.rs
+index bb2154023..79ebd145d 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_frameless_bidi.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_frameless_bidi.rs
+@@ -78,6 +78,12 @@ fn parse_delegation_created(parsed: &Value) -> Option<RealtimeEvent> {
+         return None;
+     }
+     let item_id = item.get("id").and_then(Value::as_str)?.to_string();
++    let server = item
++        .get("server")
++        .or_else(|| item.get("server_hint"))
++        .or_else(|| item.get("serverHint"))
++        .and_then(Value::as_str)
++        .map(str::to_string);
+     let input_transcript = item
+         .get("content")
+         .and_then(Value::as_array)?
+@@ -91,6 +97,7 @@ fn parse_delegation_created(parsed: &Value) -> Option<RealtimeEvent> {
+         item_id,
+         input_transcript,
+         active_transcript: Vec::new(),
++        server,
+     }))
+ }
+ 
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v1.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v1.rs
+index a46485224..905571639 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v1.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v1.rs
+@@ -80,6 +80,7 @@ pub(super) fn parse_realtime_event_v1(payload: &str) -> Option<RealtimeEvent> {
+                 item_id,
+                 input_transcript,
+                 active_transcript: Vec::new(),
++                server: None,
+             }))
+         }
+         "error" => parse_error_event(&parsed),
+diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v2.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v2.rs
+index ee0bba994..75cb09351 100644
+--- a/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v2.rs
++++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/protocol_v2.rs
+@@ -132,6 +132,15 @@ fn parse_conversation_item_done_event(parsed: &Value) -> Option<RealtimeEvent> {
+     if let Some(noop) = parse_noop_requested_event(item) {
+         return Some(noop);
+     }
++    if item.get("type").and_then(Value::as_str) == Some("function_call")
++        && item.get("status").and_then(Value::as_str) == Some("completed")
++        && item.get("name").and_then(Value::as_str) != Some(BACKGROUND_AGENT_TOOL_NAME)
++        && item.get("name").and_then(Value::as_str) != Some(SILENCE_TOOL_NAME)
++    {
++        return Some(RealtimeEvent::ToolCallRequested(Value::Object(
++            item.clone(),
++        )));
++    }
+ 
+     item.get("id")
+         .and_then(Value::as_str)
+@@ -156,12 +165,24 @@ fn parse_handoff_requested_event(item: &JsonMap<String, Value>) -> Option<Realti
+         .unwrap_or(call_id)
+         .to_string();
+     let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("");
++    let server = serde_json::from_str::<Value>(arguments)
++        .ok()
++        .as_ref()
++        .and_then(|parsed| {
++            parsed
++                .get("server")
++                .or_else(|| parsed.get("server_hint"))
++                .or_else(|| parsed.get("serverHint"))
++        })
++        .and_then(Value::as_str)
++        .map(str::to_string);
+ 
+     Some(RealtimeEvent::HandoffRequested(RealtimeHandoffRequested {
+         handoff_id: call_id.to_string(),
+         item_id,
+         input_transcript: extract_input_transcript(arguments),
+         active_transcript: Vec::new(),
++        server,
+     }))
+ }
+ 
+diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
+index 441d7bb3b..bae8ccef5 100644
+--- a/codex-rs/codex-api/src/sse/responses.rs
++++ b/codex-rs/codex-api/src/sse/responses.rs
+@@ -341,7 +341,7 @@ pub fn process_responses_event(
+                 return Ok(Some(ResponseEvent::OutputTextDelta(delta)));
+             }
+         }
+-        "response.custom_tool_call_input.delta" => {
++        "response.custom_tool_call_input.delta" | "response.function_call_arguments.delta" => {
+             if let (Some(delta), Some(item_id)) =
+                 (event.delta, event.item_id.clone().or(event.call_id.clone()))
+             {
+diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
+index 47dd317de..38a354b89 100644
+--- a/codex-rs/core/src/exec.rs
++++ b/codex-rs/core/src/exec.rs
+@@ -3,10 +3,14 @@ use std::os::unix::process::ExitStatusExt;
+ 
+ use std::collections::HashMap;
+ use std::io;
+-#[cfg(target_os = "windows")]
++#[cfg(any(target_os = "ios", target_os = "windows"))]
+ use std::path::Path;
+ use std::path::PathBuf;
+ use std::process::ExitStatus;
++#[cfg(target_os = "ios")]
++use std::sync::Arc;
++#[cfg(any(target_os = "ios", target_os = "android"))]
++use std::sync::OnceLock;
+ use std::time::Duration;
+ use std::time::Instant;
+ 
+@@ -55,6 +59,61 @@ use codex_utils_path_uri::PathUri;
+ use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
+ use codex_utils_pty::process_group::kill_child_process_group;
+ 
++#[cfg(target_os = "ios")]
++pub(crate) static IOS_EXEC_HOOK: OnceLock<
++    fn(&[String], &Path, &HashMap<String, String>, Option<u64>) -> (i32, Vec<u8>),
++> = OnceLock::new();
++
++#[cfg(target_os = "ios")]
++pub type IosExecOutputHandler = Arc<dyn Fn(Vec<u8>) + Send + Sync + 'static>;
++
++#[cfg(target_os = "ios")]
++pub(crate) static IOS_STREAMING_EXEC_HOOK: OnceLock<
++    fn(
++        &[String],
++        &Path,
++        &HashMap<String, String>,
++        Option<u64>,
++        IosExecOutputHandler,
++    ) -> (i32, Vec<u8>),
++> = OnceLock::new();
++
++#[cfg(target_os = "ios")]
++pub fn set_ios_exec_hook(
++    hook: fn(&[String], &Path, &HashMap<String, String>, Option<u64>) -> (i32, Vec<u8>),
++) {
++    let _ = IOS_EXEC_HOOK.set(hook);
++}
++
++#[cfg(target_os = "ios")]
++pub fn set_ios_streaming_exec_hook(
++    hook: fn(
++        &[String],
++        &Path,
++        &HashMap<String, String>,
++        Option<u64>,
++        IosExecOutputHandler,
++    ) -> (i32, Vec<u8>),
++) {
++    let _ = IOS_STREAMING_EXEC_HOOK.set(hook);
++}
++
++#[cfg(target_os = "android")]
++pub(crate) static ANDROID_TOOL_RESOLVER: OnceLock<fn(&str) -> Option<String>> = OnceLock::new();
++
++#[cfg(target_os = "android")]
++pub fn set_android_tool_resolver(resolver: fn(&str) -> Option<String>) {
++    let _ = ANDROID_TOOL_RESOLVER.set(resolver);
++}
++
++#[cfg(any(target_os = "ios", target_os = "android"))]
++pub(crate) static MOBILE_EXEC_PREFLIGHT: OnceLock<fn(&mut Vec<String>)> = OnceLock::new();
++
++#[cfg(any(target_os = "ios", target_os = "android"))]
++pub fn set_mobile_exec_preflight(preflight: fn(&mut Vec<String>)) {
++    let _ = MOBILE_EXEC_PREFLIGHT.set(preflight);
++}
++
+ pub const DEFAULT_EXEC_COMMAND_TIMEOUT_MS: u64 = 10_000;
+ 
+ // Hardcode these since it does not seem worth including the libc crate just
+@@ -930,6 +989,54 @@ async fn exec(
+             })?;
+     }
+ 
++    #[cfg(any(target_os = "ios", target_os = "android"))]
++    let mut command = command;
++    #[cfg(any(target_os = "ios", target_os = "android"))]
++    if let Some(preflight) = MOBILE_EXEC_PREFLIGHT.get() {
++        preflight(&mut command);
++    }
++
++    #[cfg(target_os = "ios")]
++    {
++        let timeout_ms = capture_policy
++            .uses_expiration()
++            .then(|| expiration.timeout_ms())
++            .flatten();
++        let (code, data) = IOS_EXEC_HOOK
++            .get()
++            .map(|hook| hook(&command, &cwd, &env, timeout_ms))
++            .unwrap_or_else(|| {
++                (
++                    -1,
++                    b"shell exec unavailable: no iOS exec hook registered\n".to_vec(),
++                )
++            });
++        return Ok(RawExecToolCallOutput {
++            exit_status: synthetic_exit_status_for_code(code),
++            stdout: StreamOutput {
++                text: data.clone(),
++                truncated_after_lines: None,
++            },
++            stderr: StreamOutput {
++                text: Vec::new(),
++                truncated_after_lines: None,
++            },
++            aggregated_output: StreamOutput {
++                text: data,
++                truncated_after_lines: None,
++            },
++            timed_out: false,
++        });
++    }
++
++    #[cfg(target_os = "android")]
++    if let Some(resolver) = ANDROID_TOOL_RESOLVER.get()
++        && let Some(program) = command.first_mut()
++        && let Some(resolved) = resolver(program)
++    {
++        *program = resolved;
++    }
++
+     let (program, args) = command.split_first().ok_or_else(|| {
+         CodexErr::Io(io::Error::new(
+             io::ErrorKind::InvalidInput,
+diff --git a/codex-rs/core/src/installation_id.rs b/codex-rs/core/src/installation_id.rs
+index a42e6b6d8..cc1fb33af 100644
+--- a/codex-rs/core/src/installation_id.rs
++++ b/codex-rs/core/src/installation_id.rs
+@@ -29,6 +29,7 @@ pub async fn resolve_installation_id(codex_home: &AbsolutePathBuf) -> Result<Str
+         }
+ 
+         let mut file = options.open(&path)?;
++        #[cfg(not(target_os = "android"))]
+         file.lock()?;
+ 
+         #[cfg(unix)]
+diff --git a/codex-rs/core/src/realtime_conversation.rs b/codex-rs/core/src/realtime_conversation.rs
+index 1532a3d14..92cc050af 100644
+--- a/codex-rs/core/src/realtime_conversation.rs
++++ b/codex-rs/core/src/realtime_conversation.rs
+@@ -337,6 +337,15 @@ enum RealtimeOutbound {
+     HandoffCompleteAck {
+         handoff_id: String,
+     },
++    ClientHandoffOutput {
++        handoff_id: String,
++        text: String,
++    },
++    ClientHandoffFinalize,
++    DynamicToolOutput {
++        call_id: String,
++        text: String,
++    },
+ }
+ 
+ #[derive(Debug, PartialEq, Eq)]
+@@ -974,6 +983,71 @@ impl RealtimeConversationManager {
+         Ok(())
+     }
+ 
++    pub(crate) async fn resolve_handoff(&self, tool_call_output: String) -> CodexResult<()> {
++        let handoff = {
++            let guard = self.state.lock().await;
++            guard.as_ref().map(|state| state.handoff.clone())
++        };
++        let Some(handoff) = handoff else {
++            return Err(CodexErr::InvalidRequest(
++                "conversation is not running".to_string(),
++            ));
++        };
++        let handoff_id = handoff
++            .stream
++            .lock()
++            .await
++            .active_handoff
++            .clone()
++            .ok_or_else(|| CodexErr::InvalidRequest("no active handoff".to_string()))?;
++        handoff
++            .output_tx
++            .send(RealtimeOutbound::ClientHandoffOutput {
++                handoff_id,
++                text: tool_call_output,
++            })
++            .await
++            .map_err(|_| CodexErr::InvalidRequest("conversation is not running".to_string()))
++    }
++
++    pub(crate) async fn finalize_handoff(&self) -> CodexResult<()> {
++        let handoff = {
++            let guard = self.state.lock().await;
++            guard.as_ref().map(|state| state.handoff.clone())
++        };
++        let Some(handoff) = handoff else {
++            return Err(CodexErr::InvalidRequest(
++                "conversation is not running".to_string(),
++            ));
++        };
++        handoff
++            .output_tx
++            .send(RealtimeOutbound::ClientHandoffFinalize)
++            .await
++            .map_err(|_| CodexErr::InvalidRequest("conversation is not running".to_string()))
++    }
++
++    pub(crate) async fn resolve_realtime_dynamic_tool(
++        &self,
++        call_id: String,
++        text: String,
++    ) -> CodexResult<()> {
++        let handoff = {
++            let guard = self.state.lock().await;
++            guard.as_ref().map(|state| state.handoff.clone())
++        };
++        let Some(handoff) = handoff else {
++            return Err(CodexErr::InvalidRequest(
++                "conversation is not running".to_string(),
++            ));
++        };
++        handoff
++            .output_tx
++            .send(RealtimeOutbound::DynamicToolOutput { call_id, text })
++            .await
++            .map_err(|_| CodexErr::InvalidRequest("conversation is not running".to_string()))
++    }
++
+     pub(crate) async fn handoff_complete(&self) -> CodexResult<()> {
+         let handoff = {
+             let guard = self.state.lock().await;
+@@ -1317,6 +1391,7 @@ pub(crate) async fn build_realtime_session_config(
+         session_mode,
+         output_modality: params.output_modality,
+         voice,
++        dynamic_tools: params.dynamic_tools.clone(),
+     })
+ }
+ 
+@@ -1953,6 +2028,17 @@ async fn handle_handoff_output(
+                     .await
+             }
+             RealtimeOutbound::HandoffCompleteAck { .. } => Ok(()),
++            RealtimeOutbound::ClientHandoffOutput { handoff_id, text } => {
++                writer
++                    .send_conversation_function_call_output(handoff_id, text)
++                    .await
++            }
++            RealtimeOutbound::ClientHandoffFinalize => Ok(()),
++            RealtimeOutbound::DynamicToolOutput { call_id, text } => {
++                writer
++                    .send_conversation_function_call_output(call_id, text)
++                    .await
++            }
+         },
+         RealtimeEventParser::FramelessBidi => match handoff_output {
+             RealtimeOutbound::StandaloneHandoff { text, phase } => {
+@@ -2020,6 +2106,17 @@ async fn handle_handoff_output(
+                 .await
+             }
+             RealtimeOutbound::HandoffCompleteAck { .. } => Ok(()),
++            RealtimeOutbound::ClientHandoffOutput { handoff_id, text } => {
++                writer
++                    .send_conversation_function_call_output(handoff_id, text)
++                    .await
++            }
++            RealtimeOutbound::ClientHandoffFinalize => Ok(()),
++            RealtimeOutbound::DynamicToolOutput { call_id, text } => {
++                writer
++                    .send_conversation_function_call_output(call_id, text)
++                    .await
++            }
+         },
+         RealtimeEventParser::RealtimeV2 => match handoff_output {
+             RealtimeOutbound::StandaloneHandoff { text, phase: _ } => {
+@@ -2097,6 +2194,28 @@ async fn handle_handoff_output(
+                     .send_conversation_function_call_output(handoff_id, String::new())
+                     .await
+             }
++            RealtimeOutbound::ClientHandoffOutput { handoff_id, text } => {
++                writer
++                    .send_conversation_function_call_output(handoff_id, text)
++                    .await
++            }
++            RealtimeOutbound::ClientHandoffFinalize => {
++                return response_create_queue
++                    .request_create(writer, events_tx, "client-managed handoff")
++                    .await;
++            }
++            RealtimeOutbound::DynamicToolOutput { call_id, text } => {
++                if let Err(err) = writer
++                    .send_conversation_function_call_output(call_id, text)
++                    .await
++                {
++                    Err(err)
++                } else {
++                    return response_create_queue
++                        .request_create(writer, events_tx, "dynamic tool")
++                        .await;
++                }
++            }
+         },
+     };
+     if let Err(err) = result {
+@@ -2282,6 +2401,15 @@ async fn handle_realtime_server_event(
+         | RealtimeEvent::OutputTranscriptDone(_)
+         | RealtimeEvent::ConversationItemAdded(_)
+         | RealtimeEvent::ConversationItemDone { .. } => false,
++        RealtimeEvent::ToolCallRequested(_) => {
++            *output_audio_state = None;
++            if matches!(session_kind, RealtimeSessionKind::V2) {
++                response_create_queue
++                    .mark_finished(writer, events_tx, "dynamic tool call")
++                    .await?;
++            }
++            false
++        }
+     };
+ 
+     if events_tx.send(event).await.is_err() {
+diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
+index d35d3419f..7051079b5 100644
+--- a/codex-rs/core/src/session/handlers.rs
++++ b/codex-rs/core/src/session/handlers.rs
+@@ -754,6 +754,49 @@ pub(super) async fn submission_loop(
+                     handle_realtime_conversation_speech(&sess, sub.id.clone(), params).await;
+                     false
+                 }
++                Op::RealtimeConversationResolveHandoff { tool_call_output } => {
++                    if let Err(err) = sess.conversation.resolve_handoff(tool_call_output).await {
++                        sess.send_event_raw(Event {
++                            id: sub.id.clone(),
++                            msg: EventMsg::Error(ErrorEvent {
++                                message: err.to_string(),
++                                codex_error_info: Some(CodexErrorInfo::Other),
++                            }),
++                        })
++                        .await;
++                    }
++                    false
++                }
++                Op::RealtimeConversationFinalizeHandoff => {
++                    if let Err(err) = sess.conversation.finalize_handoff().await {
++                        sess.send_event_raw(Event {
++                            id: sub.id.clone(),
++                            msg: EventMsg::Error(ErrorEvent {
++                                message: err.to_string(),
++                                codex_error_info: Some(CodexErrorInfo::Other),
++                            }),
++                        })
++                        .await;
++                    }
++                    false
++                }
++                Op::RealtimeResolveDynamicTool { call_id, output } => {
++                    if let Err(err) = sess
++                        .conversation
++                        .resolve_realtime_dynamic_tool(call_id, output)
++                        .await
++                    {
++                        sess.send_event_raw(Event {
++                            id: sub.id.clone(),
++                            msg: EventMsg::Error(ErrorEvent {
++                                message: err.to_string(),
++                                codex_error_info: Some(CodexErrorInfo::Other),
++                            }),
++                        })
++                        .await;
++                    }
++                    false
++                }
+                 Op::RealtimeConversationClose => {
+                     handle_realtime_conversation_close(&sess, sub.id.clone()).await;
+                     false
+diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
+index 32751315b..4b8fd3e0e 100644
+--- a/codex-rs/core/src/session/turn.rs
++++ b/codex-rs/core/src/session/turn.rs
+@@ -97,6 +97,7 @@ use codex_protocol::models::ResponseItem;
+ use codex_protocol::protocol::AgentMessageContentDeltaEvent;
+ use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
+ use codex_protocol::protocol::CodexErrorInfo;
++use codex_protocol::protocol::DynamicToolCallArgumentsDeltaEvent;
+ use codex_protocol::protocol::ErrorEvent;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::PlanDeltaEvent;
+@@ -1596,6 +1597,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<(String, Option<
+         | EventMsg::HookStarted(_)
+         | EventMsg::HookCompleted(_)
+         | EventMsg::AgentMessageContentDelta(_)
++        | EventMsg::DynamicToolCallArgumentsDelta(_)
+         | EventMsg::PlanDelta(_)
+         | EventMsg::ReasoningContentDelta(_)
+         | EventMsg::ReasoningRawContentDelta(_)
+@@ -1991,6 +1993,7 @@ async fn try_run_sampling_request(
+         String,
+         Box<dyn ToolArgumentDiffConsumer>,
+     )> = None;
++    let mut active_dynamic_tool_call: Option<(String, String)> = None;
+     let mut should_emit_turn_diff = false;
+     let mut should_emit_token_count = false;
+     let reasoning_effort = turn_context.effective_reasoning_effort_for_tracing();
+@@ -2046,6 +2049,7 @@ async fn try_run_sampling_request(
+         match event {
+             ResponseEvent::Created => {}
+             ResponseEvent::OutputItemDone(mut item) => {
++                active_dynamic_tool_call = None;
+                 if turn_context.item_ids_enabled() {
+                     assign_missing_streamed_response_item_id(&mut item, active_item.as_ref());
+                 }
+@@ -2143,6 +2147,7 @@ async fn try_run_sampling_request(
+                 }
+             }
+             ResponseEvent::OutputItemAdded(mut item) => {
++                active_dynamic_tool_call = None;
+                 if turn_context.item_ids_enabled() {
+                     assign_missing_streamed_response_item_id(&mut item, /*active_item*/ None);
+                 }
+@@ -2157,8 +2162,23 @@ async fn try_run_sampling_request(
+                     active_tool_argument_diff_consumer = tool_runtime
+                         .create_diff_consumer(&tool_name)
+                         .map(|consumer| (call_id.clone(), consumer));
+-                } else if matches!(&item, ResponseItem::FunctionCall { .. }) {
++                } else if let ResponseItem::FunctionCall {
++                    id, name, call_id, ..
++                } = &item
++                {
+                     active_tool_argument_diff_consumer = None;
++                    if turn_context.dynamic_tools.iter().any(|spec| {
++                        matches!(
++                            spec,
++                            codex_protocol::dynamic_tools::DynamicToolSpec::Function(function)
++                                if function.name == *name
++                        )
++                    }) {
++                        active_dynamic_tool_call = Some((
++                            call_id.clone(),
++                            id.as_ref().map(ToString::to_string).unwrap_or_default(),
++                        ));
++                    }
+                 }
+                 if let Some(turn_item) = handle_non_tool_response_item(
+                     sess.as_ref(),
+@@ -2346,21 +2366,47 @@ async fn try_run_sampling_request(
+                 }
+             }
+             ResponseEvent::ToolCallInputDelta {
+-                item_id: _,
++                item_id,
+                 call_id,
+                 delta,
+             } => {
+-                let Some((active_call_id, consumer)) = active_tool_argument_diff_consumer.as_mut()
+-                else {
+-                    continue;
+-                };
+-                let call_id = match call_id {
+-                    Some(call_id) if call_id.as_str() != active_call_id.as_str() => continue,
+-                    Some(call_id) => call_id,
+-                    None => active_call_id.clone(),
+-                };
+-                if let Some(event) = consumer.consume_diff(turn_context.as_ref(), call_id, &delta) {
+-                    sess.send_event(&turn_context, event).await;
++                if let Some((active_call_id, consumer)) =
++                    active_tool_argument_diff_consumer.as_mut()
++                {
++                    let call_id = match call_id {
++                        Some(call_id) if call_id.as_str() != active_call_id.as_str() => continue,
++                        Some(call_id) => call_id,
++                        None => active_call_id.clone(),
++                    };
++                    if let Some(event) =
++                        consumer.consume_diff(turn_context.as_ref(), call_id, &delta)
++                    {
++                        sess.send_event(&turn_context, event).await;
++                    }
++                } else if let Some((active_call_id, active_item_id)) =
++                    active_dynamic_tool_call.as_ref()
++                {
++                    let call_id = match call_id {
++                        Some(call_id) if call_id.as_str() != active_call_id.as_str() => continue,
++                        Some(call_id) => Some(call_id),
++                        None => Some(active_call_id.clone()),
++                    };
++                    let event = DynamicToolCallArgumentsDeltaEvent {
++                        thread_id: sess.thread_id.to_string(),
++                        turn_id: turn_context.sub_id.clone(),
++                        item_id: if item_id.is_empty() {
++                            active_item_id.clone()
++                        } else {
++                            item_id
++                        },
++                        call_id,
++                        delta,
++                    };
++                    sess.send_event(
++                        &turn_context,
++                        EventMsg::DynamicToolCallArgumentsDelta(event),
++                    )
++                    .await;
+                 }
+             }
+             ResponseEvent::ReasoningSummaryDelta {
+diff --git a/codex-rs/core/src/shell_snapshot.rs b/codex-rs/core/src/shell_snapshot.rs
+index eed119858..157098270 100644
+--- a/codex-rs/core/src/shell_snapshot.rs
++++ b/codex-rs/core/src/shell_snapshot.rs
+@@ -40,6 +40,9 @@ pub(crate) struct ShellSnapshotFile {
+     path: AbsolutePathBuf,
+ }
+ 
++#[cfg(any(target_os = "ios", target_os = "android"))]
++const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
++#[cfg(not(any(target_os = "ios", target_os = "android")))]
+ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
+ const SNAPSHOT_RETENTION: Duration = Duration::from_secs(60 * 60 * 24 * 3); // 3 days retention.
+ const SNAPSHOT_DIR: &str = "shell_snapshots";
+diff --git a/codex-rs/core/src/unified_exec/async_watcher.rs b/codex-rs/core/src/unified_exec/async_watcher.rs
+index c1d61ebdc..b74b6b77b 100644
+--- a/codex-rs/core/src/unified_exec/async_watcher.rs
++++ b/codex-rs/core/src/unified_exec/async_watcher.rs
+@@ -156,7 +156,7 @@ pub(crate) fn spawn_exit_watcher(
+     });
+ }
+ 
+-async fn process_chunk(
++pub(crate) async fn process_chunk(
+     pending: &mut Vec<u8>,
+     transcript: &Arc<Mutex<HeadTailBuffer>>,
+     call_id: &str,
+diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
+index 74744be52..3e68eb27a 100644
+--- a/codex-rs/core/src/unified_exec/process_manager.rs
++++ b/codex-rs/core/src/unified_exec/process_manager.rs
+@@ -48,6 +48,8 @@ use crate::unified_exec::UnifiedExecProcessManager;
+ use crate::unified_exec::WriteStdinRequest;
+ use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
+ use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
++#[cfg(target_os = "ios")]
++use crate::unified_exec::async_watcher::process_chunk;
+ use crate::unified_exec::async_watcher::spawn_exit_watcher;
+ use crate::unified_exec::async_watcher::start_streaming_output;
+ use crate::unified_exec::clamp_yield_time;
+@@ -413,6 +415,12 @@ impl UnifiedExecProcessManager {
+         context: &UnifiedExecContext,
+     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+         let cwd = request.cwd.clone();
++        #[cfg(target_os = "ios")]
++        {
++            return self.exec_command_ios(&request, cwd, context).await;
++        }
++
++        #[allow(unreachable_code)]
+         let process = self
+             .open_session_with_sandbox(&request, cwd.clone(), context)
+             .await;
+@@ -654,6 +662,130 @@ impl UnifiedExecProcessManager {
+         Ok(response)
+     }
+ 
++    #[cfg(target_os = "ios")]
++    async fn exec_command_ios(
++        &self,
++        request: &ExecCommandRequest,
++        cwd: PathUri,
++        context: &UnifiedExecContext,
++    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
++        use crate::exec::IOS_EXEC_HOOK;
++        use crate::exec::IOS_STREAMING_EXEC_HOOK;
++        use crate::exec::IosExecOutputHandler;
++        use crate::exec::MOBILE_EXEC_PREFLIGHT;
++
++        let event_ctx = ToolEventCtx::new(
++            context.session.as_ref(),
++            context.turn.as_ref(),
++            &context.call_id,
++            None,
++        );
++        let emitter = ToolEmitter::unified_exec(
++            &request.command,
++            cwd.clone(),
++            ExecCommandSource::UnifiedExecStartup,
++            Some(request.process_id.to_string()),
++        );
++        emitter.emit(event_ctx, ToolEventStage::Begin).await;
++
++        let env = create_env(
++            &context.turn.shell_environment_policy,
++            Some(context.session.conversation_id),
++        );
++        let start = Instant::now();
++        let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
++        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
++        let output_handler: IosExecOutputHandler = Arc::new(move |chunk| {
++            let _ = chunk_tx.send(chunk);
++        });
++        let mut join = tokio::task::spawn_blocking({
++            let mut command = request.command.clone();
++            let cwd = cwd.to_path_buf();
++            let output_handler = Arc::clone(&output_handler);
++            move || {
++                if let Some(preflight) = MOBILE_EXEC_PREFLIGHT.get() {
++                    preflight(&mut command);
++                }
++                if let Some(streaming_hook) = IOS_STREAMING_EXEC_HOOK.get() {
++                    streaming_hook(&command, &cwd, &env, None, output_handler)
++                } else {
++                    IOS_EXEC_HOOK
++                        .get()
++                        .map(|hook| hook(&command, &cwd, &env, None))
++                        .unwrap_or((-1, b"no iOS exec hook registered\n".to_vec()))
++                }
++            }
++        });
++
++        let mut pending = Vec::<u8>::new();
++        let mut emitted_deltas = 0;
++        let (exit_code, raw_output) = loop {
++            tokio::select! {
++                maybe_chunk = chunk_rx.recv() => {
++                    if let Some(chunk) = maybe_chunk {
++                        process_chunk(
++                            &mut pending,
++                            &transcript,
++                            &context.call_id,
++                            &context.session,
++                            &context.turn,
++                            &mut emitted_deltas,
++                            chunk,
++                        ).await;
++                    }
++                }
++                result = &mut join => {
++                    break result.unwrap_or((-1, b"spawn_blocking panicked\n".to_vec()));
++                }
++            }
++        };
++        while let Ok(chunk) = chunk_rx.try_recv() {
++            process_chunk(
++                &mut pending,
++                &transcript,
++                &context.call_id,
++                &context.session,
++                &context.turn,
++                &mut emitted_deltas,
++                chunk,
++            )
++            .await;
++        }
++        let wall_time = Instant::now().saturating_duration_since(start);
++        let text = String::from_utf8_lossy(&raw_output).to_string();
++
++        emit_exec_end_for_unified_exec(
++            Arc::clone(&context.session),
++            Arc::clone(&context.turn),
++            context.call_id.clone(),
++            request.command.clone(),
++            cwd,
++            Some(request.process_id.to_string()),
++            transcript,
++            text,
++            exit_code,
++            wall_time,
++        )
++        .await;
++        self.release_process_id(request.process_id).await;
++
++        let original_token_count =
++            usize::try_from(approx_tokens_from_byte_count(raw_output.len())).unwrap_or(usize::MAX);
++        Ok(ExecCommandToolOutput {
++            event_call_id: context.call_id.clone(),
++            chunk_id: generate_chunk_id(),
++            wall_time,
++            raw_output,
++            truncation_policy: context.turn.model_info.truncation_policy.into(),
++            max_output_tokens: request.max_output_tokens,
++            process_id: None,
++            exit_code: Some(exit_code),
++            original_token_count: Some(original_token_count),
++            output_omitted_bytes: None,
++            hook_command: Some(request.hook_command.clone()),
++        })
++    }
++
+     pub(crate) async fn write_stdin(
+         &self,
+         request: WriteStdinRequest<'_>,
+diff --git a/codex-rs/exec-server/src/noise_channel.rs b/codex-rs/exec-server/src/noise_channel.rs
+index 062e54a68..c2e9b514f 100644
+--- a/codex-rs/exec-server/src/noise_channel.rs
++++ b/codex-rs/exec-server/src/noise_channel.rs
+@@ -19,7 +19,7 @@ use clatter::constants::MAX_MESSAGE_LEN;
+ use clatter::crypto::cipher::AesGcm;
+ use clatter::crypto::dh::X25519;
+ use clatter::crypto::hash::Sha256;
+-use clatter::crypto::kem::rust_crypto_ml_kem::MlKem768;
++use clatter::crypto::kem::pqclean_ml_kem::MlKem768;
+ use clatter::handshakepattern::noise_hybrid_ik;
+ use clatter::traits::Cipher;
+ use clatter::traits::Dh;
+diff --git a/codex-rs/mcp-server/src/codex_tool_runner.rs b/codex-rs/mcp-server/src/codex_tool_runner.rs
+index 64acffd46..b3f18d1ae 100644
+--- a/codex-rs/mcp-server/src/codex_tool_runner.rs
++++ b/codex-rs/mcp-server/src/codex_tool_runner.rs
+@@ -367,6 +367,7 @@ async fn run_codex_tool_session_inner(
+                     | EventMsg::HookStarted(_)
+                     | EventMsg::HookCompleted(_)
+                     | EventMsg::AgentMessageContentDelta(_)
++                    | EventMsg::DynamicToolCallArgumentsDelta(_)
+                     | EventMsg::ReasoningContentDelta(_)
+                     | EventMsg::ReasoningRawContentDelta(_)
+                     | EventMsg::ExitedReviewMode(_)
+diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
+index 0c16bf66e..7577911fc 100644
+--- a/codex-rs/protocol/src/protocol.rs
++++ b/codex-rs/protocol/src/protocol.rs
+@@ -230,6 +230,7 @@ pub struct ConversationStartParams {
+     /// Overrides the configured realtime protocol version for this session only.
+     pub version: Option<RealtimeConversationVersion>,
+     pub voice: Option<RealtimeVoice>,
++    pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq)]
+@@ -373,6 +374,8 @@ pub struct RealtimeHandoffRequested {
+     pub item_id: String,
+     pub input_transcript: String,
+     pub active_transcript: Vec<RealtimeTranscriptEntry>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub server: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+@@ -422,6 +425,7 @@ pub enum RealtimeEvent {
+     },
+     HandoffRequested(RealtimeHandoffRequested),
+     NoopRequested(RealtimeNoopRequested),
++    ToolCallRequested(Value),
+     Error(String),
+ }
+ 
+@@ -546,6 +550,15 @@ pub enum Op {
+     /// Append speakable text to the running realtime conversation stream.
+     RealtimeConversationSpeech(ConversationSpeechParams),
+ 
++    /// Resolve a client-managed handoff without starting the next response.
++    RealtimeConversationResolveHandoff { tool_call_output: String },
++
++    /// Start the next realtime response after client-managed handoff outputs are queued.
++    RealtimeConversationFinalizeHandoff,
++
++    /// Resolve a dynamic tool call from the realtime conversation.
++    RealtimeResolveDynamicTool { call_id: String, output: String },
++
+     /// Close the running realtime conversation stream.
+     RealtimeConversationClose,
+ 
+@@ -869,6 +882,11 @@ impl Op {
+             Self::RealtimeConversationAudio(_) => "realtime_conversation_audio",
+             Self::RealtimeConversationText(_) => "realtime_conversation_text",
+             Self::RealtimeConversationSpeech(_) => "realtime_conversation_speech",
++            Self::RealtimeConversationResolveHandoff { .. } => {
++                "realtime_conversation_resolve_handoff"
++            }
++            Self::RealtimeConversationFinalizeHandoff => "realtime_conversation_finalize_handoff",
++            Self::RealtimeResolveDynamicTool { .. } => "realtime_resolve_dynamic_tool",
+             Self::RealtimeConversationClose => "realtime_conversation_close",
+             Self::RealtimeConversationListVoices => "realtime_conversation_list_voices",
+             Self::UserInput { .. } => "user_input",
+@@ -1462,6 +1480,7 @@ pub enum EventMsg {
+     HookCompleted(HookCompletedEvent),
+ 
+     AgentMessageContentDelta(AgentMessageContentDeltaEvent),
++    DynamicToolCallArgumentsDelta(DynamicToolCallArgumentsDeltaEvent),
+     PlanDelta(PlanDeltaEvent),
+     ReasoningContentDelta(ReasoningContentDeltaEvent),
+     ReasoningRawContentDelta(ReasoningRawContentDeltaEvent),
+@@ -1864,6 +1883,17 @@ pub struct AgentMessageContentDeltaEvent {
+     pub delta: String,
+ }
+ 
++#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
++pub struct DynamicToolCallArgumentsDeltaEvent {
++    pub thread_id: String,
++    pub turn_id: String,
++    pub item_id: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    #[ts(optional)]
++    pub call_id: Option<String>,
++    pub delta: String,
++}
++
+ #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+ pub struct PlanDeltaEvent {
+     pub thread_id: String,
+diff --git a/codex-rs/rollout-trace/src/protocol_event.rs b/codex-rs/rollout-trace/src/protocol_event.rs
+index 2d6ed4ee8..2fe2ae7e6 100644
+--- a/codex-rs/rollout-trace/src/protocol_event.rs
++++ b/codex-rs/rollout-trace/src/protocol_event.rs
+@@ -403,6 +403,7 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
+         | EventMsg::HookStarted(_)
+         | EventMsg::HookCompleted(_)
+         | EventMsg::AgentMessageContentDelta(_)
++        | EventMsg::DynamicToolCallArgumentsDelta(_)
+         | EventMsg::PlanDelta(_)
+         | EventMsg::ReasoningContentDelta(_)
+         | EventMsg::ReasoningRawContentDelta(_)
+@@ -479,6 +480,7 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
+         | EventMsg::HookStarted(_)
+         | EventMsg::HookCompleted(_)
+         | EventMsg::AgentMessageContentDelta(_)
++        | EventMsg::DynamicToolCallArgumentsDelta(_)
+         | EventMsg::PlanDelta(_)
+         | EventMsg::ReasoningContentDelta(_)
+         | EventMsg::ReasoningRawContentDelta(_)
+diff --git a/codex-rs/rollout/src/policy.rs b/codex-rs/rollout/src/policy.rs
+index 65a8213f0..11a3e48e8 100644
+--- a/codex-rs/rollout/src/policy.rs
++++ b/codex-rs/rollout/src/policy.rs
+@@ -170,6 +170,7 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode)
+         | EventMsg::HookStarted(_)
+         | EventMsg::HookCompleted(_)
+         | EventMsg::AgentMessageContentDelta(_)
++        | EventMsg::DynamicToolCallArgumentsDelta(_)
+         | EventMsg::PlanDelta(_)
+         | EventMsg::ReasoningContentDelta(_)
+         | EventMsg::ReasoningRawContentDelta(_)
+diff --git a/codex-rs/tui/src/app/app_server_event_targets.rs b/codex-rs/tui/src/app/app_server_event_targets.rs
+index 5935e46d6..bd4a4c7bc 100644
+--- a/codex-rs/tui/src/app/app_server_event_targets.rs
++++ b/codex-rs/tui/src/app/app_server_event_targets.rs
+@@ -93,6 +93,9 @@ pub(super) fn server_notification_thread_target(
+         ServerNotification::AgentMessageDelta(notification) => {
+             Some(notification.thread_id.as_str())
+         }
++        ServerNotification::DynamicToolCallArgumentsDelta(notification) => {
++            Some(notification.thread_id.as_str())
++        }
+         ServerNotification::PlanDelta(notification) => Some(notification.thread_id.as_str()),
+         ServerNotification::CommandExecutionOutputDelta(notification) => {
+             Some(notification.thread_id.as_str())
+diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
+index 9586f5fd7..8b42114e2 100644
+--- a/codex-rs/tui/src/chatwidget/protocol.rs
++++ b/codex-rs/tui/src/chatwidget/protocol.rs
+@@ -229,6 +229,7 @@ impl ChatWidget {
+             | ServerNotification::WindowsSandboxSetupCompleted(_)
+             | ServerNotification::AccountLoginCompleted(_) => {}
+             ServerNotification::ContextCompacted(_) => {}
++            ServerNotification::DynamicToolCallArgumentsDelta(_) => {}
+         }
+     }
+ 
+diff --git a/codex-rs/utils/absolute-path/src/lib.rs b/codex-rs/utils/absolute-path/src/lib.rs
+index 6c37e0866..3d38b72c5 100644
+--- a/codex-rs/utils/absolute-path/src/lib.rs
++++ b/codex-rs/utils/absolute-path/src/lib.rs
+@@ -350,6 +350,19 @@ impl Drop for AbsolutePathBufGuard {
+     }
+ }
+ 
++fn looks_cross_platform_absolute(path: &Path) -> bool {
++    let Some(path) = path.to_str() else {
++        return false;
++    };
++    let bytes = path.as_bytes();
++    bytes.starts_with(b"/")
++        || bytes.starts_with(b"\\\\")
++        || (bytes.len() >= 3
++            && bytes[0].is_ascii_alphabetic()
++            && bytes[1] == b':'
++            && (bytes[2] == b'\\' || bytes[2] == b'/'))
++}
++
+ impl<'de> Deserialize<'de> for AbsolutePathBuf {
+     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+     where
+@@ -361,6 +374,7 @@ impl<'de> Deserialize<'de> for AbsolutePathBuf {
+             None if path.is_absolute() => {
+                 Self::from_absolute_path(path).map_err(SerdeError::custom)
+             }
++            None if looks_cross_platform_absolute(&path) => Ok(Self(path)),
+             None => Err(SerdeError::custom(
+                 "AbsolutePathBuf deserialized without a base path",
+             )),

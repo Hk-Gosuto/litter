@@ -297,7 +297,7 @@ fn convert_thread_item(
             (
                 HydratedConversationItemContent::CommandExecution(HydratedCommandExecutionData {
                     command: truncate_command_display_text(&display_command(command)),
-                    cwd: truncate_command_action_field(&cwd.display().to_string()),
+                    cwd: truncate_command_action_field(cwd.as_str()),
                     status: convert_command_status(status),
                     output: aggregated_output
                         .as_deref()
@@ -411,6 +411,9 @@ fn convert_thread_item(
                         DynamicToolCallOutputContentItem::InputImage { image_url } => {
                             format!("[image: {}]", image_url)
                         }
+                        DynamicToolCallOutputContentItem::InputAudio { audio_url } => {
+                            format!("[audio: {}]", audio_url)
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -466,13 +469,13 @@ fn convert_thread_item(
                 false,
             )
         }
-        ThreadItem::WebSearch { query, action, .. } => {
-            let action_json = action
-                .as_ref()
-                .and_then(|a| serde_json::to_value(a).ok().and_then(|v| pretty_json(&v)));
+        ThreadItem::WebSearch(item) => {
+            let action_json = serde_json::to_value(&item.action)
+                .ok()
+                .and_then(|value| pretty_json(&value));
             (
                 HydratedConversationItemContent::WebSearch(HydratedWebSearchData {
-                    query: query.clone(),
+                    query: item.query.clone(),
                     action_json,
                     is_in_progress: false,
                 }),
@@ -481,30 +484,25 @@ fn convert_thread_item(
         }
         ThreadItem::ImageView { path, .. } => (
             HydratedConversationItemContent::ImageView(HydratedImageViewData {
-                path: path.to_string_lossy().into_owned(),
+                path: path.to_string(),
             }),
             false,
         ),
-        ThreadItem::ImageGeneration {
-            status,
-            revised_prompt,
-            result,
-            saved_path,
-            ..
-        } => {
-            let image_png = decode_image_generation_result(result);
-            let saved_path_string = saved_path
+        ThreadItem::ImageGeneration(item) => {
+            let image_png = decode_image_generation_result(&item.result);
+            let saved_path_string = item
+                .saved_path
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned());
             let normalized_status = convert_image_generation_status(
-                status,
+                &item.status,
                 image_png.is_some(),
                 saved_path_string.as_deref(),
             );
             (
                 HydratedConversationItemContent::ImageGeneration(HydratedImageGenerationData {
                     status: normalized_status,
-                    revised_prompt: revised_prompt.clone(),
+                    revised_prompt: item.revised_prompt.clone(),
                     image_png,
                     saved_path: saved_path_string,
                 }),
@@ -529,7 +527,9 @@ fn convert_thread_item(
             }),
             false,
         ),
-        ThreadItem::HookPrompt { .. } => return None,
+        ThreadItem::SubAgentActivity { .. }
+        | ThreadItem::Sleep(_)
+        | ThreadItem::HookPrompt { .. } => return None,
     };
 
     Some(HydratedConversationItem {
@@ -1194,6 +1194,12 @@ fn render_user_input(inputs: &[UserInput]) -> (String, Vec<String>) {
             UserInput::LocalImage { path, .. } => {
                 images.push(format!("file://{}", path.display()));
             }
+            UserInput::Audio { url } => {
+                text_parts.push(format!("[Audio] {url}"));
+            }
+            UserInput::LocalAudio { path } => {
+                text_parts.push(format!("[Audio] {}", path.display()));
+            }
             UserInput::Skill { name, path } => {
                 if !name.is_empty() && path != &PathBuf::new() {
                     text_parts.push(format!("[Skill] {} ({})", name, path.display()));
@@ -1275,7 +1281,8 @@ fn widget_data_from_dynamic_tool_call(
             content_items.and_then(|items| {
                 items.iter().find_map(|item| match item {
                     DynamicToolCallOutputContentItem::InputText { text } => Some(text.clone()),
-                    DynamicToolCallOutputContentItem::InputImage { .. } => None,
+                    DynamicToolCallOutputContentItem::InputImage { .. }
+                    | DynamicToolCallOutputContentItem::InputAudio { .. } => None,
                 })
             })
         })?;
@@ -1915,6 +1922,7 @@ mod tests {
             "t1",
             vec![ThreadItem::UserMessage {
                 id: "u1".into(),
+                client_id: None,
                 content: vec![UserInput::Text {
                     text: "  Hello world  ".into(),
                     text_elements: vec![],
@@ -1940,6 +1948,7 @@ mod tests {
             "t1",
             vec![ThreadItem::UserMessage {
                 id: "u1".into(),
+                client_id: None,
                 content: vec![UserInput::Text {
                     text: "   ".into(),
                     text_elements: vec![],
@@ -2067,7 +2076,7 @@ diff --git a/parser.rs b/parser.rs\n\
             vec![ThreadItem::CommandExecution {
                 id: "c1".into(),
                 command: "ls -la".into(),
-                cwd: test_abs_path("/tmp"),
+                cwd: test_abs_path("/tmp").into(),
                 process_id: Some("p1".into()),
                 source: Default::default(),
                 status: CommandExecutionStatus::Completed,
@@ -2123,7 +2132,7 @@ diff --git a/parser.rs b/parser.rs\n\
             vec![ThreadItem::CommandExecution {
                 id: "c1".into(),
                 command: "/bin/zsh -lc 'npm test'".into(),
-                cwd: test_abs_path("/tmp"),
+                cwd: test_abs_path("/tmp").into(),
                 process_id: None,
                 source: Default::default(),
                 status: CommandExecutionStatus::InProgress,
@@ -2198,6 +2207,7 @@ diff --git a/parser.rs b/parser.rs\n\
                 "t1",
                 vec![ThreadItem::UserMessage {
                     id: "u1".into(),
+                    client_id: None,
                     content: vec![UserInput::Text {
                         text: "Hello".into(),
                         text_elements: vec![],
@@ -2243,6 +2253,8 @@ diff --git a/parser.rs b/parser.rs\n\
                     status: McpToolCallStatus::Completed,
                     arguments: serde_json::json!({ "path": "/tmp/file.txt" }),
                     mcp_app_resource_uri: None,
+                    app_context: None,
+                    plugin_id: None,
                     result: Some(Box::new(codex_app_server_protocol::McpToolCallResult {
                         content: vec![serde_json::json!("contents")],
                         structured_content: None,
@@ -2279,14 +2291,15 @@ diff --git a/parser.rs b/parser.rs\n\
                     reasoning_effort: None,
                     agents_states: agent_states,
                 },
-                ThreadItem::WebSearch {
+                ThreadItem::WebSearch(codex_app_server_protocol::WebSearchItem {
                     id: "web-1".into(),
                     query: "swiftui subagent cards".into(),
                     action: None,
-                },
+                    results: None,
+                }),
                 ThreadItem::ImageView {
                     id: "img-1".into(),
-                    path: test_abs_path("/tmp/screenshot.png"),
+                    path: test_abs_path("/tmp/screenshot.png").into(),
                 },
             ],
         )];
@@ -2405,6 +2418,8 @@ diff --git a/parser.rs b/parser.rs\n\
                         "element_index": "634"
                     }),
                     mcp_app_resource_uri: None,
+                    app_context: None,
+                    plugin_id: None,
                     result: Some(Box::new(codex_app_server_protocol::McpToolCallResult {
                         content: vec![
                             serde_json::json!({
@@ -2431,6 +2446,8 @@ diff --git a/parser.rs b/parser.rs\n\
                     status: McpToolCallStatus::Completed,
                     arguments: serde_json::json!({ "path": "/tmp/file.txt" }),
                     mcp_app_resource_uri: None,
+                    app_context: None,
+                    plugin_id: None,
                     result: None,
                     error: None,
                     duration_ms: None,
@@ -2479,31 +2496,31 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t-imagegen",
             vec![
-                ThreadItem::ImageGeneration {
+                ThreadItem::ImageGeneration(codex_app_server_protocol::ImageGenerationItem {
                     id: "ig-1".into(),
                     status: "completed".into(),
                     revised_prompt: Some("a grumpy pirate kitty".into()),
                     result: png_base64.into(),
                     saved_path: Some(test_abs_path("/tmp/ig-1.png")),
-                },
+                }),
                 // A still-streaming item should stay InProgress with no bytes.
-                ThreadItem::ImageGeneration {
+                ThreadItem::ImageGeneration(codex_app_server_protocol::ImageGenerationItem {
                     id: "ig-2".into(),
                     status: String::new(),
                     revised_prompt: None,
                     result: String::new(),
                     saved_path: None,
-                },
+                }),
                 // Codex Desktop has been observed to emit status="generating"
                 // even on the final end event. Presence of bytes or a saved
                 // path should mark the item as Completed regardless.
-                ThreadItem::ImageGeneration {
+                ThreadItem::ImageGeneration(codex_app_server_protocol::ImageGenerationItem {
                     id: "ig-3".into(),
                     status: "generating".into(),
                     revised_prompt: None,
                     result: png_base64.into(),
                     saved_path: Some(test_abs_path("/tmp/ig-3.png")),
-                },
+                }),
             ],
         )];
 
@@ -2546,7 +2563,7 @@ diff --git a/parser.rs b/parser.rs\n\
             vec![ThreadItem::CommandExecution {
                 id: "cmd-1".into(),
                 command: long_command,
-                cwd: test_abs_path("/tmp"),
+                cwd: test_abs_path("/tmp").into(),
                 source: Default::default(),
                 status: CommandExecutionStatus::Completed,
                 command_actions: vec![CommandAction::Search {

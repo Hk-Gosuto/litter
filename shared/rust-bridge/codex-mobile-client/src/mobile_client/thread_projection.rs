@@ -101,7 +101,10 @@ pub(super) fn queued_follow_up_text_from_inputs(inputs: &[upstream::UserInput]) 
                     text_parts.push(trimmed.to_string());
                 }
             }
-            upstream::UserInput::Image { .. } | upstream::UserInput::LocalImage { .. } => {
+            upstream::UserInput::Image { .. }
+            | upstream::UserInput::LocalImage { .. }
+            | upstream::UserInput::Audio { .. }
+            | upstream::UserInput::LocalAudio { .. } => {
                 attachment_count += 1;
             }
             upstream::UserInput::Skill { .. } | upstream::UserInput::Mention { .. } => {}
@@ -280,6 +283,8 @@ pub(super) fn queued_follow_up_message_json_from_inputs(
     let mut text_elements = Vec::new();
     let mut remote_image_urls = Vec::new();
     let mut local_images = Vec::new();
+    let mut remote_audio_urls = Vec::new();
+    let mut local_audio = Vec::new();
     let mut mention_bindings = Vec::new();
     let mut skill_bindings = Vec::new();
 
@@ -305,6 +310,12 @@ pub(super) fn queued_follow_up_message_json_from_inputs(
                     "path": path,
                 }));
             }
+            upstream::UserInput::Audio { url } => {
+                remote_audio_urls.push(url.clone());
+            }
+            upstream::UserInput::LocalAudio { path } => {
+                local_audio.push(serde_json::json!({ "path": path }));
+            }
             upstream::UserInput::Mention { name, path } => {
                 mention_bindings.push(serde_json::json!({
                     "mention": name,
@@ -324,6 +335,8 @@ pub(super) fn queued_follow_up_message_json_from_inputs(
         && text_elements.is_empty()
         && remote_image_urls.is_empty()
         && local_images.is_empty()
+        && remote_audio_urls.is_empty()
+        && local_audio.is_empty()
         && mention_bindings.is_empty()
         && skill_bindings.is_empty()
     {
@@ -335,6 +348,8 @@ pub(super) fn queued_follow_up_message_json_from_inputs(
         "textElements": text_elements,
         "remoteImageUrls": remote_image_urls,
         "localImages": local_images,
+        "remoteAudioUrls": remote_audio_urls,
+        "localAudio": local_audio,
         "mentionBindings": mention_bindings,
         "skillBindings": skill_bindings,
     }))

@@ -599,7 +599,7 @@ impl EventProcessor {
                     params.command.clone(),
                     None,
                     None,
-                    params.cwd.as_ref().map(|p| p.display().to_string()),
+                    params.cwd.as_ref().map(ToString::to_string),
                     params.reason.clone(),
                     request_id,
                     raw,
@@ -916,6 +916,15 @@ fn mcp_elicitation_questions(
             }
             questions
         }
+        codex_app_server_protocol::McpServerElicitationRequest::OpenAiForm {
+            meta,
+            message,
+            ..
+        } => vec![mcp_approval_action_question(
+            message,
+            meta.as_ref(),
+            &params.server_name,
+        )],
         codex_app_server_protocol::McpServerElicitationRequest::Url { message, url, .. } => {
             let prompt = if message.trim().is_empty() {
                 url.clone()
@@ -1292,12 +1301,14 @@ mod tests {
             | proto::ThreadItem::McpToolCall { id, .. }
             | proto::ThreadItem::DynamicToolCall { id, .. }
             | proto::ThreadItem::CollabAgentToolCall { id, .. }
-            | proto::ThreadItem::WebSearch { id, .. }
+            | proto::ThreadItem::SubAgentActivity { id, .. }
             | proto::ThreadItem::ImageView { id, .. }
-            | proto::ThreadItem::ImageGeneration { id, .. }
             | proto::ThreadItem::EnteredReviewMode { id, .. }
             | proto::ThreadItem::ExitedReviewMode { id, .. }
             | proto::ThreadItem::ContextCompaction { id, .. } => id,
+            proto::ThreadItem::WebSearch(item) => &item.id,
+            proto::ThreadItem::Sleep(item) => &item.id,
+            proto::ThreadItem::ImageGeneration(item) => &item.id,
         }
     }
 
@@ -1328,18 +1339,23 @@ mod tests {
         let notification = ServerNotification::ThreadStarted(proto::ThreadStartedNotification {
             thread: proto::Thread {
                 id: "thr_1".to_string(),
+                extra: None,
                 session_id: "session_1".to_string(),
                 forked_from_id: None,
+                parent_thread_id: None,
                 preview: "Preview".to_string(),
                 ephemeral: false,
+                history_mode: Default::default(),
                 model_provider: "openai".to_string(),
                 created_at: 1,
                 updated_at: 2,
+                recency_at: None,
                 status: proto::ThreadStatus::Idle,
                 path: None,
                 cwd: test_abs_path("/tmp"),
                 cli_version: "1.0.0".to_string(),
                 source: proto::SessionSource::Cli,
+                can_accept_direct_input: None,
                 thread_source: None,
                 agent_nickname: Some("builder".to_string()),
                 agent_role: Some("worker".to_string()),
@@ -1816,6 +1832,7 @@ mod tests {
                         total_tokens: 5000,
                         input_tokens: 3000,
                         cached_input_tokens: 0,
+                        cache_write_input_tokens: 0,
                         output_tokens: 2000,
                         reasoning_output_tokens: 0,
                     },
@@ -1823,6 +1840,7 @@ mod tests {
                         total_tokens: 150,
                         input_tokens: 100,
                         cached_input_tokens: 0,
+                        cache_write_input_tokens: 0,
                         output_tokens: 50,
                         reasoning_output_tokens: 0,
                     },
@@ -1861,6 +1879,8 @@ mod tests {
                         unlimited: false,
                         balance: Some("5.00".to_string()),
                     }),
+                    individual_limit: None,
+                    spend_control_reached: None,
                     plan_type: Some(codex_protocol::account::PlanType::Plus),
                     rate_limit_reached_type: None,
                 },
@@ -1915,18 +1935,23 @@ mod tests {
             ServerNotification::ThreadStarted(proto::ThreadStartedNotification {
                 thread: proto::Thread {
                     id: "thr_1".to_string(),
+                    extra: None,
                     session_id: "session_1".to_string(),
                     forked_from_id: None,
+                    parent_thread_id: None,
                     preview: String::new(),
                     ephemeral: false,
+                    history_mode: Default::default(),
                     model_provider: "openai".to_string(),
                     created_at: 1,
                     updated_at: 1,
+                    recency_at: None,
                     status: proto::ThreadStatus::Idle,
                     path: None,
                     cwd: test_abs_path("/tmp"),
                     cli_version: "1.0.0".to_string(),
                     source: proto::SessionSource::Cli,
+                    can_accept_direct_input: None,
                     thread_source: None,
                     agent_nickname: None,
                     agent_role: None,
@@ -2049,6 +2074,7 @@ mod tests {
                 item_id: "item_1".to_string(),
                 started_at_ms: 0,
                 approval_id: None,
+                environment_id: None,
                 reason: None,
                 network_approval_context: None,
                 command: Some("rm -rf /tmp".to_string()),
@@ -2103,6 +2129,7 @@ mod tests {
                 thread_id: "thr_1".to_string(),
                 turn_id: "turn_1".to_string(),
                 item_id: "item_1".to_string(),
+                environment_id: None,
                 started_at_ms: 0,
                 cwd: test_abs_path("/tmp"),
                 reason: Some("need network access".to_string()),
@@ -2174,6 +2201,7 @@ mod tests {
                 thread_id: "thr_1".to_string(),
                 turn_id: "turn_1".to_string(),
                 item_id: "item_1".to_string(),
+                auto_resolution_ms: None,
                 questions: vec![proto::ToolRequestUserInputQuestion {
                     id: "q1".to_string(),
                     header: "Mode".to_string(),
@@ -2218,6 +2246,7 @@ mod tests {
                 thread_id: "thr_1".to_string(),
                 turn_id: "turn_1".to_string(),
                 item_id: "item_1".to_string(),
+                auto_resolution_ms: None,
                 questions: vec![
                     proto::ToolRequestUserInputQuestion {
                         id: "".to_string(),
@@ -2318,6 +2347,7 @@ mod tests {
                 item_id: "item_1".to_string(),
                 started_at_ms: 0,
                 approval_id: None,
+                environment_id: None,
                 reason: None,
                 network_approval_context: None,
                 command: Some("ls".to_string()),
@@ -2356,6 +2386,7 @@ mod tests {
                 item_id: "item_1".to_string(),
                 started_at_ms: 0,
                 approval_id: None,
+                environment_id: None,
                 reason: None,
                 network_approval_context: None,
                 command: None,

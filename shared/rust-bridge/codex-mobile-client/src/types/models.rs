@@ -63,25 +63,38 @@ impl TryFrom<AppDynamicToolSpec> for codex_protocol::dynamic_tools::DynamicToolS
     type Error = RpcClientError;
 
     fn try_from(value: AppDynamicToolSpec) -> Result<Self, Self::Error> {
-        Ok(Self {
-            name: value.name,
-            description: value.description,
-            input_schema: serde_json::from_str(&value.input_schema_json).map_err(|e| {
-                RpcClientError::Serialization(format!("invalid input_schema JSON: {e}"))
-            })?,
-            namespace: None,
-            defer_loading: value.defer_loading,
-        })
+        Ok(Self::Function(
+            codex_protocol::dynamic_tools::DynamicToolFunctionSpec {
+                name: value.name,
+                description: value.description,
+                input_schema: serde_json::from_str(&value.input_schema_json).map_err(|e| {
+                    RpcClientError::Serialization(format!("invalid input_schema JSON: {e}"))
+                })?,
+                defer_loading: value.defer_loading,
+            },
+        ))
     }
 }
 
 impl From<codex_protocol::dynamic_tools::DynamicToolSpec> for AppDynamicToolSpec {
     fn from(value: codex_protocol::dynamic_tools::DynamicToolSpec) -> Self {
+        let function = match value {
+            codex_protocol::dynamic_tools::DynamicToolSpec::Function(function) => function,
+            codex_protocol::dynamic_tools::DynamicToolSpec::Namespace(namespace) => {
+                let name = namespace.name;
+                return Self {
+                    name,
+                    description: namespace.description,
+                    input_schema_json: "{}".to_string(),
+                    defer_loading: false,
+                };
+            }
+        };
         Self {
-            name: value.name,
-            description: value.description,
-            input_schema_json: serde_json::to_string(&value.input_schema).unwrap_or_default(),
-            defer_loading: value.defer_loading,
+            name: function.name,
+            description: function.description,
+            input_schema_json: serde_json::to_string(&function.input_schema).unwrap_or_default(),
+            defer_loading: function.defer_loading,
         }
     }
 }
@@ -511,6 +524,9 @@ impl From<upstream::AuthMode> for AuthMode {
             upstream::AuthMode::Chatgpt => Self::Chatgpt,
             upstream::AuthMode::ChatgptAuthTokens => Self::ChatgptAuthTokens,
             upstream::AuthMode::AgentIdentity => Self::AgentIdentity,
+            upstream::AuthMode::Headers
+            | upstream::AuthMode::PersonalAccessToken
+            | upstream::AuthMode::BedrockApiKey => Self::ApiKey,
         }
     }
 }
@@ -674,6 +690,7 @@ pub enum PlanType {
 pub enum InputModality {
     Text,
     Image,
+    Audio,
 }
 
 impl From<codex_protocol::openai_models::InputModality> for InputModality {
@@ -681,6 +698,7 @@ impl From<codex_protocol::openai_models::InputModality> for InputModality {
         match value {
             codex_protocol::openai_models::InputModality::Text => Self::Text,
             codex_protocol::openai_models::InputModality::Image => Self::Image,
+            codex_protocol::openai_models::InputModality::Audio => Self::Audio,
         }
     }
 }
@@ -860,7 +878,6 @@ impl From<upstream::AskForApproval> for AppAskForApproval {
     fn from(value: upstream::AskForApproval) -> Self {
         match value {
             upstream::AskForApproval::UnlessTrusted => Self::UnlessTrusted,
-            upstream::AskForApproval::OnFailure => Self::OnFailure,
             upstream::AskForApproval::OnRequest => Self::OnRequest,
             upstream::AskForApproval::Granular {
                 sandbox_approval,
@@ -1143,9 +1160,9 @@ impl From<upstream::Account> for Account {
     fn from(value: upstream::Account) -> Self {
         match value {
             upstream::Account::ApiKey {} => Self::ApiKey,
-            upstream::Account::AmazonBedrock {} => Self::ApiKey,
+            upstream::Account::AmazonBedrock { .. } => Self::ApiKey,
             upstream::Account::Chatgpt { email, plan_type } => Self::Chatgpt {
-                email,
+                email: email.unwrap_or_default(),
                 plan_type: plan_type.into(),
             },
         }

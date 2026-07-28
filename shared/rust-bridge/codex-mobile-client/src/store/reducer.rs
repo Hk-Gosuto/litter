@@ -1990,6 +1990,9 @@ impl AppStoreReducer {
                         codex_protocol::protocol::RealtimeConversationVersion::V2 => {
                             "v2".to_string()
                         }
+                        codex_protocol::protocol::RealtimeConversationVersion::V3 => {
+                            "v3".to_string()
+                        }
                     },
                 };
                 self.emit(AppStoreUpdateRecord::RealtimeStarted {
@@ -3264,6 +3267,12 @@ fn render_user_input(inputs: &[upstream::UserInput]) -> (String, Vec<String>) {
             upstream::UserInput::Image { url, .. } => images.push(url.clone()),
             upstream::UserInput::LocalImage { path, .. } => {
                 images.push(format!("file://{}", path.display()));
+            }
+            upstream::UserInput::Audio { url } => {
+                text_parts.push(format!("[Audio] {url}"));
+            }
+            upstream::UserInput::LocalAudio { path } => {
+                text_parts.push(format!("[Audio] {}", path.display()));
             }
             upstream::UserInput::Skill { name, path } => {
                 if !name.is_empty() && path != &PathBuf::new() {
@@ -4909,6 +4918,7 @@ mod tests {
 
         let upstream_item = upstream::ThreadItem::UserMessage {
             id: "server-user-item".to_string(),
+            client_id: None,
             content: inputs.clone(),
         };
         let server_user_item = crate::store::actions::conversation_item_from_upstream_with_turn(
@@ -4953,19 +4963,24 @@ mod tests {
         // helper apply_thread_read_response uses, then upsert.
         let upstream_thread = upstream::Thread {
             id: "thread-1".to_string(),
+            extra: None,
             session_id: "session-1".to_string(),
             forked_from_id: None,
+            parent_thread_id: None,
             preview: "run some tools im testing".to_string(),
             ephemeral: false,
+            history_mode: Default::default(),
             model_provider: "openai".to_string(),
             created_at: 1,
             updated_at: 2,
+            recency_at: None,
             status: upstream::ThreadStatus::Idle,
             path: Some(std::path::PathBuf::from("/tmp/thread.jsonl")),
             cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked("/tmp")
                 .expect("absolute path"),
             cli_version: "0.125.0".to_string(),
             source: upstream::SessionSource::default(),
+            can_accept_direct_input: None,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -4976,6 +4991,7 @@ mod tests {
                 status: upstream::TurnStatus::Completed,
                 items: vec![upstream::ThreadItem::UserMessage {
                     id: "server-user-item".to_string(),
+                    client_id: None,
                     content: inputs.clone(),
                 }],
                 items_view: upstream::TurnItemsView::Full,
