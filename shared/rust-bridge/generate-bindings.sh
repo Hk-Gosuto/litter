@@ -12,12 +12,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$SCRIPT_DIR"
+REPO_DIR="$(cd "$WORKSPACE_DIR/../.." && pwd)"
 source "$WORKSPACE_DIR/../../tools/scripts/load-sccache-aws-creds.sh"
 CRATE_DIR="$WORKSPACE_DIR/codex-mobile-client"
 OUT_SWIFT="$WORKSPACE_DIR/generated/swift"
 OUT_KOTLIN="$WORKSPACE_DIR/generated/kotlin"
 
 cd "$WORKSPACE_DIR"
+
+"$REPO_DIR/apps/ios/scripts/sync-codex.sh" --preserve-current
 
 if [[ -z "${RUSTC_WRAPPER:-}" ]] && [[ "${CARGO_INCREMENTAL:-}" != "1" ]] && command -v sccache >/dev/null 2>&1; then
     export RUSTC_WRAPPER="$(command -v sccache)"

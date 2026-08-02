@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Agent Guide Ownership
+- `AGENTS.md` is the canonical repository agent guide. `CLAUDE.md` is a symlink to it; update `AGENTS.md` rather than creating a second, drifting copy.
+
 ## Project Structure & Module Organization
 - `apps/ios/Sources/Litter/` contains the iOS app code.
 - `apps/ios/Sources/Litter/Views/` holds SwiftUI screens, `Models/` contains app state/session logic, and `Bridge/` contains JSON-RPC + C FFI bridge code.
@@ -181,6 +184,14 @@ Incremental policy:
 - For Android emulator debugging, build with `make android-emulator-fast`, install with `adb -e install -r apps/android/app/build/outputs/apk/debug/app-debug.apk`, then launch with `adb -e shell am start -n com.sigkitten.litter.android/com.litter.android.MainActivity`.
 - Keep both runtimes available when validating shared Rust changes: boot a simulator with `xcrun simctl boot <device>` or through Simulator.app, and verify an emulator is visible with `adb devices -l`.
 - Mobile logs now stay local: use Xcode/device console for iOS, Logcat for Android, and normal Rust `tracing` output instead of a collector or spool directory.
+
+## Local Build Pitfalls (2026-08-02)
+- Ghostty is pinned to Zig 0.15.2. Homebrew's unversioned `/opt/homebrew/bin/zig` may resolve to 0.16.x and fail the Ghostty build. Check `zig version` before an iOS or Android package build; on this Mac use `PATH="/opt/homebrew/opt/zig@0.15/bin:$PATH"` so it reports `0.15.2`, matching CI.
+- A Codex sync stamp is valid only while the mobile compatibility patch is actually applied. The standalone iOS Rust script may apply the patch temporarily and restore the clean submodule on exit, so its cleanup must also invalidate `.build-stamps/sync-codex-*`. Use `make rust-check`, `make rust-test`, or `make bindings`; these targets re-check the patch state even when a stamp exists. If Cargo reports `ml-kem`/`kem` trait-version conflicts, run `make sync` and retry instead of editing `Cargo.lock` as a workaround.
+- Host Rust artifacts can consume tens of gigabytes and leave Xcode failing with `No space left on device` while compiling module caches. Check both `df -h /System/Volumes/Data` and `du -sh shared/rust-bridge/target`. The targeted recovery for disposable host debug output is `cargo clean --manifest-path shared/rust-bridge/Cargo.toml --profile dev`; preserve `apps/ios/GeneratedRust/` when the simulator/device static libraries are still needed.
+- UI tests that assert English labels must set `LITTER_APP_LANGUAGE=en` on every `XCUIApplication` they launch. Setting it only on the Xcode test action is insufficient unless the SwiftUI root locale also resolves the environment override.
+- Build unsigned IPAs from the archive and remove signatures recursively from every Mach-O plus all nested `_CodeSignature` directories and provisioning profiles. The package includes the Watch companion at `Payload/Litter.app/Watch/LitterWatch.app`; verify it with `unzip -l <ipa> | rg 'Payload/Litter.app/Watch/'`. Keep local IPAs under ignored `artifacts/` paths and never stage them.
+- Do not use LiveContainer as evidence that the Watch payload is absent. LiveContainer runs a guest app instead of performing a normal system installation, and its documented extension-registration limitations prevent it from installing the paired Watch app. Validate Watch delivery with a signed Xcode/device or TestFlight install. For a LiveContainer-only launch crash, first compare the local Xcode/Zig/package lane with CI and obtain the guest crash log; do not infer a runtime root cause from the IPA filename.
 
 ## Coding Style & Naming Conventions
 - Swift style follows standard Xcode defaults: 4-space indentation, `UpperCamelCase` for types, `lowerCamelCase` for properties/functions.

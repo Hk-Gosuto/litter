@@ -3,6 +3,9 @@ import SwiftUI
 import UIKit
 
 enum LitterPlatform {
+    static let isRunningUnitTests =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
 #if targetEnvironment(macCatalyst)
     static let isCatalyst = true
 #else
@@ -46,6 +49,11 @@ enum LitterPlatform {
 
     static func bootstrapLocalRuntimeIfNeeded() {
 #if !targetEnvironment(macCatalyst)
+        let environment = ProcessInfo.processInfo.environment
+        guard !isRunningUnitTests,
+              environment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] != "1" else {
+            return
+        }
         guard beginLocalRuntimeBootstrap() else { return }
 
         migrateWorkDirIfHostPath()

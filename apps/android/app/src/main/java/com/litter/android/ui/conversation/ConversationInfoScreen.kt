@@ -78,6 +78,7 @@ import com.litter.android.ui.scaled
 import kotlinx.coroutines.launch
 import uniffi.codex_mobile_client.AppActivityByDayEntry
 import uniffi.codex_mobile_client.AppConversationStats
+import uniffi.codex_mobile_client.PlanType
 import uniffi.codex_mobile_client.AppModelUsageEntry
 import uniffi.codex_mobile_client.AppServerHealth
 import uniffi.codex_mobile_client.AppServerSnapshot
@@ -887,12 +888,18 @@ private fun ServerInfoSection(server: AppServerSnapshot) {
             when (account) {
                 is uniffi.codex_mobile_client.Account.Chatgpt -> {
                     InfoRow("Account", account.email)
-                    InfoRow("Plan", account.planType.toString())
+                    InfoRow("Plan", planTypeLabel(account.planType))
                 }
                 is uniffi.codex_mobile_client.Account.ApiKey -> {
                     InfoRow(
                         stringResource(R.string.conversation_auth),
                         stringResource(R.string.conversation_api_key),
+                    )
+                }
+                is uniffi.codex_mobile_client.Account.AmazonBedrock -> {
+                    InfoRow(
+                        stringResource(R.string.conversation_auth),
+                        stringResource(R.string.settings_amazon_bedrock),
                     )
                 }
             }
@@ -991,6 +998,19 @@ private fun ActionCircleButton(
 }
 
 // --- Utilities ---
+
+private fun planTypeLabel(planType: PlanType): String = when (planType) {
+    PlanType.FREE -> "Free"
+    PlanType.GO -> "Go"
+    PlanType.PLUS -> "Plus"
+    PlanType.PRO -> "Pro"
+    PlanType.TEAM -> "Team"
+    PlanType.BUSINESS -> "Business"
+    PlanType.ENTERPRISE -> "Enterprise"
+    PlanType.EDU -> "Edu"
+    PlanType.UNKNOWN -> "Unknown"
+    PlanType.ENT26 -> "Enterprise"
+}
 
 private fun formatTimestamp(epochSeconds: Long): String {
     val now = System.currentTimeMillis()

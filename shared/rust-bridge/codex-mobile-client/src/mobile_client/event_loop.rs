@@ -1705,6 +1705,8 @@ mod tests {
     fn deserialize_typed_response_resolves_read_action_paths_against_command_cwd() {
         let command_item = ThreadItem::CommandExecution {
             id: "cmd-1".into(),
+            plugin_id: None,
+            script_path: None,
             command: "cat crates/krusty-cli/src/main.rs".into(),
             cwd: AbsolutePathBuf::from_absolute_path("/repo")
                 .expect("absolute cwd")

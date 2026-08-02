@@ -1,6 +1,22 @@
 import AVFoundation
 import Observation
 
+enum VoiceTranscriptionEndpoint: Equatable {
+    case openAI
+    case chatGPT
+}
+
+func voiceTranscriptionEndpoint(for authMethod: AuthMode?) -> VoiceTranscriptionEndpoint? {
+    switch authMethod {
+    case .apiKey?:
+        return .openAI
+    case .chatgpt?, .chatgptAuthTokens?, .personalAccessToken?:
+        return .chatGPT
+    case .headers?, .agentIdentity?, .bedrockApiKey?, nil:
+        return nil
+    }
+}
+
 @MainActor
 @Observable
 final class VoiceTranscriptionManager {
@@ -72,12 +88,18 @@ final class VoiceTranscriptionManager {
             error = AppLanguage.localizedString("Not logged in.")
             return nil
         }
+        guard let endpoint = voiceTranscriptionEndpoint(for: authMethod) else {
+            error = AppLanguage.localizedString(
+                "Voice transcription is not supported for this authentication method."
+            )
+            return nil
+        }
 
         isTranscribing = true
         defer { isTranscribing = false }
 
         do {
-            return try await transcribe(wav: wav, authMethod: authMethod, token: authToken)
+            return try await transcribe(wav: wav, endpoint: endpoint, token: authToken)
         } catch let err {
             self.error = err.localizedDescription
             return nil
@@ -154,8 +176,12 @@ final class VoiceTranscriptionManager {
         return wav
     }
 
-    private func transcribe(wav: Data, authMethod: AuthMode?, token: String) async throws -> String {
-        let isChatGPT = authMethod == .chatgpt || authMethod == .chatgptAuthTokens
+    private func transcribe(
+        wav: Data,
+        endpoint: VoiceTranscriptionEndpoint,
+        token: String
+    ) async throws -> String {
+        let isChatGPT = endpoint == .chatGPT
 
         let url: URL
         if isChatGPT {

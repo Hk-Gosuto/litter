@@ -26,6 +26,7 @@ codex-feedback = { path = "../third_party/codex/codex-rs/feedback" }
 codex-cloud-config = { path = "../third_party/codex/codex-rs/cloud-config" }
 codex-config = { path = "../third_party/codex/codex-rs/config" }
 codex-utils-absolute-path = { path = "../third_party/codex/codex-rs/utils/absolute-path" }
+codex-utils-path-uri = { path = "../third_party/codex/codex-rs/utils/path-uri" }
 codex-git-utils = { path = "../third_party/codex/codex-rs/git-utils" }
 alleycat-bridge-core = { git = "https://github.com/dnakov/alleycat.git", branch = "main" }
 alleycat-pi-bridge = { git = "https://github.com/dnakov/alleycat.git", branch = "main" }

@@ -354,6 +354,7 @@ private fun SettingsTopLevel(
                         context.getString(R.string.settings_chatgpt_account)
                     }
                     is Account.ApiKey -> stringResource(R.string.settings_openai_api_key)
+                    is Account.AmazonBedrock -> stringResource(R.string.settings_amazon_bedrock)
                     null -> stringResource(R.string.settings_not_logged_in)
                 }
                 SettingsRow(
@@ -2098,16 +2099,19 @@ private fun AccountSection(server: uniffi.codex_mobile_client.AppServerSnapshot)
     val authColor = when (server.account) {
         is Account.Chatgpt -> LitterTheme.accent
         is Account.ApiKey -> Color(0xFF00AAFF)
+        is Account.AmazonBedrock -> Color(0xFFFF9900)
         else -> LitterTheme.textMuted
     }
     val authTitle = when (val acct = server.account) {
         is Account.Chatgpt -> acct.email.ifEmpty { "ChatGPT" }
         is Account.ApiKey -> stringResource(R.string.account_api_key)
+        is Account.AmazonBedrock -> stringResource(R.string.settings_amazon_bedrock)
         else -> stringResource(R.string.settings_not_logged_in)
     }
     val authSubtitle = when (server.account) {
         is Account.Chatgpt -> stringResource(R.string.settings_chatgpt_account)
         is Account.ApiKey -> stringResource(R.string.settings_openai_api_key)
+        is Account.AmazonBedrock -> stringResource(R.string.settings_amazon_bedrock_account)
         else -> null
     }
     val allowsLocalEnvApiKey = server.isLocal

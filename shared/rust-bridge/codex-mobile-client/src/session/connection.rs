@@ -653,6 +653,7 @@ impl ServerSession {
             auth_manager.clone(),
             base_config.chatgpt_base_url.clone(),
             base_config.codex_home.to_path_buf(),
+            base_config.http_client_factory(),
         );
 
         let mut resolved_builder = ConfigBuilder::default()

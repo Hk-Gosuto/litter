@@ -1419,8 +1419,8 @@ mod tests {
         };
         let svc = DiscoveryService::new(config);
 
-        // Probe a non-routable address — should return false quickly.
-        let reachable = svc.probe_host("192.0.2.1", 9999).await;
+        // TCP port 0 is reserved and cannot have a listening service.
+        let reachable = svc.probe_host("127.0.0.1", 0).await;
         assert!(!reachable);
     }
 
@@ -1451,13 +1451,13 @@ mod tests {
             ..Default::default()
         };
         let mut svc = DiscoveryService::new(config);
-        svc.add_manual("192.0.2.1".to_string(), 8390);
+        svc.add_manual("127.0.0.1".to_string(), 0);
 
         let results = svc.scan_once().await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].host, "192.0.2.1");
+        assert_eq!(results[0].host, "127.0.0.1");
         assert_eq!(results[0].source, DiscoverySource::Manual);
-        // Non-routable, so not reachable.
+        // TCP port 0 is reserved and cannot have a listening service.
         assert!(!results[0].reachable);
     }
 

@@ -134,9 +134,7 @@ extension AppAskForApproval {
         switch wireValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "untrusted":
             self = .unlessTrusted
-        case "on-failure":
-            self = .onFailure
-        case "on-request":
+        case "on-failure", "on-request":
             self = .onRequest
         case "never":
             self = .never
@@ -149,8 +147,6 @@ extension AppAskForApproval {
         switch self {
         case .unlessTrusted:
             return "untrusted"
-        case .onFailure:
-            return "on-failure"
         case .onRequest:
             return "on-request"
         case .never:
@@ -164,8 +160,6 @@ extension AppAskForApproval {
         switch self {
         case .unlessTrusted:
             return AppLanguage.localizedString("Untrusted")
-        case .onFailure:
-            return AppLanguage.localizedString("On failure")
         case .onRequest:
             return AppLanguage.localizedString("On request")
         case .granular:
@@ -341,6 +335,8 @@ extension PlanType {
             self = .edu
         case "unknown":
             self = .unknown
+        case "ent26":
+            self = .ent26
         default:
             return nil
         }
@@ -357,6 +353,7 @@ extension PlanType {
         case .enterprise: return "enterprise"
         case .edu: return "edu"
         case .unknown: return "unknown"
+        case .ent26: return "ent26"
         }
     }
 }

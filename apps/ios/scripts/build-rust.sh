@@ -21,10 +21,7 @@ MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 SUBMODULE_DIR="$REPO_DIR/shared/third_party/codex"
 IOS_CLANGXX_WRAPPER="$SCRIPT_DIR/ios-clangxx-wrapper.sh"
 PATCH_FILES=(
-  "$REPO_DIR/patches/codex/ios-exec-hook.patch"
-  "$REPO_DIR/patches/codex/client-controlled-handoff.patch"
-  "$REPO_DIR/patches/codex/mobile-code-mode-stub.patch"
-  "$REPO_DIR/patches/codex/thread-read-permissions.patch"
+  "$REPO_DIR/patches/codex/litter-mobile-compat-0.146.0.patch"
 )
 
 SYNC_MODE="--preserve-current"
@@ -118,6 +115,7 @@ for PATCH_FILE in "${PATCH_FILES[@]}"; do
 done
 
 cleanup_patch() {
+  local reverted_any=0
   for PATCH_FILE in "${PATCH_FILES[@]}"; do
     local was_pre_applied=0
     for pre in "${PATCHES_WERE_APPLIED[@]+"${PATCHES_WERE_APPLIED[@]}"}"; do
@@ -129,8 +127,15 @@ cleanup_patch() {
     if [ "$was_pre_applied" -eq 0 ] && git -C "$SUBMODULE_DIR" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
       echo "==> Reverting $(basename "$PATCH_FILE")..."
       git -C "$SUBMODULE_DIR" apply --reverse "$PATCH_FILE"
+      reverted_any=1
     fi
   done
+
+  if [ "$reverted_any" -eq 1 ]; then
+    # The sync stamp promises that the patch is currently applied. A
+    # standalone build that restores the submodule must invalidate it.
+    rm -f "$REPO_DIR"/.build-stamps/sync-codex-*
+  fi
 }
 
 trap cleanup_patch EXIT

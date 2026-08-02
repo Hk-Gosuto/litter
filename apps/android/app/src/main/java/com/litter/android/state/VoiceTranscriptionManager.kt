@@ -21,6 +21,25 @@ import java.nio.ByteOrder
 import kotlin.math.sqrt
 import uniffi.codex_mobile_client.AuthMode
 
+internal enum class VoiceTranscriptionEndpoint {
+    OPENAI,
+    CHATGPT,
+}
+
+internal fun voiceTranscriptionEndpoint(authMethod: AuthMode?): VoiceTranscriptionEndpoint? =
+    when (authMethod) {
+        AuthMode.API_KEY -> VoiceTranscriptionEndpoint.OPENAI
+        AuthMode.CHATGPT,
+        AuthMode.CHATGPT_AUTH_TOKENS,
+        AuthMode.PERSONAL_ACCESS_TOKEN,
+        -> VoiceTranscriptionEndpoint.CHATGPT
+        AuthMode.HEADERS,
+        AuthMode.AGENT_IDENTITY,
+        AuthMode.BEDROCK_API_KEY,
+        null,
+        -> null
+    }
+
 /**
  * Records microphone input and transcribes via ChatGPT/OpenAI API.
  * Used for push-to-talk text input in the composer.
@@ -125,6 +144,11 @@ class VoiceTranscriptionManager {
             _error.value = "Not logged in."
             return null
         }
+        val endpoint = voiceTranscriptionEndpoint(authMethod)
+        if (endpoint == null) {
+            _error.value = "Voice transcription is not supported for this authentication method."
+            return null
+        }
 
         // Resample to 24kHz
         val targetRate = 24000
@@ -135,10 +159,9 @@ class VoiceTranscriptionManager {
         _isTranscribing.value = true
         return try {
             withContext(Dispatchers.IO) {
-                if (authMethod == AuthMode.API_KEY) {
-                    transcribeOpenAI(wav, token)
-                } else {
-                    transcribeChatGPT(wav, token)
+                when (endpoint) {
+                    VoiceTranscriptionEndpoint.OPENAI -> transcribeOpenAI(wav, token)
+                    VoiceTranscriptionEndpoint.CHATGPT -> transcribeChatGPT(wav, token)
                 }
             }
         } catch (e: Exception) {

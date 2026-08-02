@@ -68,13 +68,26 @@ final class AppState {
     }
 
     init() {
-        approvalPolicy = UserDefaults.standard.string(forKey: Self.approvalPolicyKey) ?? "inherit"
+        let storedApprovalPolicy = UserDefaults.standard.string(forKey: Self.approvalPolicyKey)
+        approvalPolicy = Self.normalizedApprovalPolicyWireValue(storedApprovalPolicy)
         sandboxMode = UserDefaults.standard.string(forKey: Self.sandboxModeKey) ?? "inherit"
         preferredModel = UserDefaults.standard.string(forKey: Self.preferredModelKey) ?? ""
         preferredAgentRuntimeKind = Self.agentRuntimeKind(
             UserDefaults.standard.string(forKey: Self.preferredAgentRuntimeKindKey) ?? ""
         )
         preferredReasoningEffort = UserDefaults.standard.string(forKey: Self.preferredReasoningEffortKey) ?? ""
+        if storedApprovalPolicy != nil, storedApprovalPolicy != approvalPolicy {
+            UserDefaults.standard.set(approvalPolicy, forKey: Self.approvalPolicyKey)
+        }
+    }
+
+    static func normalizedApprovalPolicyWireValue(_ value: String?) -> String {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        switch normalized {
+        case "": return inheritPermissionValue
+        case "on-failure": return "on-request"
+        default: return normalized
+        }
     }
 
     private static func agentRuntimeWireValue(_ kind: AgentRuntimeKind) -> String {
@@ -165,16 +178,17 @@ final class AppState {
     }
 
     func setPermissions(approvalPolicy: String, sandboxMode: String, for threadKey: ThreadKey?) {
+        let normalizedApprovalPolicy = Self.normalizedApprovalPolicyWireValue(approvalPolicy)
         guard let threadKey else {
-            self.approvalPolicy = approvalPolicy
+            self.approvalPolicy = normalizedApprovalPolicy
             self.sandboxMode = sandboxMode
             return
         }
         threadPermissionOverrides[permissionKey(for: threadKey)] = ThreadPermissionOverride(
-            approvalPolicy: approvalPolicy,
+            approvalPolicy: normalizedApprovalPolicy,
             sandboxMode: sandboxMode,
             isUserOverride: true,
-            rawApprovalPolicy: AppAskForApproval(wireValue: approvalPolicy),
+            rawApprovalPolicy: AppAskForApproval(wireValue: normalizedApprovalPolicy),
             rawSandboxPolicy: TurnSandboxPolicy(mode: sandboxMode)?.ffiValue
         )
     }

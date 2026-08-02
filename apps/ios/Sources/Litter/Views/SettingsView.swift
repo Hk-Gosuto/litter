@@ -1215,6 +1215,8 @@ private struct SettingsConnectionAccountSection: View {
             return LitterTheme.accent
         case .apiKey?:
             return Color(hex: "#00AAFF")
+        case .amazonBedrock?:
+            return Color(hex: "#FF9900")
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return LitterTheme.accent.opacity(0.7)
         case nil where server.isLocal && hasStoredApiKey:
@@ -1230,6 +1232,8 @@ private struct SettingsConnectionAccountSection: View {
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
             return AppLanguage.localizedString("API Key")
+        case .amazonBedrock?:
+            return "Amazon Bedrock"
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return "ChatGPT"
         case nil where server.isLocal && hasStoredApiKey:
@@ -1245,6 +1249,8 @@ private struct SettingsConnectionAccountSection: View {
             return AppLanguage.localizedString("ChatGPT account")
         case .apiKey?:
             return AppLanguage.localizedString("OpenAI API key")
+        case .amazonBedrock?:
+            return AppLanguage.localizedString("Amazon Bedrock account")
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return AppLanguage.localizedString("Stored locally; restoring session")
         case nil where server.isLocal && hasStoredApiKey:

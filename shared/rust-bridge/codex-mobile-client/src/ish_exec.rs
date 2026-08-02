@@ -40,6 +40,7 @@ pub(crate) fn run_command(
                     return (1, msg.into_bytes());
                 }
             };
+            let cwd_uri = codex_utils_path_uri::PathUri::from_abs_path(&cwd_abs);
             let mut stdout_buf = Vec::new();
             let mut stderr_buf = Vec::new();
             let fs = codex_exec_server::LOCAL_FS.clone();
@@ -56,7 +57,7 @@ pub(crate) fn run_command(
             };
             let result = runtime.block_on(codex_apply_patch::apply_patch(
                 patch,
-                &cwd_abs,
+                &cwd_uri,
                 &mut stdout_buf,
                 &mut stderr_buf,
                 fs.as_ref(),

@@ -26,6 +26,8 @@
     <string name="settings_account_section">Account</string>
     <string name="settings_chatgpt_account">ChatGPT account</string>
     <string name="settings_openai_api_key">OpenAI API key</string>
+    <string name="settings_amazon_bedrock">Amazon Bedrock</string>
+    <string name="settings_amazon_bedrock_account">Amazon Bedrock account</string>
     <string name="settings_not_logged_in">Not logged in</string>
     <string name="settings_connect_server_first">Connect to a server first</string>
     <string name="settings_servers_section">Servers</string>
@@ -392,6 +394,7 @@
     <!-- Account -->
     <string name="account_logged_in">Logged in</string>
     <string name="account_api_key_configured">API key configured</string>
+    <string name="account_amazon_bedrock_configured">Amazon Bedrock credentials configured</string>
     <string name="account_logout">Logout</string>
     <string name="account_login_chatgpt">Login with ChatGPT</string>
     <string name="account_api_key_helper">Or save an API key for the local environment:</string>

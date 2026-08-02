@@ -304,7 +304,9 @@ final class AppLifecycleController {
     func requestNotificationPermissionIfNeeded() {
         guard !notificationPermissionRequested else { return }
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ui-test-conversation-display") {
+        let environment = ProcessInfo.processInfo.environment
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-conversation-display")
+            || environment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] == "1" {
             notificationPermissionRequested = true
             return
         }

@@ -713,6 +713,10 @@ struct ConversationInfoView: View {
                 Text("API Key")
                     .litterFont(size: 12)
                     .foregroundStyle(LitterTheme.textSecondary)
+            case .amazonBedrock:
+                Text("Amazon Bedrock")
+                    .litterFont(size: 12)
+                    .foregroundStyle(LitterTheme.textSecondary)
             case .chatgpt(let email, let planType):
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(email)
@@ -737,6 +741,7 @@ struct ConversationInfoView: View {
         case .enterprise: return AppLanguage.localizedString("Enterprise")
         case .edu: return AppLanguage.localizedString("Edu")
         case .unknown: return AppLanguage.localizedString("Unknown")
+        case .ent26: return AppLanguage.localizedString("Enterprise")
         }
     }
 

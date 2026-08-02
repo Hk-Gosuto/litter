@@ -26,6 +26,10 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 
     static var current: AppLanguage {
+        if let language = environmentOverride(in: ProcessInfo.processInfo.environment) {
+            return language
+        }
+
         guard
             let storedValue = UserDefaults.standard.string(forKey: storageKey),
             let storedLanguage = AppLanguage(rawValue: storedValue)
@@ -35,8 +39,14 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         return storedLanguage
     }
 
-    static func resolve(_ rawValue: String) -> AppLanguage {
-        AppLanguage(rawValue: rawValue) ?? inferredSystemLanguage
+    static func resolve(
+        _ rawValue: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> AppLanguage {
+        if let language = environmentOverride(in: environment) {
+            return language
+        }
+        return AppLanguage(rawValue: rawValue) ?? inferredSystemLanguage
     }
 
     static func localizedString(_ key: String) -> String {
@@ -63,5 +73,9 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return .english
         }
         return preferredLanguage.lowercased().hasPrefix("zh") ? .simplifiedChinese : .english
+    }
+
+    private static func environmentOverride(in environment: [String: String]) -> AppLanguage? {
+        environment["LITTER_APP_LANGUAGE"].flatMap(AppLanguage.init(rawValue:))
     }
 }

@@ -3,10 +3,10 @@
 `apps/ios/scripts/sync-codex.sh` applies these patches to
 `shared/third_party/codex` during a build.
 
-## Codex 0.145.0
+## Codex 0.146.0
 
-`litter-mobile-compat-0.145.0.patch` is generated against the upstream
-`rust-v0.145.0` tag (`25af12f7e61572b0bc18ddb1008be543b91519b0`).
+`litter-mobile-compat-0.146.0.patch` is generated against the upstream
+`rust-v0.146.0` tag (`e363b08c9175ac1cbe5893615dd2cb9ddf95043b`).
 
 The previously separate patches are consolidated for this tag because realtime
 voice, dynamic tools, and app-server event forwarding now modify overlapping
@@ -32,7 +32,7 @@ The patch contains these Litter-specific behaviors:
   pre-release RustCrypto KEM dependency cannot coexist with the stable KEM
   dependency selected by the mobile SSH stack.
 
-Codex 0.145 already includes forward-compatible reasoning effort variants,
+Codex 0.146 already includes forward-compatible reasoning effort variants,
 client-managed realtime handoff plumbing, and WebRTC auth handling. Their old
 standalone patches are therefore not carried forward.
 

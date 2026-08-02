@@ -86,11 +86,6 @@ private val composerApprovalOptions = listOf(
         wireValue = "untrusted",
     ),
     ComposerSelectionOption(
-        titleRes = R.string.permissions_on_failure,
-        descriptionRes = R.string.permissions_on_failure_detail,
-        wireValue = "on-failure",
-    ),
-    ComposerSelectionOption(
         titleRes = R.string.permissions_on_request,
         descriptionRes = R.string.permissions_on_request_detail,
         wireValue = "on-request",
@@ -141,7 +136,6 @@ private fun selectedSandboxLabel(sandboxMode: String): String =
 private fun AppAskForApproval.displayTitle(): String =
     when (this) {
         AppAskForApproval.UnlessTrusted -> stringResource(R.string.permissions_untrusted)
-        AppAskForApproval.OnFailure -> stringResource(R.string.permissions_on_failure)
         AppAskForApproval.OnRequest -> stringResource(R.string.permissions_on_request)
         is AppAskForApproval.Granular -> stringResource(R.string.permissions_granular)
         AppAskForApproval.Never -> stringResource(R.string.permissions_never)

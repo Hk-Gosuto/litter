@@ -177,6 +177,12 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Keyboard warmup
 
     private func scheduleKeyboardWarmup() {
+        let environment = ProcessInfo.processInfo.environment
+        guard !LitterPlatform.isRunningUnitTests,
+              environment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] != "1" else {
+            return
+        }
+
         // Load the real system keyboard while the splash window covers it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -368,6 +374,16 @@ struct LitterApp: App {
                 .environment(wallpaperManager)
                 .environment(\.locale, AppLanguage.resolve(appLanguage).locale)
                 .task {
+                    let environment = ProcessInfo.processInfo.environment
+                    let isConversationDisplayTest =
+                        ProcessInfo.processInfo.arguments.contains("--ui-test-conversation-display")
+                    let disablesRuntime =
+                        environment["CODEXIOS_UI_TEST_DISABLE_RUNTIME"] == "1"
+                    guard !LitterPlatform.isRunningUnitTests,
+                          !isConversationDisplayTest,
+                          !disablesRuntime else {
+                        return
+                    }
                     appModel.start()
                     voiceRuntime.bind(appModel: appModel)
                     appRuntime.bind(appModel: appModel, voiceRuntime: voiceRuntime)

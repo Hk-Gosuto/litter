@@ -711,6 +711,7 @@ mod tests {
             parent_thread_id: None,
             preview: "hello".to_string(),
             ephemeral: false,
+            is_pinned: false,
             history_mode: Default::default(),
             model_provider: "openai".to_string(),
             created_at: 1,

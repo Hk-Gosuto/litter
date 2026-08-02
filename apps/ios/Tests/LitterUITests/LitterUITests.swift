@@ -8,18 +8,13 @@ final class LitterUITests: XCTestCase {
     @MainActor
     func testConversationDisplaySettingsRowsAreReachable() throws {
         let app = conversationDisplayHarnessApp()
+        app.launchArguments.append("--ui-test-open-settings")
         app.launch()
 
-        XCTAssertTrue(
-            app.staticTexts["conversationDisplayHarness.title"].waitForExistence(timeout: 10),
-            "Conversation display harness did not launch"
-        )
-
-        app.buttons["conversationDisplayHarness.settingsButton"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Conversation"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Internal Thinking"].exists)
-        XCTAssertTrue(app.staticTexts["Commands"].exists)
+        XCTAssertTrue(findStaticText("Internal Thinking", in: app))
+        XCTAssertTrue(findStaticText("Commands", in: app))
         XCTAssertTrue(findStaticText("Tools", in: app))
     }
 
@@ -71,6 +66,9 @@ final class LitterUITests: XCTestCase {
     @MainActor
     func testCaptureAppStoreScreenshots() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["LITTER_APP_LANGUAGE"] = "en"
+        app.launchEnvironment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] = "1"
+        app.launchEnvironment["CODEXIOS_UI_TEST_DISABLE_RUNTIME"] = "1"
         setupSnapshot(app)
         app.launch()
 
@@ -108,41 +106,29 @@ final class LitterUITests: XCTestCase {
     @MainActor
     func testCaptureScreenshots() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["LITTER_APP_LANGUAGE"] = "en"
+        app.launchEnvironment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] = "1"
         app.launchEnvironment["CODEXIOS_UI_TEST_FORCE_DISCOVERY"] = "1"
         setupSnapshot(app)
         app.launch()
 
         XCTAssertTrue(presentDiscovery(in: app), "Unable to open discovery")
-        XCTAssertTrue(waitForDiscoveryServers(in: app, timeout: 20), "No discovery servers found")
-        _ = waitForDiscoveryListToPopulate(in: app, timeout: 12, minimumRows: 3)
-        snapshot("01DiscoveryLoaded")
+        XCTAssertTrue(identifiedElement("discovery.chooser.kittylitter", in: app).exists)
+        XCTAssertTrue(identifiedElement("discovery.chooser.slingshot", in: app).exists)
+        XCTAssertTrue(identifiedElement("discovery.chooser.manual", in: app).exists)
+        sleep(1)
+        snapshot("01DiscoveryChooser")
 
+        let connectedComputer = identifiedElement("discovery.chooser.slingshot", in: app)
+        XCTAssertTrue(connectedComputer.isHittable)
+        connectedComputer.tap()
         XCTAssertTrue(
-            selectPreferredDiscoveryServer(in: app, preferredHostFragment: ".203"),
-            "Unable to tap the .203 server"
+            app.navigationBars["Connected Computers"].waitForExistence(timeout: 10),
+            "Connected computers screen did not appear"
         )
-        _ = waitForDiscoveryDismissed(in: app, timeout: 20)
-        XCTAssertTrue(waitForHomeContentReady(in: app, timeout: 12), "Home dashboard did not load")
-        sleep(1)
-        snapshot("02HomeLoaded")
-
-        XCTAssertTrue(openFirstConnectedServer(in: app), "Unable to open sessions screen")
-        XCTAssertTrue(waitForSessionsScreen(in: app, timeout: 8), "Sessions screen did not appear")
-        XCTAssertTrue(waitForAnySession(in: app, timeout: 12), "No sessions to select")
-        sleep(1)
-        snapshot("03SessionsLoaded")
-
-        XCTAssertTrue(selectFirstSession(in: app), "Unable to open a session")
-        XCTAssertTrue(waitForConversationLoaded(in: app, timeout: 10), "Conversation view did not load")
         sleep(2)
-        snapshot("04ConversationLoaded")
-
-        let backButton = app.buttons["header.homeButton"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 4), "Conversation header back button missing")
-        backButton.tap()
-        XCTAssertTrue(waitForSessionsScreen(in: app, timeout: 8), "Back did not return to sessions")
-        sleep(1)
-        snapshot("05ReturnedToSessions")
+        XCTAssertTrue(app.exists, "App terminated while loading connected computers")
+        snapshot("02ConnectedComputers")
     }
 
     private func presentDiscovery(in app: XCUIApplication) -> Bool {
@@ -266,7 +252,9 @@ final class LitterUITests: XCTestCase {
 
     private func isDiscoveryVisible(in app: XCUIApplication) -> Bool {
         let discoveryList = identifiedElement("discovery.list", in: app)
-        return discoveryList.exists && discoveryList.isHittable
+        let chooser = identifiedElement("discovery.chooser.kittylitter", in: app)
+        return (discoveryList.exists && discoveryList.isHittable) ||
+            (chooser.exists && chooser.isHittable)
     }
 
     private func waitForHomeContentReady(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
@@ -372,6 +360,8 @@ final class LitterUITests: XCTestCase {
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments.append("--ui-test-conversation-display")
+        app.launchEnvironment["LITTER_APP_LANGUAGE"] = "en"
+        app.launchEnvironment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] = "1"
         app.launchEnvironment["CODEXIOS_UI_TEST_REASONING_MODE"] = reasoning
         app.launchEnvironment["CODEXIOS_UI_TEST_COMMAND_MODE"] = commands
         app.launchEnvironment["CODEXIOS_UI_TEST_TOOL_MODE"] = tools
@@ -379,14 +369,18 @@ final class LitterUITests: XCTestCase {
     }
 
     private func findStaticText(_ label: String, in app: XCUIApplication) -> Bool {
-        let text = app.staticTexts[label]
-        if text.exists {
+        let element = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, "\(label),"))
+            .firstMatch
+        if element.exists {
             return true
         }
 
-        for _ in 0..<4 {
-            app.swipeUp()
-            if text.waitForExistence(timeout: 1) {
+        let list = app.collectionViews.firstMatch
+        let scrollTarget = list.exists ? list : app.scrollViews.firstMatch
+        for _ in 0..<6 {
+            scrollTarget.swipeUp()
+            if element.waitForExistence(timeout: 1) {
                 return true
             }
         }

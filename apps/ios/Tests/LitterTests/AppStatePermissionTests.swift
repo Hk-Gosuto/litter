@@ -3,6 +3,22 @@ import XCTest
 
 @MainActor
 final class AppStatePermissionTests: XCTestCase {
+    func testLegacyOnFailureApprovalMigratesToOnRequest() {
+        XCTAssertEqual(AppState.normalizedApprovalPolicyWireValue(" on-failure "), "on-request")
+        XCTAssertEqual(AppAskForApproval(wireValue: "on-failure"), .onRequest)
+
+        let appState = AppState()
+        let key = ThreadKey(serverId: "windows", threadId: "thread-legacy")
+        appState.setPermissions(
+            approvalPolicy: "on-failure",
+            sandboxMode: "workspace-write",
+            for: key
+        )
+
+        XCTAssertEqual(appState.approvalPolicy(for: key), "on-request")
+        XCTAssertEqual(appState.launchApprovalPolicy(for: key), .onRequest)
+    }
+
     func testHydratedThreadPermissionsAreDisplayOnly() {
         let appState = AppState()
         let key = ThreadKey(serverId: "windows", threadId: "thread-1")
@@ -50,6 +66,20 @@ final class AppStatePermissionTests: XCTestCase {
         XCTAssertEqual(appState.launchApprovalPolicy(for: key), .never)
         XCTAssertEqual(appState.launchSandboxMode(for: key), .dangerFullAccess)
         XCTAssertEqual(appState.turnSandboxPolicy(for: key), .dangerFullAccess)
+    }
+}
+
+final class VoiceTranscriptionRoutingTests: XCTestCase {
+    func testCodexAuthModesOnlyUseCompatibleTranscriptionEndpoints() {
+        XCTAssertEqual(voiceTranscriptionEndpoint(for: .apiKey), .openAI)
+        XCTAssertEqual(voiceTranscriptionEndpoint(for: .chatgpt), .chatGPT)
+        XCTAssertEqual(voiceTranscriptionEndpoint(for: .chatgptAuthTokens), .chatGPT)
+        XCTAssertEqual(voiceTranscriptionEndpoint(for: .personalAccessToken), .chatGPT)
+
+        XCTAssertNil(voiceTranscriptionEndpoint(for: .headers))
+        XCTAssertNil(voiceTranscriptionEndpoint(for: .agentIdentity))
+        XCTAssertNil(voiceTranscriptionEndpoint(for: .bedrockApiKey))
+        XCTAssertNil(voiceTranscriptionEndpoint(for: nil))
     }
 }
 

@@ -43,18 +43,23 @@ private const val CUSTOM_PERMISSION_VALUE = "custom"
 class AppLaunchState(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val storedApprovalPolicy = prefs.getString(APPROVAL_POLICY_KEY, DEFAULT_APPROVAL_POLICY)
+    private val normalizedApprovalPolicy = normalizeApprovalPolicyWireValue(storedApprovalPolicy)
     private val _snapshot = MutableStateFlow(
         AppLaunchStateSnapshot(
-            approvalPolicy = prefs.getString(APPROVAL_POLICY_KEY, DEFAULT_APPROVAL_POLICY)
-                ?.trim()
-                ?.ifEmpty { DEFAULT_APPROVAL_POLICY }
-                ?: DEFAULT_APPROVAL_POLICY,
+            approvalPolicy = normalizedApprovalPolicy,
             sandboxMode = prefs.getString(SANDBOX_MODE_KEY, DEFAULT_SANDBOX_MODE)
                 ?.trim()
                 ?.ifEmpty { DEFAULT_SANDBOX_MODE }
                 ?: DEFAULT_SANDBOX_MODE,
         ),
     )
+
+    init {
+        if (storedApprovalPolicy != null && storedApprovalPolicy != normalizedApprovalPolicy) {
+            prefs.edit().putString(APPROVAL_POLICY_KEY, normalizedApprovalPolicy).apply()
+        }
+    }
 
     val snapshot: StateFlow<AppLaunchStateSnapshot> = _snapshot.asStateFlow()
 
@@ -94,7 +99,7 @@ class AppLaunchState(context: Context) {
     }
 
     fun updateApprovalPolicy(policy: String?) {
-        val normalized = policy.normalizedLowercaseOr(default = DEFAULT_APPROVAL_POLICY)
+        val normalized = normalizeApprovalPolicyWireValue(policy)
         prefs.edit().putString(APPROVAL_POLICY_KEY, normalized).apply()
         _snapshot.update { state ->
             if (state.approvalPolicy == normalized) state else state.copy(approvalPolicy = normalized)
@@ -245,7 +250,7 @@ class AppLaunchState(context: Context) {
             updateSandboxMode(sandboxMode)
             return
         }
-        val normalizedApproval = approvalPolicy.normalizedLowercaseOr(default = DEFAULT_APPROVAL_POLICY)
+        val normalizedApproval = normalizeApprovalPolicyWireValue(approvalPolicy)
         val normalizedSandbox = sandboxMode.normalizedLowercaseOr(default = DEFAULT_SANDBOX_MODE)
         _snapshot.update { state ->
             val nextOverrides = state.threadPermissionOverrides + (
@@ -267,10 +272,15 @@ class AppLaunchState(context: Context) {
     private fun permissionKey(threadKey: ThreadKey): String = "${threadKey.serverId}/${threadKey.threadId}"
 }
 
+internal fun normalizeApprovalPolicyWireValue(value: String?): String =
+    when (val normalized = value.normalizedLowercaseOr(default = DEFAULT_APPROVAL_POLICY)) {
+        "on-failure" -> "on-request"
+        else -> normalized
+    }
+
 private fun askForApprovalFromWireValue(value: String?): AppAskForApproval? =
-    when (value.normalizedLowercaseOr(default = "")) {
+    when (normalizeApprovalPolicyWireValue(value)) {
         "untrusted", "unless-trusted" -> AppAskForApproval.UnlessTrusted
-        "on-failure" -> AppAskForApproval.OnFailure
         "on-request" -> AppAskForApproval.OnRequest
         "never" -> AppAskForApproval.Never
         else -> null
@@ -303,7 +313,6 @@ fun AppSandboxMode.toTurnSandboxPolicy(): AppSandboxPolicy =
 private fun AppAskForApproval?.toWireValue(): String? =
     when (this) {
         AppAskForApproval.UnlessTrusted -> "untrusted"
-        AppAskForApproval.OnFailure -> "on-failure"
         AppAskForApproval.OnRequest -> "on-request"
         AppAskForApproval.Never -> "never"
         is AppAskForApproval.Granular, null -> null

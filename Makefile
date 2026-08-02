@@ -84,7 +84,7 @@ ANDROID_NDK_HOME ?= $(shell ls -d $(ANDROID_SDK_ROOT)/ndk/*/ 2>/dev/null | sort 
 JAVA_HOME ?= $(or $(shell /usr/libexec/java_home 2>/dev/null),$(shell test -d '/Applications/Android Studio.app/Contents/jbr/Contents/Home' && echo '/Applications/Android Studio.app/Contents/jbr/Contents/Home'))
 ANDROID_PLATFORM_TOOLS_DIR := $(ANDROID_SDK_ROOT)/platform-tools
 ANDROID_EMULATOR_DIR := $(ANDROID_SDK_ROOT)/emulator
-ANDROID_ENV := JAVA_HOME='$(JAVA_HOME)' ANDROID_SDK_ROOT='$(ANDROID_SDK_ROOT)' ANDROID_NDK_HOME='$(ANDROID_NDK_HOME)'
+ANDROID_ENV := JAVA_HOME='$(JAVA_HOME)' ANDROID_HOME='$(ANDROID_SDK_ROOT)' ANDROID_SDK_ROOT='$(ANDROID_SDK_ROOT)' ANDROID_NDK_HOME='$(ANDROID_NDK_HOME)'
 
 # Android app metadata
 ANDROID_APK := $(ANDROID_DIR)/app/build/outputs/apk/debug/app-debug.apk
@@ -153,10 +153,7 @@ KITTYLITTER_ARGS := $(strip $(KITTYLITTER_GOAL_ARGS) $(ARGS))
 UPDATE_ALLEYCAT_MAIN := $(ROOT)/tools/scripts/update-alleycat-main.sh
 
 PATCH_FILES := \
-	$(PATCHES_DIR)/ios-exec-hook.patch \
-	$(PATCHES_DIR)/client-controlled-handoff.patch \
-	$(PATCHES_DIR)/mobile-code-mode-stub.patch \
-	$(PATCHES_DIR)/thread-read-permissions.patch
+	$(PATCHES_DIR)/litter-mobile-compat-0.146.0.patch
 
 BOUNDARY_SOURCES := \
 	$(RUST_DIR)/codex-mobile-client/Cargo.toml \
@@ -166,7 +163,11 @@ BOUNDARY_SOURCES := \
 
 BOUNDARY_SOURCES += $(shell find $(RUST_DIR)/codex-mobile-client/src -type f -name '*.rs' 2>/dev/null)
 
-STAMP_SYNC := $(STAMPS)/sync
+IOS_PROJECT_INPUTS := $(shell find $(IOS_DIR)/Sources $(IOS_DIR)/Tests -type f 2>/dev/null)
+
+CODEX_COMMIT := $(shell git -C $(SUBMODULE_DIR) rev-parse --short=12 HEAD 2>/dev/null || echo missing)
+CODEX_PATCH_FINGERPRINT := $(shell cat $(PATCH_FILES) 2>/dev/null | shasum -a 256 | cut -c1-12)
+STAMP_SYNC := $(STAMPS)/sync-codex-$(CODEX_COMMIT)-$(CODEX_PATCH_FINGERPRINT)
 STAMP_BINDINGS_S := $(STAMPS)/bindings-swift
 STAMP_BINDINGS_K := $(STAMPS)/bindings-kotlin
 STAMP_XCGEN := $(STAMPS)/xcgen
@@ -207,7 +208,7 @@ $(shell mkdir -p $(STAMPS))
 	ghostty-ios ghostty-android \
 	alleycat-main \
 	bindings bindings-swift bindings-kotlin \
-	sync patch unpatch sync-ghostty unpatch-ghostty xcgen alpine-fs \
+	sync ensure-codex-patched patch unpatch sync-ghostty unpatch-ghostty xcgen alpine-fs \
 	ios-build ios-build-sim ios-build-sim-fast ios-build-device ios-build-device-fast \
 	watch watch-sim watch-sim-run watch-device watch-typecheck watch-register \
 	test test-rust test-ios test-android \
@@ -443,11 +444,11 @@ rust-ios-macabi-fast: alleycat-main $(STAMP_SYNC) $(STAMP_GHOSTTY_IOS)
 	@echo "==> Building Rust for fast Mac Catalyst iteration (raw macabi staticlib + headers, host arch only)..."
 	@cd $(ROOT) && $(DEV_CARGO_ENV) $(IOS_SCRIPTS)/build-rust.sh --preserve-current --fast-macabi $(CARGO_FEATURES)
 
-rust-check: alleycat-main
+rust-check: alleycat-main ensure-codex-patched
 	@echo "==> cargo check (host, shared crates)..."
 	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo check --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client
 
-rust-test: alleycat-main rust-shellcheck
+rust-test: alleycat-main ensure-codex-patched rust-shellcheck
 	@echo "==> cargo test (host, shared crates)..."
 	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo test --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client --lib
 
@@ -541,15 +542,18 @@ help:
 		'make rust-check         host cargo check for shared crates' \
 		'make rust-test          host cargo test for shared crates'
 
-sync: $(STAMP_SYNC)
-$(STAMP_SYNC):
+sync: ensure-codex-patched
+
+ensure-codex-patched: $(STAMP_SYNC)
+	@$(IOS_SCRIPTS)/sync-codex.sh --preserve-current
+
+$(STAMP_SYNC): $(PATCH_FILES) apps/ios/scripts/sync-codex.sh Makefile
 	@echo "==> Syncing codex submodule..."
 	@$(IOS_SCRIPTS)/sync-codex.sh --preserve-current
 	@touch $@
 
-patch: $(STAMP_SYNC)
+patch: ensure-codex-patched
 	@echo "==> Verifying codex patch set..."
-	@$(IOS_SCRIPTS)/sync-codex.sh --preserve-current
 
 unpatch:
 	@echo "==> Reverting codex patches..."
@@ -558,7 +562,7 @@ unpatch:
 			git -C $(SUBMODULE_DIR) apply --reverse "$$pf"; \
 		fi; \
 	done
-	@rm -f $(STAMP_SYNC)
+	@rm -f $(STAMPS)/sync-codex-*
 
 unpatch-ghostty:
 	@echo "==> Reverting ghostty patches..."
@@ -572,7 +576,7 @@ unpatch-ghostty:
 bindings: bindings-swift bindings-kotlin
 
 bindings-swift: $(STAMP_BINDINGS_S)
-$(STAMP_BINDINGS_S): $(STAMP_SYNC) $(BOUNDARY_SOURCES) | alleycat-main
+$(STAMP_BINDINGS_S): $(STAMP_SYNC) $(BOUNDARY_SOURCES) | alleycat-main ensure-codex-patched
 	@echo "==> Generating Swift bindings..."
 	@cd $(RUST_DIR) && ./generate-bindings.sh --swift-only
 	@mkdir -p $(IOS_GENERATED)/Headers
@@ -583,13 +587,13 @@ $(STAMP_BINDINGS_S): $(STAMP_SYNC) $(BOUNDARY_SOURCES) | alleycat-main
 	@touch $@
 
 bindings-kotlin: $(STAMP_BINDINGS_K)
-$(STAMP_BINDINGS_K): $(STAMP_SYNC) $(BOUNDARY_SOURCES) | alleycat-main
+$(STAMP_BINDINGS_K): $(STAMP_SYNC) $(BOUNDARY_SOURCES) | alleycat-main ensure-codex-patched
 	@echo "==> Generating Kotlin bindings..."
 	@cd $(RUST_DIR) && ./generate-bindings.sh --kotlin-only
 	@touch $@
 
 xcgen: $(STAMP_XCGEN)
-$(STAMP_XCGEN): $(IOS_DIR)/project.yml
+$(STAMP_XCGEN): $(IOS_DIR)/project.yml $(IOS_SCRIPTS)/regenerate-project.sh $(IOS_PROJECT_INPUTS)
 	@echo "==> Regenerating Xcode project..."
 	@$(IOS_SCRIPTS)/regenerate-project.sh
 	@touch $@
@@ -780,20 +784,20 @@ android-emulator-install: android-emulator-fast
 
 test: test-rust test-ios test-android
 
-test-rust: alleycat-main
+test-rust: alleycat-main ensure-codex-patched
 	@echo "==> Running Rust tests..."
 	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo test --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client --lib
 
-test-ios: xcgen
+test-ios: rust-ios-sim-fast xcgen
 	@echo "==> Running iOS tests..."
 	@xcodebuild test -project $(IOS_DIR)/Litter.xcodeproj \
 		-scheme $(IOS_SCHEME) \
 		-configuration Debug \
 		-destination 'platform=iOS Simulator,name=$(IOS_SIM_DEVICE)'
 
-test-android:
+test-android: bindings-kotlin
 	@echo "==> Running Android tests..."
-	@cd $(ANDROID_DIR) && ./gradlew :app:testDebugUnitTest
+	@cd $(ANDROID_DIR) && $(ANDROID_ENV) ./gradlew :app:testDebugUnitTest
 
 ios-release-prep: rust-ios-device-release alpine-fs xcgen
 

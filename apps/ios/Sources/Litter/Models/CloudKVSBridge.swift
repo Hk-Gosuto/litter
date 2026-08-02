@@ -24,7 +24,7 @@ final class CloudKVSBridge {
     /// rapid local changes.
     private static let debounceInterval: TimeInterval = 0.5
 
-    private let store = NSUbiquitousKeyValueStore.default
+    private var store: NSUbiquitousKeyValueStore?
     private let defaults = UserDefaults.standard
     private let preferencesDirectory: String
     private let deviceId: String
@@ -46,6 +46,12 @@ final class CloudKVSBridge {
     /// launch.
     func start() {
         guard !started else { return }
+        guard Self.isEnabled else {
+            LLog.info("cloud_sync", "disabled because iCloud KVS entitlement is unavailable")
+            return
+        }
+        let store = NSUbiquitousKeyValueStore.default
+        self.store = store
         started = true
 
         // Inbound: another device pushed an envelope.
@@ -86,6 +92,7 @@ final class CloudKVSBridge {
     /// new state to KVS. Call this from the existing `SavedThreadsStore` /
     /// `SavedProjectStore` mutation paths.
     func notifyRustPreferencesChanged() {
+        guard started else { return }
         scheduleExport()
     }
 
@@ -107,6 +114,7 @@ final class CloudKVSBridge {
     }
 
     private func applyEnvelopeFromStore() {
+        guard let store else { return }
         guard let bytes = store.data(forKey: Self.envelopeKey) else {
             return
         }
@@ -210,6 +218,7 @@ final class CloudKVSBridge {
     }
 
     private func exportNow() {
+        guard let store else { return }
         do {
             let bytes = try cloudSyncExportSnapshot(
                 directory: preferencesDirectory,
@@ -238,6 +247,10 @@ final class CloudKVSBridge {
         let fresh = UUID().uuidString
         defaults.set(fresh, forKey: deviceIdKey)
         return fresh
+    }
+
+    private static var isEnabled: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "LitterCloudKVSEnabled") as? Bool == true
     }
 }
 

@@ -178,7 +178,7 @@ pub use mobile_client::*;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(1);
-pub(crate) const MOBILE_ASYNC_THREAD_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MOBILE_ASYNC_THREAD_STACK_SIZE_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) fn next_request_id() -> i64 {
     REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)

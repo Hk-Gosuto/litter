@@ -35,7 +35,6 @@ fn normalize_cwd(value: Option<String>) -> Option<String> {
 pub(crate) fn ask_for_approval_into_upstream(value: AppAskForApproval) -> upstream::AskForApproval {
     match value {
         AppAskForApproval::UnlessTrusted => upstream::AskForApproval::UnlessTrusted,
-        AppAskForApproval::OnFailure => upstream::AskForApproval::OnRequest,
         AppAskForApproval::OnRequest => upstream::AskForApproval::OnRequest,
         AppAskForApproval::Granular {
             sandbox_approval,
@@ -714,6 +713,7 @@ impl From<AppListThreadsRequest> for upstream::ThreadListParams {
                 .source_kinds
                 .map(|kinds| kinds.into_iter().map(Into::into).collect()),
             archived: value.archived,
+            is_pinned: None,
             cwd: normalize_cwd(value.cwd).map(upstream::ThreadListCwdFilter::One),
             search_term: value.search_term,
             use_state_db_only: value.use_state_db_only,
@@ -804,6 +804,7 @@ impl TryFrom<AppListPluginsRequest> for upstream::PluginListParams {
         Ok(Self {
             cwds,
             marketplace_kinds: None,
+            force_refetch: false,
         })
     }
 }
@@ -907,6 +908,7 @@ impl TryFrom<AppStartRealtimeSessionRequest> for upstream::ThreadRealtimeStartPa
             codex_responses_as_items: None,
             codex_response_item_prefix: None,
             codex_response_handoff_mode: None,
+            codex_response_handoff_channel_prefixes: None,
             model: None,
             prompt: Some(Some(value.prompt)),
             realtime_session_id: value.session_id,

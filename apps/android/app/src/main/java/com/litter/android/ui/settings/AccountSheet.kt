@@ -173,6 +173,21 @@ fun AccountSheet(
                 }
             }
 
+            is Account.AmazonBedrock -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(LitterTheme.surface, RoundedCornerShape(8.dp))
+                        .padding(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.account_amazon_bedrock_configured),
+                        color = LitterTheme.accent,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+
             null -> Unit
         }
 

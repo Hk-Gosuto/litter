@@ -147,7 +147,7 @@ struct HeaderView: View {
         case .connected:
             if server.isLocal {
                 switch server.account {
-                case .chatgpt?, .apiKey?:
+                case .chatgpt?, .apiKey?, .amazonBedrock?:
                     return LitterTheme.success
                 case nil:
                     return LitterTheme.danger

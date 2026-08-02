@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn permission_preset_marks_partial_or_missing_permissions() {
         assert_eq!(
-            thread_permission_preset(Some(AppAskForApproval::OnFailure), None),
+            thread_permission_preset(Some(AppAskForApproval::OnRequest), None),
             AppThreadPermissionPreset::Custom
         );
         assert_eq!(
@@ -75,7 +75,7 @@ mod tests {
             AppThreadPermissionPreset::Unknown
         );
         assert!(thread_permissions_are_authoritative(
-            Some(AppAskForApproval::OnFailure),
+            Some(AppAskForApproval::OnRequest),
             None,
         ));
         assert!(!thread_permissions_are_authoritative(None, None));

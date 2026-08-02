@@ -215,6 +215,8 @@ private struct AccountConnectionView: View {
             return LitterTheme.accent
         case .apiKey?:
             return Color(hex: "#00AAFF")
+        case .amazonBedrock?:
+            return Color(hex: "#FF9900")
         case nil:
             return LitterTheme.textMuted
         }
@@ -226,6 +228,8 @@ private struct AccountConnectionView: View {
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
             return AppLanguage.localizedString("API Key")
+        case .amazonBedrock?:
+            return "Amazon Bedrock"
         case nil:
             return AppLanguage.localizedString("Not logged in")
         }
@@ -237,6 +241,8 @@ private struct AccountConnectionView: View {
             return AppLanguage.localizedString("ChatGPT account")
         case .apiKey?:
             return AppLanguage.localizedString("OpenAI API key")
+        case .amazonBedrock?:
+            return AppLanguage.localizedString("Amazon Bedrock account")
         case nil:
             return nil
         }

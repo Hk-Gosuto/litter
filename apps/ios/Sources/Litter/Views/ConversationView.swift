@@ -2735,7 +2735,6 @@ enum ComposerSlashCommand: CaseIterable {
 enum ComposerApprovalOption: CaseIterable, Identifiable {
     case `default`
     case untrusted
-    case onFailure
     case onRequest
     case never
 
@@ -2745,7 +2744,6 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
         switch self {
         case .default: return AppLanguage.localizedString("Default")
         case .untrusted: return AppLanguage.localizedString("Untrusted")
-        case .onFailure: return AppLanguage.localizedString("On failure")
         case .onRequest: return AppLanguage.localizedString("On request")
         case .never: return AppLanguage.localizedString("Never")
         }
@@ -2755,7 +2753,6 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
         switch self {
         case .default: return AppLanguage.localizedString("Use the thread or server default")
         case .untrusted: return AppLanguage.localizedString("Always ask before taking action")
-        case .onFailure: return AppLanguage.localizedString("Ask only when a command fails")
         case .onRequest: return AppLanguage.localizedString("Ask when escalation is requested")
         case .never: return AppLanguage.localizedString("Run without asking for approval")
         }
@@ -2765,7 +2762,6 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
         switch self {
         case .default: return "inherit"
         case .untrusted: return "untrusted"
-        case .onFailure: return "on-failure"
         case .onRequest: return "on-request"
         case .never: return "never"
         }

@@ -235,6 +235,7 @@ object HomeDashboardSupport {
     fun maskedAccountLabel(server: AppServerSnapshot): String = when (val account = server.account) {
         is Account.Chatgpt -> maskEmail(account.email).ifEmpty { "ChatGPT" }
         is Account.ApiKey -> "API Key"
+        is Account.AmazonBedrock -> "Amazon Bedrock"
         else -> "Not logged in"
     }
 

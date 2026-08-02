@@ -618,6 +618,8 @@
 "On failure" = "On failure";
 "On request" = "On request";
 "OpenAI API key" = "OpenAI API key";
+"Amazon Bedrock account" = "Amazon Bedrock account";
+"Voice transcription is not supported for this authentication method." = "Voice transcription is not supported for this authentication method.";
 "Pair declined" = "Pair declined";
 "paired" = "paired";
 "Paired ✓" = "Paired ✓";

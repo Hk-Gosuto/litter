@@ -8,6 +8,12 @@ import uniffi.codex_mobile_client.AppUserInput
 
 class AppComposerPayloadTest {
     @Test
+    fun legacyOnFailureApprovalMigratesToOnRequest() {
+        assertEquals("on-request", normalizeApprovalPolicyWireValue(" on-failure "))
+        assertEquals("on-request", normalizeApprovalPolicyWireValue("on-request"))
+    }
+
+    @Test
     fun turnStartParamsPrependsTextAndPreservesAdditionalInputs() {
         val payload =
             AppComposerPayload(

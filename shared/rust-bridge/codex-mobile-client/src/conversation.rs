@@ -470,9 +470,11 @@ fn convert_thread_item(
             )
         }
         ThreadItem::WebSearch(item) => {
-            let action_json = serde_json::to_value(&item.action)
-                .ok()
-                .and_then(|value| pretty_json(&value));
+            let action_json = item.action.as_ref().and_then(|action| {
+                serde_json::to_value(action)
+                    .ok()
+                    .and_then(|value| pretty_json(&value))
+            });
             (
                 HydratedConversationItemContent::WebSearch(HydratedWebSearchData {
                     query: item.query.clone(),
@@ -2075,6 +2077,8 @@ diff --git a/parser.rs b/parser.rs\n\
             "t1",
             vec![ThreadItem::CommandExecution {
                 id: "c1".into(),
+                plugin_id: None,
+                script_path: None,
                 command: "ls -la".into(),
                 cwd: test_abs_path("/tmp").into(),
                 process_id: Some("p1".into()),
@@ -2131,6 +2135,8 @@ diff --git a/parser.rs b/parser.rs\n\
             "t1",
             vec![ThreadItem::CommandExecution {
                 id: "c1".into(),
+                plugin_id: None,
+                script_path: None,
                 command: "/bin/zsh -lc 'npm test'".into(),
                 cwd: test_abs_path("/tmp").into(),
                 process_id: None,
@@ -2319,10 +2325,12 @@ diff --git a/parser.rs b/parser.rs\n\
             items[2].content,
             HydratedConversationItemContent::MultiAgentAction(_)
         ));
-        assert!(matches!(
-            items[3].content,
-            HydratedConversationItemContent::WebSearch(_)
-        ));
+        match &items[3].content {
+            HydratedConversationItemContent::WebSearch(data) => {
+                assert_eq!(data.action_json, None);
+            }
+            other => panic!("unexpected item: {other:?}"),
+        }
         assert!(matches!(
             items[4].content,
             HydratedConversationItemContent::ImageView(_)
@@ -2562,6 +2570,8 @@ diff --git a/parser.rs b/parser.rs\n\
             "t-command-truncate",
             vec![ThreadItem::CommandExecution {
                 id: "cmd-1".into(),
+                plugin_id: None,
+                script_path: None,
                 command: long_command,
                 cwd: test_abs_path("/tmp").into(),
                 source: Default::default(),

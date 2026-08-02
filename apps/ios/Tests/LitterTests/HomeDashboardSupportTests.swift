@@ -373,7 +373,9 @@ final class HomeDashboardSupportTests: XCTestCase {
             activeThread: activeThread,
             pendingApprovals: [],
             pendingUserInputs: [],
-            voiceSession: inactiveVoiceSession()
+            voiceSession: inactiveVoiceSession(),
+            terminalSessions: [],
+            activeTerminalId: nil
         )
     }
 
@@ -425,7 +427,6 @@ final class HomeDashboardSupportTests: XCTestCase {
     }
 
     private func flushMainQueue() async {
-        await Task.yield()
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 200_000_000)
     }
 }

@@ -76,29 +76,6 @@ impl TryFrom<AppDynamicToolSpec> for codex_protocol::dynamic_tools::DynamicToolS
     }
 }
 
-impl From<codex_protocol::dynamic_tools::DynamicToolSpec> for AppDynamicToolSpec {
-    fn from(value: codex_protocol::dynamic_tools::DynamicToolSpec) -> Self {
-        let function = match value {
-            codex_protocol::dynamic_tools::DynamicToolSpec::Function(function) => function,
-            codex_protocol::dynamic_tools::DynamicToolSpec::Namespace(namespace) => {
-                let name = namespace.name;
-                return Self {
-                    name,
-                    description: namespace.description,
-                    input_schema_json: "{}".to_string(),
-                    defer_loading: false,
-                };
-            }
-        };
-        Self {
-            name: function.name,
-            description: function.description,
-            input_schema_json: serde_json::to_string(&function.input_schema).unwrap_or_default(),
-            defer_loading: function.defer_loading,
-        }
-    }
-}
-
 /// Summary information about a thread.
 ///
 /// This is a flattened, mobile-friendly view of the upstream `v2::Thread` type.
@@ -255,6 +232,7 @@ impl From<codex_protocol::account::PlanType> for PlanType {
             codex_protocol::account::PlanType::Unknown => Self::Unknown,
             codex_protocol::account::PlanType::ProLite => Self::Unknown,
             codex_protocol::account::PlanType::SelfServeBusinessUsageBased => Self::Business,
+            codex_protocol::account::PlanType::Ent26 => Self::Ent26,
             codex_protocol::account::PlanType::EnterpriseCbpUsageBased => Self::Enterprise,
         }
     }
@@ -515,6 +493,11 @@ pub enum AuthMode {
     ChatgptAuthTokens,
     #[serde(rename = "agentIdentity")]
     AgentIdentity,
+    Headers,
+    #[serde(rename = "personalAccessToken")]
+    PersonalAccessToken,
+    #[serde(rename = "bedrockApiKey")]
+    BedrockApiKey,
 }
 
 impl From<upstream::AuthMode> for AuthMode {
@@ -523,10 +506,10 @@ impl From<upstream::AuthMode> for AuthMode {
             upstream::AuthMode::ApiKey => Self::ApiKey,
             upstream::AuthMode::Chatgpt => Self::Chatgpt,
             upstream::AuthMode::ChatgptAuthTokens => Self::ChatgptAuthTokens,
+            upstream::AuthMode::Headers => Self::Headers,
             upstream::AuthMode::AgentIdentity => Self::AgentIdentity,
-            upstream::AuthMode::Headers
-            | upstream::AuthMode::PersonalAccessToken
-            | upstream::AuthMode::BedrockApiKey => Self::ApiKey,
+            upstream::AuthMode::PersonalAccessToken => Self::PersonalAccessToken,
+            upstream::AuthMode::BedrockApiKey => Self::BedrockApiKey,
         }
     }
 }
@@ -682,6 +665,7 @@ pub enum PlanType {
     Enterprise,
     Edu,
     Unknown,
+    Ent26,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -860,7 +844,7 @@ impl From<upstream::SkillScope> for SkillScope {
 pub enum AppAskForApproval {
     #[serde(rename = "untrusted")]
     UnlessTrusted,
-    OnFailure,
+    #[serde(alias = "on-failure")]
     OnRequest,
     Granular {
         sandbox_approval: bool,
@@ -1154,16 +1138,25 @@ pub enum Account {
     #[serde(rename = "chatgpt")]
     #[serde(rename_all = "camelCase")]
     Chatgpt { email: String, plan_type: PlanType },
+    #[serde(rename = "amazonBedrock")]
+    #[serde(rename_all = "camelCase")]
+    AmazonBedrock {
+        uses_codex_managed_credentials: bool,
+    },
 }
 
 impl From<upstream::Account> for Account {
     fn from(value: upstream::Account) -> Self {
         match value {
             upstream::Account::ApiKey {} => Self::ApiKey,
-            upstream::Account::AmazonBedrock { .. } => Self::ApiKey,
             upstream::Account::Chatgpt { email, plan_type } => Self::Chatgpt {
                 email: email.unwrap_or_default(),
                 plan_type: plan_type.into(),
+            },
+            upstream::Account::AmazonBedrock {
+                uses_codex_managed_credentials,
+            } => Self::AmazonBedrock {
+                uses_codex_managed_credentials,
             },
         }
     }
@@ -1520,6 +1513,63 @@ impl From<upstream::ThreadRealtimeSdpNotification> for AppRealtimeSdpNotificatio
 mod tests {
     use super::*;
     use crate::types::enums::ThreadSummaryStatus;
+
+    #[test]
+    fn approval_policy_migrates_legacy_on_failure_to_on_request() {
+        let approval: AppAskForApproval =
+            serde_json::from_str("\"on-failure\"").expect("legacy policy should deserialize");
+
+        assert_eq!(approval, AppAskForApproval::OnRequest);
+        assert_eq!(
+            serde_json::to_string(&approval).expect("approval policy should serialize"),
+            "\"on-request\""
+        );
+    }
+
+    #[test]
+    fn auth_mode_conversion_preserves_new_upstream_variants() {
+        let cases = [
+            (upstream::AuthMode::ApiKey, AuthMode::ApiKey),
+            (upstream::AuthMode::Chatgpt, AuthMode::Chatgpt),
+            (
+                upstream::AuthMode::ChatgptAuthTokens,
+                AuthMode::ChatgptAuthTokens,
+            ),
+            (upstream::AuthMode::Headers, AuthMode::Headers),
+            (upstream::AuthMode::AgentIdentity, AuthMode::AgentIdentity),
+            (
+                upstream::AuthMode::PersonalAccessToken,
+                AuthMode::PersonalAccessToken,
+            ),
+            (upstream::AuthMode::BedrockApiKey, AuthMode::BedrockApiKey),
+        ];
+
+        for (upstream, expected) in cases {
+            assert_eq!(AuthMode::from(upstream), expected);
+        }
+    }
+
+    #[test]
+    fn account_conversion_preserves_amazon_bedrock_identity() {
+        let account = Account::from(upstream::Account::AmazonBedrock {
+            uses_codex_managed_credentials: true,
+        });
+
+        assert_eq!(
+            account,
+            Account::AmazonBedrock {
+                uses_codex_managed_credentials: true,
+            }
+        );
+    }
+
+    #[test]
+    fn plan_type_conversion_preserves_ent26_identity() {
+        assert_eq!(
+            PlanType::from(codex_protocol::account::PlanType::Ent26),
+            PlanType::Ent26
+        );
+    }
 
     #[test]
     fn reasoning_effort_accepts_ultra_and_degrades_future_values() {

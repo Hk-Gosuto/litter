@@ -6,12 +6,8 @@ IOS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$IOS_DIR/../.." && pwd)"
 SUBMODULE_DIR="$REPO_DIR/shared/third_party/codex"
 PATCH_FILES=(
-    "$REPO_DIR/patches/codex/litter-mobile-compat-0.145.0.patch"
+    "$REPO_DIR/patches/codex/litter-mobile-compat-0.146.0.patch"
 )
-
-patch_already_upstreamed() {
-    return 1
-}
 
 SYNC_MODE="${1:---preserve-current}"
 case "$SYNC_MODE" in
@@ -56,42 +52,10 @@ for PATCH_FILE in "${PATCH_FILES[@]}"; do
     elif git -C "$SUBMODULE_DIR" apply --check "$PATCH_FILE" >/dev/null 2>&1; then
         echo "==> Applying $PATCH_NAME to submodule..."
         git -C "$SUBMODULE_DIR" apply "$PATCH_FILE"
-    elif patch_already_upstreamed "$PATCH_FILE"; then
-        echo "==> $PATCH_NAME already present upstream; skipping patch apply."
     else
-        # When multiple patches touch the same files, reverse-check may fail even
-        # if the patch is applied.  Fall back to checking whether the added lines
-        # are already present in the files the patch actually touches.
-        patch_targets=()
-        # Pick up both `diff --git a/... b/...` style and bare `--- a/...`
-        # style hunks. Some hand-crafted patches omit the `diff --git` line
-        # for their first file; without the `--- a/` fallback those files
-        # get dropped from the content-check and cause false negatives.
-        while IFS= read -r pf; do
-            [ -f "$SUBMODULE_DIR/$pf" ] && patch_targets+=("$SUBMODULE_DIR/$pf")
-        done < <({ grep '^diff --git' "$PATCH_FILE" | sed 's|.*b/||'; \
-                    grep '^--- a/' "$PATCH_FILE" | sed 's|^--- a/||'; } | sort -u)
-        added_lines=$(grep -m 5 '^+[^+]' "$PATCH_FILE" | sed 's/^+//')
-        all_present=true
-        if [ "${#patch_targets[@]}" -eq 0 ]; then
-            all_present=false
-        else
-            while IFS= read -r line; do
-                trimmed="${line#"${line%%[![:space:]]*}"}"
-                [ -z "$trimmed" ] && continue
-                if ! grep -qF "$trimmed" "${patch_targets[@]}" 2>/dev/null; then
-                    all_present=false
-                    break
-                fi
-            done <<< "$added_lines"
-        fi
-        if [ "$all_present" = true ]; then
-            echo "==> $PATCH_NAME already applied (content check)."
-        else
-            echo "error: $PATCH_NAME no longer applies cleanly to codex $(git -C "$SUBMODULE_DIR" rev-parse --short HEAD)" >&2
-            echo "error: refresh $PATCH_FILE before rebuilding the bridge" >&2
-            exit 1
-        fi
+        echo "error: $PATCH_NAME is neither cleanly applicable nor fully applied to codex $(git -C "$SUBMODULE_DIR" rev-parse --short HEAD)" >&2
+        echo "error: refresh $PATCH_FILE before rebuilding the bridge" >&2
+        exit 1
     fi
 done
 
