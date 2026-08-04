@@ -566,9 +566,17 @@
     <string name="discovery_invalid_wake_mac">唤醒 MAC 地址格式应类似 aa:bb:cc:dd:ee:ff。</string>
     <string name="discovery_sign_in_slingshot">使用 Slingshot 连接前请先登录 ChatGPT。</string>
     <string name="alleycat_add_remote_host">添加远程主机</string>
+    <string name="alleycat_connect_local_studio">连接 Local Studio</string>
+    <string name="alleycat_kittylitter_instructions">在主机上运行 npx kittylitter，然后扫描二维码或粘贴其输出的 JSON。</string>
+    <string name="alleycat_local_studio_instructions">在 Local Studio 中打开“个人资料”→“手机连接”，然后扫描二维码或粘贴复制的连接 JSON。</string>
     <string name="alleycat_scan_pairing_qr">扫描配对二维码</string>
     <string name="alleycat_rescan_qr">重新扫描二维码</string>
     <string name="alleycat_camera_permission">扫描配对二维码需要相机权限。请在系统设置中授权，或在下方粘贴 JSON。</string>
+    <string name="alleycat_open_settings">打开设置</string>
+    <string name="alleycat_scan_local_studio_profile">扫描 Local Studio 个人资料二维码</string>
+    <string name="alleycat_local_studio_step_profile">在 Local Studio 中打开“个人资料”→“手机连接”。</string>
+    <string name="alleycat_local_studio_step_scan">将相机对准个人资料二维码。</string>
+    <string name="alleycat_paste_connection_json">粘贴连接 JSON</string>
     <string name="alleycat_parse_json">解析 JSON</string>
     <string name="alleycat_reparse_json">重新解析 JSON</string>
     <string name="alleycat_no_agents">此主机上没有可用代理。</string>
@@ -661,6 +669,7 @@
     <string name="model_title">模型</string>
     <string name="model_search">搜索模型</string>
     <string name="model_loading">正在加载模型…</string>
+    <string name="model_none_available">没有可用模型</string>
     <string name="model_no_matches">没有匹配的模型</string>
     <string name="model_effort_locked">发送第一条消息后无法更改推理强度。</string>
     <string name="model_effort">推理强度</string>

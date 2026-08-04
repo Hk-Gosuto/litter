@@ -871,6 +871,8 @@ fun HomeDashboardScreen(
                         ) {
                             val serverForModels = selectedProject?.serverId
                                 ?: selectedServerId
+                                ?: servers.firstOrNull { !it.isLocal }?.serverId
+                                ?: servers.firstOrNull()?.serverId
                             HomeModelChip(
                                 serverId = serverForModels,
                                 disabled = serverForModels.isNullOrBlank(),

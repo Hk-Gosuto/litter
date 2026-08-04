@@ -751,7 +751,6 @@ pub enum ReasoningEffort {
 
 impl From<codex_protocol::openai_models::ReasoningEffort> for ReasoningEffort {
     fn from(value: codex_protocol::openai_models::ReasoningEffort) -> Self {
-        let wire_value = value.to_string();
         match value {
             codex_protocol::openai_models::ReasoningEffort::None => Self::None,
             codex_protocol::openai_models::ReasoningEffort::Minimal => Self::Minimal,
@@ -759,13 +758,8 @@ impl From<codex_protocol::openai_models::ReasoningEffort> for ReasoningEffort {
             codex_protocol::openai_models::ReasoningEffort::Medium => Self::Medium,
             codex_protocol::openai_models::ReasoningEffort::High => Self::High,
             codex_protocol::openai_models::ReasoningEffort::XHigh => Self::XHigh,
-            // The pinned Codex compatibility patch accepts Max, Ultra, and an
-            // unknown-value sentinel. Match Ultra by its wire value so this
-            // bridge still compiles against both older and newer checkouts;
-            // everything else degrades to Max without blocking model/list.
-            #[allow(unreachable_patterns)]
-            _ if wire_value == "ultra" => Self::Ultra,
-            _ => Self::Max,
+            codex_protocol::openai_models::ReasoningEffort::Max => Self::Max,
+            codex_protocol::openai_models::ReasoningEffort::Ultra => Self::Ultra,
         }
     }
 }
@@ -1215,6 +1209,9 @@ pub struct ModelInfo {
     pub is_default: bool,
     #[serde(default = "default_agent_runtime_kind")]
     pub agent_runtime_kind: AgentRuntimeKind,
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub provider_id: Option<String>,
 }
 
 impl From<upstream::Model> for ModelInfo {
@@ -1247,6 +1244,7 @@ impl From<upstream::Model> for ModelInfo {
             supports_personality: value.supports_personality,
             is_default: value.is_default,
             agent_runtime_kind: "codex".to_string(),
+            provider_id: None,
         }
     }
 }

@@ -16,6 +16,7 @@ PATCH_FILES=(
     "$REPO_DIR/patches/codex/android-installation-id-lock.patch"
     "$REPO_DIR/patches/codex/dynamic-tool-call-arguments-delta.patch"
     "$REPO_DIR/patches/codex/approval-timestamps-serde-default.patch"
+    "$REPO_DIR/patches/codex/reasoning-effort-max-ultra.patch"
     "$REPO_DIR/patches/codex/realtime-webrtc-env-apikey.patch"
     # Realtime multi-server orchestrator (split from old client-controlled-handoff.patch).
     # Apply order: server-hint adds the realtime_v2_session_tools helper consumed by dynamic-tools.
@@ -39,7 +40,10 @@ case "$SYNC_MODE" in
 esac
 
 echo "==> Syncing codex submodule..."
-if ! git -C "$SUBMODULE_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+# An uninitialized submodule is an empty directory without its own .git file.
+# `git -C` alone is not sufficient here: Git walks up to the parent worktree
+# and can incorrectly report the superproject's HEAD as the submodule HEAD.
+if [ ! -e "$SUBMODULE_DIR/.git" ] || ! git -C "$SUBMODULE_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
     git -C "$REPO_DIR" submodule update --init --recursive shared/third_party/codex
 elif [ "$SYNC_MODE" = "--recorded-gitlink" ]; then
     git -C "$REPO_DIR" submodule update --init --recursive shared/third_party/codex

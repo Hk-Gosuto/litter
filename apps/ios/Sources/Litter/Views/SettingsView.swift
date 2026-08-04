@@ -35,6 +35,7 @@ struct SettingsView: View {
                 LitterTheme.backgroundGradient.ignoresSafeArea()
                 Form {
                     supportSection
+                    localAISection
                     appearanceSection
                     languageSection
                     fontSection
@@ -332,6 +333,36 @@ struct SettingsView: View {
             .listRowBackground(LitterTheme.surface.opacity(0.6))
         } header: {
             Text("Support")
+                .foregroundColor(LitterTheme.textSecondary)
+        }
+    }
+
+    // MARK: - Local AI Section
+
+    private var localAISection: some View {
+        Section {
+            Link(destination: URL(string: "https://localstudio.ai")!) {
+                HStack(spacing: 10) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Local Studio")
+                            .litterFont(.subheadline)
+                            .foregroundColor(LitterTheme.textPrimary)
+                        Text("localstudio.ai")
+                            .litterFont(.caption)
+                            .foregroundColor(LitterTheme.textSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .litterFont(.caption, weight: .semibold)
+                        .foregroundColor(LitterTheme.textMuted)
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Local AI")
                 .foregroundColor(LitterTheme.textSecondary)
         }
     }

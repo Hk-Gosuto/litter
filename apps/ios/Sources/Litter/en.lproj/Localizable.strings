@@ -109,6 +109,14 @@
 "Activity Timeline" = "Activity Timeline";
 "Add folder" = "Add folder";
 "Add Remote Host" = "Add Remote Host";
+"Connect Local Studio" = "Connect Local Studio";
+"Run %@ on the host you want to connect to, then scan its QR code or paste the JSON it prints." = "Run %@ on the host you want to connect to, then scan its QR code or paste the JSON it prints.";
+"In Local Studio, open Profile → Phone connection. Scan its QR code or paste Copy connection JSON." = "In Local Studio, open Profile → Phone connection. Scan its QR code or paste Copy connection JSON.";
+"Paste connection JSON" = "Paste connection JSON";
+"Scan Local Studio Profile QR" = "Scan Local Studio Profile QR";
+"In Local Studio, open Profile → Phone connection." = "In Local Studio, open Profile → Phone connection.";
+"Point this camera at the Profile QR code." = "Point this camera at the Profile QR code.";
+"No models available" = "No models available";
 "Agents" = "Agents";
 "AI coding agent on iOS" = "AI coding agent on iOS";
 "Allow camera access in Settings to scan an Alleycat pairing QR code." = "Allow camera access in Settings to scan an Alleycat pairing QR code.";
