@@ -78,10 +78,8 @@ pub(crate) fn reasoning_effort_into_upstream(value: ReasoningEffort) -> CoreReas
         ReasoningEffort::Medium => CoreReasoningEffort::Medium,
         ReasoningEffort::High => CoreReasoningEffort::High,
         ReasoningEffort::XHigh => CoreReasoningEffort::XHigh,
-        // Parsing keeps this source compatible before the Codex compatibility
-        // patch is applied; older checkouts safely degrade to XHigh.
-        ReasoningEffort::Max => "max".parse().unwrap_or(CoreReasoningEffort::XHigh),
-        ReasoningEffort::Ultra => "ultra".parse().unwrap_or(CoreReasoningEffort::XHigh),
+        ReasoningEffort::Max => CoreReasoningEffort::Max,
+        ReasoningEffort::Ultra => CoreReasoningEffort::Ultra,
     }
 }
 

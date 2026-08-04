@@ -31,6 +31,18 @@ final class LitterUITests: XCTestCase {
     }
 
     @MainActor
+    func testConversationComposerAcceptsSimulatorKeyboardInput() throws {
+        let app = conversationDisplayHarnessApp()
+        app.launch()
+
+        let composer = app.textViews["conversation.composerTextView"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("SIMULATOR_INPUT_OK")
+        XCTAssertEqual(composer.value as? String, "SIMULATOR_INPUT_OK")
+    }
+
+    @MainActor
     func testConversationDisplayCollapsedModeKeepsRowsAndRetainsRecentDetails() throws {
         let app = conversationDisplayHarnessApp(reasoning: "collapsed", commands: "collapsed", tools: "collapsed")
         app.launch()
@@ -105,6 +117,9 @@ final class LitterUITests: XCTestCase {
 
     @MainActor
     func testCaptureScreenshots() throws {
+        guard ProcessInfo.processInfo.environment["CODEXIOS_CAPTURE_LIVE_SCREENSHOTS"] == "enabled" else {
+            throw XCTSkip("Live discovery screenshots require CODEXIOS_CAPTURE_LIVE_SCREENSHOTS=enabled")
+        }
         let app = XCUIApplication()
         app.launchEnvironment["LITTER_APP_LANGUAGE"] = "en"
         app.launchEnvironment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] = "1"

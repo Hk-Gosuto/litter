@@ -109,6 +109,7 @@ import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
+import com.litter.android.ui.common.hasFixedFullAccess
 import com.litter.android.ui.scaled
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
@@ -181,6 +182,11 @@ fun ComposerBar(
     onDismissPendingUserInput: (() -> Unit)? = null,
 ) {
     val appModel = LocalAppModel.current
+    val appSnapshot by appModel.snapshot.collectAsState()
+    val hasFixedFullAccess = appSnapshot?.threads
+        ?.firstOrNull { it.key == threadKey }
+        ?.agentRuntimeKind
+        ?.hasFixedFullAccess == true
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val composerPrefillRequest by appModel.composerPrefillRequest.collectAsState()
@@ -250,7 +256,9 @@ fun ComposerBar(
     val filteredCommands by remember {
         derivedStateOf {
             val q = slashQuery ?: return@derivedStateOf emptyList()
-            SLASH_COMMANDS.filter { it.name.startsWith(q) || q.isEmpty() }
+            SLASH_COMMANDS.filter {
+                (!hasFixedFullAccess || it.name != "permissions") && (it.name.startsWith(q) || q.isEmpty())
+            }
         }
     }
     var showSlashMenu by remember { mutableStateOf(false) }
@@ -365,7 +373,7 @@ fun ComposerBar(
             "resume" -> onNavigateToSessions?.invoke()
             "rename" -> onShowRenameDialog?.invoke(args)
             "skills" -> onShowSkillsSheet?.invoke()
-            "permissions" -> onShowPermissionsSheet?.invoke()
+            "permissions" -> if (!hasFixedFullAccess) onShowPermissionsSheet?.invoke()
             "experimental" -> onShowExperimentalSheet?.invoke()
             "goal" -> scope.launch {
                 try {

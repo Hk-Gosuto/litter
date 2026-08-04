@@ -109,6 +109,14 @@
 "Activity Timeline" = "活动时间线";
 "Add folder" = "添加文件夹";
 "Add Remote Host" = "添加远程主机";
+"Connect Local Studio" = "连接 Local Studio";
+"Run %@ on the host you want to connect to, then scan its QR code or paste the JSON it prints." = "在要连接的主机上运行 %@，然后扫描二维码或粘贴其输出的 JSON。";
+"In Local Studio, open Profile → Phone connection. Scan its QR code or paste Copy connection JSON." = "在 Local Studio 中打开“个人资料”→“手机连接”，然后扫描二维码或粘贴复制的连接 JSON。";
+"Paste connection JSON" = "粘贴连接 JSON";
+"Scan Local Studio Profile QR" = "扫描 Local Studio 个人资料二维码";
+"In Local Studio, open Profile → Phone connection." = "在 Local Studio 中打开“个人资料”→“手机连接”。";
+"Point this camera at the Profile QR code." = "将相机对准个人资料二维码。";
+"No models available" = "没有可用模型";
 "Agents" = "代理";
 "AI coding agent on iOS" = "iOS 上的 AI 编程代理";
 "Allow camera access in Settings to scan an Alleycat pairing QR code." = "请在系统设置中允许相机访问，以扫描 Alleycat 配对二维码。";

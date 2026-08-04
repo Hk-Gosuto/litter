@@ -569,9 +569,17 @@
     <string name="discovery_invalid_wake_mac">Wake MAC must look like aa:bb:cc:dd:ee:ff.</string>
     <string name="discovery_sign_in_slingshot">Sign in with ChatGPT before connecting with Slingshot.</string>
     <string name="alleycat_add_remote_host">Add Remote Host</string>
+    <string name="alleycat_connect_local_studio">Connect Local Studio</string>
+    <string name="alleycat_kittylitter_instructions">Run npx kittylitter on the host, then scan its QR code or paste the JSON it prints.</string>
+    <string name="alleycat_local_studio_instructions">In Local Studio, open Profile → Phone connection. Scan its QR code or paste Copy connection JSON.</string>
     <string name="alleycat_scan_pairing_qr">Scan Pairing QR</string>
     <string name="alleycat_rescan_qr">Rescan QR</string>
     <string name="alleycat_camera_permission">Camera permission is required to scan a pairing QR. Grant access in system Settings, or paste the JSON below.</string>
+    <string name="alleycat_open_settings">Open Settings</string>
+    <string name="alleycat_scan_local_studio_profile">Scan Local Studio Profile QR</string>
+    <string name="alleycat_local_studio_step_profile">In Local Studio, open Profile → Phone connection.</string>
+    <string name="alleycat_local_studio_step_scan">Point this camera at the Profile QR code.</string>
+    <string name="alleycat_paste_connection_json">Paste connection JSON</string>
     <string name="alleycat_parse_json">Parse JSON</string>
     <string name="alleycat_reparse_json">Reparse JSON</string>
     <string name="alleycat_no_agents">No agents are available on this host.</string>
@@ -664,6 +672,7 @@
     <string name="model_title">Model</string>
     <string name="model_search">Search models</string>
     <string name="model_loading">Loading models…</string>
+    <string name="model_none_available">No models available</string>
     <string name="model_no_matches">No matching models</string>
     <string name="model_effort_locked">Reasoning effort is locked after the first message.</string>
     <string name="model_effort">Effort</string>
