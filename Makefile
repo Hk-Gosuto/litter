@@ -137,11 +137,9 @@ endif
 
 PACKAGE_CARGO_ENV := CARGO_INCREMENTAL=0
 
-# Local dev iteration: enable incremental compilation and disable sccache.
-# sccache caches by source hash so it misses on every edit, and it rejects
-# CARGO_INCREMENTAL=1. Incremental wins for small-change rebuilds. CI calls
-# build-rust.sh directly with its own env, so it bypasses this var.
-DEV_CARGO_ENV := env -u RUSTC_WRAPPER CARGO_INCREMENTAL=1
+# Let Cargo and the platform build scripts select the appropriate dev cache.
+# Explicit incremental compilation is incompatible with sccache.
+DEV_CARGO_ENV := env -u RUSTC_WRAPPER -u CARGO_INCREMENTAL
 # The generated KittyLitter development manifest otherwise gets its own
 # `.build-stamps/kittylitter-dev/target` tree.  Point it at the normal Rust
 # target so host dependencies are compiled once and Cargo can reuse them.
