@@ -751,6 +751,7 @@ pub enum ReasoningEffort {
 
 impl From<codex_protocol::openai_models::ReasoningEffort> for ReasoningEffort {
     fn from(value: codex_protocol::openai_models::ReasoningEffort) -> Self {
+        #[allow(unreachable_patterns)]
         match value {
             codex_protocol::openai_models::ReasoningEffort::None => Self::None,
             codex_protocol::openai_models::ReasoningEffort::Minimal => Self::Minimal,
@@ -760,6 +761,7 @@ impl From<codex_protocol::openai_models::ReasoningEffort> for ReasoningEffort {
             codex_protocol::openai_models::ReasoningEffort::XHigh => Self::XHigh,
             codex_protocol::openai_models::ReasoningEffort::Max => Self::Max,
             codex_protocol::openai_models::ReasoningEffort::Ultra => Self::Ultra,
+            _ => Self::Max,
         }
     }
 }
