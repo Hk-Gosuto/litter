@@ -955,6 +955,37 @@ impl AppStoreReducer {
         result
     }
 
+    pub(crate) fn finish_steer_queued_follow_up(
+        &self,
+        key: &ThreadKey,
+        preview_id: &str,
+        accepted: bool,
+    ) {
+        let changed = self
+            .mutate_thread_with_result(key, |thread| {
+                let Some(position) = thread
+                    .queued_follow_up_drafts
+                    .iter()
+                    .position(|draft| draft.preview.id == preview_id)
+                else {
+                    return false;
+                };
+
+                if accepted {
+                    thread.queued_follow_up_drafts.remove(position);
+                } else {
+                    thread.queued_follow_up_drafts[position].preview.kind =
+                        super::snapshot::AppQueuedFollowUpKind::Message;
+                }
+                sync_thread_follow_up_projection(thread);
+                true
+            })
+            .unwrap_or(false);
+        if changed {
+            self.emit_thread_metadata_changed(key);
+        }
+    }
+
     pub fn set_thread_follow_up_previews(
         &self,
         key: &ThreadKey,
@@ -3274,7 +3305,7 @@ fn local_user_message_overlay_item(
     Some(HydratedConversationItem {
         id: format!(
             "{LOCAL_USER_MESSAGE_ITEM_PREFIX}{}",
-            crate::next_request_id()
+            uuid::Uuid::new_v4()
         ),
         content: HydratedConversationItemContent::User(
             crate::conversation_uniffi::HydratedUserMessageData {
@@ -3520,7 +3551,7 @@ fn is_duplicate_overlay_item(
     local: &HydratedConversationItem,
     existing: &HydratedConversationItem,
 ) -> bool {
-    if local.id == existing.id && local.id.starts_with(USER_INPUT_RESPONSE_ITEM_PREFIX) {
+    if local.id == existing.id {
         return true;
     }
 
@@ -3547,22 +3578,7 @@ fn is_superseded_overlay_item(
     existing: &HydratedConversationItem,
     _active_turn_id: Option<&str>,
 ) -> bool {
-    if is_duplicate_overlay_item(local, existing) {
-        return true;
-    }
-
-    match (&local.content, &existing.content) {
-        (
-            HydratedConversationItemContent::User(local_data),
-            HydratedConversationItemContent::User(existing_data),
-        ) => {
-            local.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
-                && local.is_from_user_turn_boundary
-                && existing.is_from_user_turn_boundary
-                && local_data == existing_data
-        }
-        _ => false,
-    }
+    is_duplicate_overlay_item(local, existing)
 }
 
 fn answered_user_input_item(
@@ -4721,6 +4737,24 @@ mod tests {
     }
 
     #[test]
+    fn local_user_message_overlay_ids_are_process_independent() {
+        let inputs = [upstream::UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let first = local_user_message_overlay_item(&inputs).expect("first overlay");
+        let second = local_user_message_overlay_item(&inputs).expect("second overlay");
+
+        assert_ne!(first.id, second.id);
+        for id in [&first.id, &second.id] {
+            let suffix = id
+                .strip_prefix(LOCAL_USER_MESSAGE_ITEM_PREFIX)
+                .expect("local user message prefix");
+            uuid::Uuid::parse_str(suffix).expect("UUID-backed overlay id");
+        }
+    }
+
+    #[test]
     fn server_backed_user_message_supersedes_local_overlay_after_turn_binding() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
@@ -4830,7 +4864,7 @@ mod tests {
     }
 
     #[test]
-    fn server_backed_user_message_immediately_supersedes_unbound_local_overlay() {
+    fn server_backed_user_message_with_client_id_supersedes_unbound_local_overlay() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
             server_id: "srv".to_string(),
@@ -4839,7 +4873,7 @@ mod tests {
         reducer
             .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
 
-        reducer
+        let overlay_id = reducer
             .stage_local_user_message_overlay(
                 &key,
                 &[upstream::UserInput::Text {
@@ -4852,7 +4886,7 @@ mod tests {
         reducer.apply_item_update(
             &key,
             HydratedConversationItem {
-                id: "server-user-item".to_string(),
+                id: overlay_id.clone(),
                 content: HydratedConversationItemContent::User(
                     crate::conversation_uniffi::HydratedUserMessageData {
                         text: "hello from composer".to_string(),
@@ -4870,7 +4904,7 @@ mod tests {
         let thread = snapshot.threads.get(&key).expect("thread exists");
         assert!(thread.local_overlay_items.is_empty());
         assert_eq!(thread.items.len(), 1);
-        assert_eq!(thread.items[0].id, "server-user-item");
+        assert_eq!(thread.items[0].id, overlay_id);
     }
 
     /// Repro for the duplicate-first-user-message bug surfaced by user
@@ -4923,8 +4957,8 @@ mod tests {
 
         // Step 3: ItemStarted/ItemCompleted with a UserMessage item built via
         // the same `conversation_item_from_upstream` path the event loop uses.
-        // This sets `source_turn_id: None` (events don't carry the turn id)
-        // and exercises the real dedupe surface.
+        // The notification envelope supplies the turn id, so dedupe remains
+        // scoped to this turn instead of matching text across the conversation.
         let mut update_receiver = reducer.subscribe();
         // Drain any prior emits so we observe only the upcoming ones.
         let _ = drain_updates(&mut update_receiver);
@@ -4936,7 +4970,7 @@ mod tests {
         };
         let server_user_item = crate::store::actions::conversation_item_from_upstream_with_turn(
             upstream_item.clone(),
-            None,
+            Some("turn-1"),
         )
         .expect("hydrate user item");
         reducer.apply_item_update(&key, server_user_item.clone());
@@ -5175,7 +5209,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_thread_snapshot_dedupes_matching_unbound_local_overlay() {
+    fn upsert_thread_snapshot_dedupes_matching_client_id_overlay() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
             server_id: "srv".to_string(),
@@ -5183,7 +5217,7 @@ mod tests {
         };
         reducer
             .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
-        reducer
+        let overlay_id = reducer
             .stage_local_user_message_overlay(
                 &key,
                 &[upstream::UserInput::Text {
@@ -5197,7 +5231,7 @@ mod tests {
         incoming
             .items
             .push(crate::conversation_uniffi::HydratedConversationItem {
-                id: "server-user-item".to_string(),
+                id: overlay_id.clone(),
                 content: HydratedConversationItemContent::User(HydratedUserMessageData {
                     text: "hello from composer".to_string(),
                     image_data_uris: Vec::new(),
@@ -5214,7 +5248,7 @@ mod tests {
         let thread = snapshot.threads.get(&key).expect("thread exists");
         assert!(thread.local_overlay_items.is_empty());
         assert_eq!(thread.items.len(), 1);
-        assert_eq!(thread.items[0].id, "server-user-item");
+        assert_eq!(thread.items[0].id, overlay_id);
     }
 
     #[test]
@@ -5272,6 +5306,67 @@ mod tests {
         assert_eq!(thread.active_turn_id.as_deref(), Some("turn-2"));
         assert_eq!(thread.queued_follow_ups.len(), 1);
         assert_eq!(thread.queued_follow_ups[0].id, "queued-2");
+    }
+
+    #[test]
+    fn accepted_steer_is_removed_from_queued_follow_ups_immediately() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        reducer
+            .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
+        reducer.enqueue_thread_follow_up_preview(
+            &key,
+            AppQueuedFollowUpPreview {
+                id: "queued-1".to_string(),
+                kind: crate::store::snapshot::AppQueuedFollowUpKind::Message,
+                text: "guide the current turn".to_string(),
+            },
+        );
+        reducer
+            .try_begin_steer_queued_follow_up(&key, "queued-1")
+            .expect("steer begins");
+
+        reducer.finish_steer_queued_follow_up(&key, "queued-1", true);
+
+        let snapshot = reducer.snapshot();
+        let thread = snapshot.threads.get(&key).expect("thread exists");
+        assert!(thread.queued_follow_ups.is_empty());
+        assert!(thread.queued_follow_up_drafts.is_empty());
+    }
+
+    #[test]
+    fn rejected_steer_returns_to_retryable_queue_state() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        reducer
+            .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
+        reducer.enqueue_thread_follow_up_preview(
+            &key,
+            AppQueuedFollowUpPreview {
+                id: "queued-1".to_string(),
+                kind: crate::store::snapshot::AppQueuedFollowUpKind::Message,
+                text: "guide the current turn".to_string(),
+            },
+        );
+        reducer
+            .try_begin_steer_queued_follow_up(&key, "queued-1")
+            .expect("steer begins");
+
+        reducer.finish_steer_queued_follow_up(&key, "queued-1", false);
+
+        let snapshot = reducer.snapshot();
+        let thread = snapshot.threads.get(&key).expect("thread exists");
+        assert_eq!(thread.queued_follow_ups.len(), 1);
+        assert_eq!(
+            thread.queued_follow_ups[0].kind,
+            crate::store::snapshot::AppQueuedFollowUpKind::Message
+        );
     }
 
     #[test]

@@ -3337,7 +3337,6 @@ impl MobileClient {
         let has_active_turn = thread_snapshot
             .as_ref()
             .is_some_and(|thread| thread.active_turn_id.is_some());
-        let direct_params = params.clone();
         // Stage an optimistic local overlay so the user sees their message
         // immediately, before the server echoes it back.
         let optimistic_overlay_id = if !has_active_turn {
@@ -3346,6 +3345,13 @@ impl MobileClient {
         } else {
             None
         };
+        // Newer app servers echo this id as UserMessage.client_id. Hydration
+        // then uses the same stable id as the optimistic overlay, so event
+        // ordering cannot make the submitted user message disappear.
+        if let Some(overlay_id) = optimistic_overlay_id.as_ref() {
+            params.client_user_message_id = Some(overlay_id.clone());
+        }
+        let direct_params = params.clone();
         let queued_draft = has_active_turn
             .then(|| {
                 queued_follow_up_draft_from_inputs(&params.input, AppQueuedFollowUpKind::Message)
@@ -3457,10 +3463,13 @@ impl MobileClient {
             .iter()
             .any(|draft| draft.preview.id == preview_id)
         {
-            return Err(RpcError::Deserialization(format!(
-                "queued follow-up not found: {preview_id}"
-            )));
+            // A successful first tap removes the queued preview immediately.
+            // Treat a repeated tap as an idempotent no-op.
+            return Ok(());
         }
+        let active_turn_id = thread.active_turn_id.ok_or_else(|| {
+            RpcError::Deserialization("no active turn available to steer".to_string())
+        })?;
 
         // Atomically flip the draft's kind to PendingSteer. If it's already
         // pending (concurrent/duplicate tap), drop this request so we don't
@@ -3472,10 +3481,6 @@ impl MobileClient {
         else {
             return Ok(());
         };
-
-        let active_turn_id = thread.active_turn_id.ok_or_else(|| {
-            RpcError::Deserialization("no active turn available to steer".to_string())
-        })?;
 
         let direct_command_id = self.app_store.begin_server_mutating_command(
             &key.server_id,
@@ -3501,11 +3506,17 @@ impl MobileClient {
         {
             self.app_store
                 .finish_server_mutating_command_failure(&key.server_id, &direct_command_id);
+            self.app_store
+                .finish_steer_queued_follow_up(key, preview_id, false);
             return Err(RpcError::Deserialization(error));
         }
         self.app_store
             .finish_server_mutating_command_success(&key.server_id, &direct_command_id);
-        // Keep draft visible as PendingSteer; TurnCompleted will clean it up.
+        // The server accepted the steer, so it is no longer queued. Keeping
+        // PendingSteer visible until TurnCompleted makes the composer claim a
+        // message is still waiting even while its response is already streaming.
+        self.app_store
+            .finish_steer_queued_follow_up(key, preview_id, true);
         Ok(())
     }
 

@@ -300,13 +300,8 @@ fn same_overlay_semantics(
         ) => {
             lhs.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
                 && lhs_data == rhs_data
-                && (
-                    // Both bound to the same turn.
-                    (lhs.source_turn_id.is_some() && lhs.source_turn_id == rhs.source_turn_id)
-                    // Real item arrived via ItemStarted/ItemCompleted without a
-                    // turn_id; the overlay is bound so content match is enough.
-                    || (lhs.source_turn_id.is_some() && rhs.source_turn_id.is_none())
-                )
+                && lhs.source_turn_id.is_some()
+                && lhs.source_turn_id == rhs.source_turn_id
         }
         _ => false,
     }
@@ -1754,7 +1749,7 @@ mod tests {
     }
 
     #[test]
-    fn merged_hydrated_items_filters_overlay_when_real_item_has_no_turn_id() {
+    fn merged_hydrated_items_keeps_new_overlay_when_old_sourceless_item_only_matches_text() {
         let mut snapshot = AppSnapshot::default();
         let mut thread = ThreadSnapshot::from_info(
             "srv",
@@ -1776,7 +1771,7 @@ mod tests {
                 updated_at: None,
             },
         );
-        // Real item from ItemStarted (no source_turn_id).
+        // Historical live item from a runtime that omitted source_turn_id.
         thread
             .items
             .push(crate::conversation_uniffi::HydratedConversationItem {
@@ -1792,7 +1787,7 @@ mod tests {
                 timestamp: None,
                 is_from_user_turn_boundary: true,
             });
-        // Bound overlay for the same message.
+        // A later turn can legitimately submit the same short prompt.
         thread
             .local_overlay_items
             .push(crate::conversation_uniffi::HydratedConversationItem {
@@ -1814,10 +1809,14 @@ mod tests {
         let projected =
             app_thread_snapshot_from_state(&snapshot, snapshot.threads.get(&key).unwrap()).unwrap();
 
-        assert_eq!(projected.hydrated_conversation_items.len(), 1);
+        assert_eq!(projected.hydrated_conversation_items.len(), 2);
         assert_eq!(
             projected.hydrated_conversation_items[0].id,
             "server-user-item"
+        );
+        assert_eq!(
+            projected.hydrated_conversation_items[1].id,
+            "local-user-message:1"
         );
     }
 

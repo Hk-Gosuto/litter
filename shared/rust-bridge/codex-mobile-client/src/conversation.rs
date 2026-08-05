@@ -80,7 +80,20 @@ pub fn hydrate_thread_item(
     source_turn_index: Option<usize>,
     opts: &HydrationOptions,
 ) -> Option<HydratedConversationItem> {
-    convert_thread_item(item, item.id(), source_turn_id, source_turn_index, opts)
+    let stable_item_id = match item {
+        ThreadItem::UserMessage {
+            client_id: Some(client_id),
+            ..
+        } if client_id.starts_with("local-user-message:") => client_id,
+        _ => item.id(),
+    };
+    convert_thread_item(
+        item,
+        stable_item_id,
+        source_turn_id,
+        source_turn_index,
+        opts,
+    )
 }
 
 fn hydrate_message_phase(
@@ -1897,6 +1910,25 @@ mod tests {
             }
             _ => panic!("expected User content"),
         }
+    }
+
+    #[test]
+    fn test_user_message_uses_litter_client_id_as_stable_item_id() {
+        let client_id = "local-user-message:42";
+        let item = ThreadItem::UserMessage {
+            id: "server-generated-id".into(),
+            client_id: Some(client_id.into()),
+            content: vec![UserInput::Text {
+                text: "Hello world".into(),
+                text_elements: vec![],
+            }],
+        };
+
+        let hydrated = hydrate_thread_item(&item, Some("turn-1"), None, &Default::default())
+            .expect("hydrated user message");
+
+        assert_eq!(hydrated.id, client_id);
+        assert_eq!(hydrated.source_turn_id.as_deref(), Some("turn-1"));
     }
 
     #[test]

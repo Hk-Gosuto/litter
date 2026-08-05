@@ -67,7 +67,6 @@ struct ConversationTurnTimeline: View {
                     retainedRichDetailItemIDs: retainedRichDetailItemIDs
                 )
                     .id(row.id)
-                    .modifier(RowEntranceModifier(isAssistantRow: row.isAssistantRow))
                     .onGeometryChange(for: CGFloat.self) { geometry in
                         geometry.size.height
                     } action: { oldHeight, newHeight in
@@ -179,11 +178,6 @@ private enum ConversationTimelineRowDescriptor: Identifiable, Equatable {
         case .subagentGroup(let id, _, _):
             return id
         }
-    }
-
-    var isAssistantRow: Bool {
-        guard case .item(let item) = self else { return false }
-        return item.isAssistantItem
     }
 
     func preferredExpandedCommandRow(
@@ -350,27 +344,6 @@ private enum ConversationTimelineRowDescriptor: Identifiable, Equatable {
     }
 }
 
-private struct RowEntranceModifier: ViewModifier {
-    let isAssistantRow: Bool
-
-    func body(content: Content) -> some View {
-        if isAssistantRow {
-            // The streaming markdown renderer scopes its own
-            // `transaction { $0.animation = nil }` internally so that token
-            // reveals don't replay on every snapshot. Leaving the row itself
-            // unscoped lets sibling layout changes (e.g. a tool card collapse)
-            // animate this row's position.
-            content
-        } else {
-            content
-                .transition(.asymmetric(
-                    insertion: .rowEntranceReveal,
-                    removal: .opacity
-                ))
-        }
-    }
-}
-
 struct RowEntranceEffect: ViewModifier, Animatable {
     var progress: CGFloat
     var yOffset: CGFloat
@@ -404,13 +377,6 @@ struct RowEntranceEffect: ViewModifier, Animatable {
 }
 
 extension AnyTransition {
-    static var rowEntranceReveal: AnyTransition {
-        .modifier(
-            active: RowEntranceEffect(progress: 0, yOffset: 10, minScale: 0.965, maxBlur: 2.5),
-            identity: RowEntranceEffect(progress: 1, yOffset: 0, minScale: 1, maxBlur: 0)
-        )
-    }
-
     static var sectionReveal: AnyTransition {
         .modifier(
             active: RowEntranceEffect(progress: 0, yOffset: 6, minScale: 0.985, maxBlur: 1.2),

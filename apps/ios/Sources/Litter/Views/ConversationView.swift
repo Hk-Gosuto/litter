@@ -684,7 +684,6 @@ private struct ConversationMessageList: View {
 
     var body: some View {
         let turns = mergedRenderableTurns
-        let lastTurnID = turns.last?.id
         ScrollViewReader { proxy in
             GeometryReader { viewport in
             ZStack(alignment: .bottomTrailing) {
@@ -708,17 +707,10 @@ private struct ConversationMessageList: View {
                                 .buttonStyle(.plain)
                             }
                             ForEach(turns) { turn in
-                                let isLastTurn = turn.id == lastTurnID
                                 ConversationTurnRow(
                                     turn: turn,
                                     isExpanded: isTurnExpanded(turn),
                                     canCollapse: turn.isCollapsedByDefault,
-                                    isLastTurn: isLastTurn,
-                                    viewportHeight: viewport.size.height,
-                                    showTypingIndicator: isLastTurn && {
-                                        if case .thinking = threadStatus { return true }
-                                        return false
-                                    }(),
                                     serverId: activeThreadKey.serverId,
                                     originThreadId: activeThreadKey.threadId,
                                     agentDirectoryVersion: agentDirectoryVersion,
@@ -755,7 +747,7 @@ private struct ConversationMessageList: View {
                         }
 
                         Color.clear
-                            .frame(height: 1)
+                            .frame(height: isStreaming ? 36 : 1)
                             .id(Self.bottomAnchorID)
                             .padding(.horizontal, 16)
                     }
@@ -846,6 +838,14 @@ private struct ConversationMessageList: View {
                             scrollToBottom(proxy)
                         }
                     }
+                }
+
+                if isStreaming {
+                    TypingIndicator()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .allowsHitTesting(false)
                 }
 
                 if shouldShowScrollToBottom {
@@ -1127,9 +1127,6 @@ private struct ConversationTurnRow: View, Equatable {
     let turn: TranscriptTurn
     let isExpanded: Bool
     let canCollapse: Bool
-    let isLastTurn: Bool
-    let viewportHeight: CGFloat
-    let showTypingIndicator: Bool
     let serverId: String
     let originThreadId: String?
     let agentDirectoryVersion: UInt64
@@ -1150,9 +1147,6 @@ private struct ConversationTurnRow: View, Equatable {
             lhs.turn.isLive == rhs.turn.isLive &&
             lhs.isExpanded == rhs.isExpanded &&
             lhs.canCollapse == rhs.canCollapse &&
-            lhs.isLastTurn == rhs.isLastTurn &&
-            lhs.viewportHeight == rhs.viewportHeight &&
-            lhs.showTypingIndicator == rhs.showTypingIndicator &&
             lhs.serverId == rhs.serverId &&
             lhs.originThreadId == rhs.originThreadId &&
             lhs.agentDirectoryVersion == rhs.agentDirectoryVersion &&
@@ -1184,10 +1178,6 @@ private struct ConversationTurnRow: View, Equatable {
                 onForkFromUserItem: onForkFromUserItem,
                 onOpenConversation: onOpenConversation
             )
-
-            TypingIndicator()
-                .opacity(showTypingIndicator ? 1 : 0)
-                .animation(nil)
 
             if canCollapse {
                 Button("Show Less", systemImage: "chevron.up", action: onToggleExpansion)
