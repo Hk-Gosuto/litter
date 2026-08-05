@@ -28,13 +28,15 @@ The patch contains these Litter-specific behaviors:
   rollout, MCP, and TUI event matches.
 - Realtime server hints, client-provided dynamic tools, client-managed handoff
   resolve/finalize RPCs, and function-call result forwarding.
+- Public OpenAI routing when ChatGPT authentication falls back to an
+  environment API key for a WebRTC realtime call.
 - The `pqclean` ML-KEM-768 backend for Clatter. Codex 0.145's default
   pre-release RustCrypto KEM dependency cannot coexist with the stable KEM
   dependency selected by the mobile SSH stack.
 
 Codex 0.146 already includes forward-compatible reasoning effort variants,
-client-managed realtime handoff plumbing, and WebRTC auth handling. Their old
-standalone patches are therefore not carried forward.
+client-managed realtime handoff plumbing, and the base WebRTC call flow. Their
+old standalone patches are therefore not carried forward.
 
 ## Refreshing
 

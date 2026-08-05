@@ -111,7 +111,7 @@ struct HomeDashboardServer: Identifiable, Equatable {
             .replacingOccurrences(of: "%25", with: "%")
             .lowercased()
 
-        return normalized.isEmpty ? id : normalized
+        return normalized.isEmpty ? id : "\(normalized):\(port)"
     }
 
     var canLaunchSessions: Bool {

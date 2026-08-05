@@ -34,7 +34,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 200000254
-        versionName = "1.6.0"
+        versionName = "1.7.0"
         buildConfigField("boolean", "ENABLE_ON_DEVICE_BRIDGE", "true")
         buildConfigField("String", "RUNTIME_STARTUP_MODE", "\"hybrid\"")
         buildConfigField("String", "APP_RUNTIME_TRANSPORT", "\"app_bridge_rpc_transport\"")
@@ -167,6 +167,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-latex:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:inline-parser:4.6.2")
     implementation("io.noties.markwon:syntax-highlight:4.6.2") {
         exclude(group = "org.jetbrains", module = "annotations-java5")
