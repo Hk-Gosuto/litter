@@ -1,24 +1,7 @@
-name: Mobile Release
+name: Mobile Store Release (Manual)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - Makefile
-      - .github/workflows/mobile-release.yml
-      - .github/workflows/android-play-release.yml
-      - .github/workflows/ios-testflight.yml
-      - apps/android/**
-      - apps/ios/**
-      - docs/releases/testflight-whats-new.md
-      - shared/rust-bridge/**
-      - shared/third_party/codex
-      - shared/third_party/ghostty
-      - patches/codex/**
-      - patches/ghostty/**
-      - tools/scripts/build-android-rust.sh
-      - tools/scripts/build-ghostty-android.sh
+  workflow_dispatch:
 
 permissions:
   contents: write
