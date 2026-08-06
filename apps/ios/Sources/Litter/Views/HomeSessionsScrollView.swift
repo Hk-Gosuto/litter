@@ -100,15 +100,6 @@ private let zoomSnapDuration: TimeInterval = 0.22
 
 // MARK: - Scroll view
 
-/// CADisplayLink target shim — it only holds a closure to call on
-/// each tick. `CADisplayLink` needs an ObjC @objc selector target,
-/// which a generic closure-friendly helper provides cleanly.
-private final class PinchBlurFadeTarget {
-    let handler: () -> Void
-    init(_ handler: @escaping () -> Void) { self.handler = handler }
-    @objc func tick() { handler() }
-}
-
 /// Vertical top+bottom vignette drawn over the scroll view during a
 /// pinch. Fades in on `.began`, fades out on snap complete. Adds a
 /// subtle "zooming in the center of the stack" feel — rows near the
@@ -368,15 +359,11 @@ final class HomeSessionsScrollUIView: UIView {
         relayout(animated: layoutAnimated)
         updatePageBackgroundVisibility()
 
-        // Repair stuck pinch-blur state. iOS can finish our paused
-        // `UIViewPropertyAnimator` during NavigationStack push/pop
-        // (terminal → back), leaving a row's `UIVisualEffectView`
-        // showing the full end-state blur. SwiftUI re-runs `apply()`
-        // after the pop, so this is the earliest reliable point to
-        // reset the animator on every visible row.
+        // Modal and navigation transitions can interrupt UIKit animations.
+        // Ensure the decorative pinch dimming is always clear while idle.
         if !isPinching {
             for container in containers.values {
-                container.forceResetPinchBlurIfIdle()
+                container.forceResetPinchDimmingIfIdle()
             }
         }
 
@@ -584,11 +571,8 @@ final class HomeSessionsScrollUIView: UIView {
 
         // Promote every row to displayZoom=4 FIRST so the full content tree
         // is rendered. UIKit frame animation reveals it progressively.
-        // Also reset the per-row blur-progress peak so the ease-out curve
-        // starts from zero for this new gesture.
         for key in order {
             containers[key]?.setDisplayZoom(4)
-            containers[key]?.resetPinchBlurPeak()
         }
 
         isPinching = true
@@ -671,7 +655,7 @@ final class HomeSessionsScrollUIView: UIView {
 
         // Fade the anchor highlight inversely with zoom progress:
         // full alpha at pinchStartZoom, zero at z=4, reversing if the
-        // user pinches back toward the start. Siblings get a blur
+        // user pinches back toward the start. Siblings get a dimming
         // overlay that ramps up in the opposite direction so they
         // recede behind the opening row.
         let denom = max(0.001, 4.0 - pinchStartZoom)
@@ -680,10 +664,10 @@ final class HomeSessionsScrollUIView: UIView {
             guard let container = containers[key] else { continue }
             if i == pinchAnchorIdx {
                 container.setPinchHighlightAlpha(1 - progress)
-                container.setPinchBlurProgress(0)
+                container.setPinchDimmingProgress(0)
             } else {
                 container.setPinchHighlightAlpha(0)
-                container.setPinchBlurProgress(progress)
+                container.setPinchDimmingProgress(progress)
             }
         }
     }
@@ -764,7 +748,7 @@ final class HomeSessionsScrollUIView: UIView {
             if i == pinchAnchorIdx {
                 container.setPinchHighlightAlpha(0, animated: true)
             } else {
-                container.fadeOutPinchBlur()
+                container.fadeOutPinchDimming()
             }
         }
 
@@ -1132,29 +1116,7 @@ final class HomeRowContainer: UIView {
     private let hostClip = UIView()
     private let actionsBackground = UIView()
     private let pinchHighlight = UIView()
-    private let pinchBlur = UIVisualEffectView(effect: nil)
-    /// Paused animator that scrubs the blur effect's intensity via
-    /// `fractionComplete`. Direct alpha on a `UIVisualEffectView`
-    /// gives a crossfade rather than a progressive blur — scrubbing
-    /// an animator's fractionComplete is the canonical way to
-    /// interpolate blur radius on iOS.
-    private var pinchBlurAnimator: UIViewPropertyAnimator?
-    private func makePinchBlurAnimator() -> UIViewPropertyAnimator {
-        let animator = UIViewPropertyAnimator(duration: 1, curve: .linear)
-        animator.addAnimations { [weak self] in
-            self?.pinchBlur.effect = UIBlurEffect(style: .systemThinMaterialDark)
-        }
-        animator.pausesOnCompletion = true
-        // IMPORTANT: the animator must be `.active` (running or paused)
-        // for `fractionComplete` scrubbing to take effect. Right after
-        // construction the animator is `.inactive` and scrubs silently
-        // do nothing — so we kick it to running, immediately pause,
-        // and seed the progress at 0.
-        animator.startAnimation()
-        animator.pauseAnimation()
-        animator.fractionComplete = 0
-        return animator
-    }
+    private let pinchDimmingOverlay = UIView()
     private let leadingIconView = UIImageView()
     private let trailingIconView = UIImageView()
 
@@ -1175,12 +1137,6 @@ final class HomeRowContainer: UIView {
     private var themeManager: ThemeManager?
     private var wallpaperManager: WallpaperManager?
     private var pageBackgroundVisible = false
-    private var fadeLink: CADisplayLink?
-    /// Highest `setPinchBlurProgress` value observed during the current
-    /// pinch. When progress dips below this, we're on the way back and
-    /// the blur uses the inverse (ease-in) curve so it drops faster at
-    /// first — symmetric feel with the slow ramp-up on the way in.
-    private var peakBlurProgress: CGFloat = 0
     /// Natural hostingView height per displayZoom, keyed by (zoom,width).
     /// Invalidated when session data or displayZoom changes.
     private var hostHeightByZoom: [Int: CGFloat] = [:]
@@ -1244,26 +1200,15 @@ final class HomeRowContainer: UIView {
         addSubview(hostClip)
         hostClip.addSubview(hostingController.view)
 
-        // Pinch blur — non-anchor rows have their visual effect
-        // interpolated via `pinchBlurAnimator.fractionComplete` during
-        // pinch. Starts with `effect = nil` (no blur) and scrubs up
-        // to a thin material blur as zoom progresses.
-        //
-        // Skipped whenever we render as a Mac app (Catalyst OR iOS-on-Mac):
-        // UIBlurEffect bridges to NSVisualEffectView and does not honor a
-        // paused animator at fractionComplete=0 — it renders the full
-        // material instead of nothing, so the blur sits over every row
-        // obscuring all content. No pinch gesture in Mac modes anyway,
-        // so the whole pipeline is unused there.
-        //
-        // iOS Reduce Transparency has the same practical failure mode:
-        // system material can collapse to an opaque fallback over the
-        // hosted SwiftUI row. In that accessibility mode, the contrast-
-        // safe behavior is no blur overlay at all.
-        pinchBlur.isUserInteractionEnabled = false
-        pinchBlur.alpha = 1
+        // A simple alpha-driven overlay gives sibling rows depth during a
+        // pinch without relying on a paused UIVisualEffect animator. UIKit
+        // can complete paused blur animators during sheet dismissal, leaving
+        // their full material permanently over the session list.
+        pinchDimmingOverlay.backgroundColor = .black
+        pinchDimmingOverlay.isUserInteractionEnabled = false
+        pinchDimmingOverlay.alpha = 0
         if !LitterPlatform.rendersAsMacApp {
-            updatePinchBlurAvailability()
+            updatePinchDimmingAvailability()
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(reduceTransparencyDidChange),
@@ -1288,82 +1233,48 @@ final class HomeRowContainer: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit {
-        // UIKit raises NSInternalInconsistencyException if a
-        // UIViewPropertyAnimator is released while still in `.active`
-        // (running or paused). We hold it paused-active for
-        // `fractionComplete` scrubbing, so terminate it explicitly here.
-        fadeLink?.invalidate()
         if !LitterPlatform.rendersAsMacApp {
             NotificationCenter.default.removeObserver(
                 self,
                 name: UIAccessibility.reduceTransparencyStatusDidChangeNotification,
                 object: nil
             )
-            tearDownPinchBlurAnimator()
         }
     }
 
     @objc private func reduceTransparencyDidChange() {
-        updatePinchBlurAvailability()
+        updatePinchDimmingAvailability()
         setNeedsLayout()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        // `pinchBlur`'s intensity is driven by a paused
-        // `UIViewPropertyAnimator` whose `fractionComplete` is scrubbed
-        // between `effect = nil` and `systemThinMaterialDark`. When the
-        // hosting NavigationStack pushes a new screen (e.g. terminal)
-        // and pops back, iOS can finish/invalidate paused property
-        // animators, leaving the blur snapped to its full effect — a
-        // milky band sits over the affected rows. When we re-attach to
-        // a window with no pinch in progress, reset the animator from
-        // scratch so it scrubs cleanly back to nil.
-        guard window != nil,
-              !LitterPlatform.rendersAsMacApp,
-              !UIAccessibility.isReduceTransparencyEnabled,
-              scrollHost?.pinchActive != true
-        else { return }
-        fadeLink?.invalidate()
-        fadeLink = nil
-        tearDownPinchBlurAnimator()
-        pinchBlur.effect = nil
-        pinchBlurAnimator = makePinchBlurAnimator()
+        guard window != nil else { return }
+        forceResetPinchDimmingIfIdle()
     }
 
-    private func updatePinchBlurAvailability() {
+    private func updatePinchDimmingAvailability() {
         if UIAccessibility.isReduceTransparencyEnabled {
-            pinchBlur.removeFromSuperview()
-            pinchBlur.effect = nil
-            tearDownPinchBlurAnimator()
+            pinchDimmingOverlay.layer.removeAllAnimations()
+            pinchDimmingOverlay.alpha = 0
+            pinchDimmingOverlay.removeFromSuperview()
             return
         }
 
-        if pinchBlur.superview == nil {
+        if pinchDimmingOverlay.superview == nil {
             if pinchHighlight.superview === self {
-                insertSubview(pinchBlur, belowSubview: pinchHighlight)
+                insertSubview(pinchDimmingOverlay, belowSubview: pinchHighlight)
             } else {
-                insertSubview(pinchBlur, aboveSubview: hostClip)
+                insertSubview(pinchDimmingOverlay, aboveSubview: hostClip)
             }
         }
-
-        if pinchBlurAnimator == nil {
-            pinchBlurAnimator = makePinchBlurAnimator()
-        }
-    }
-
-    private func tearDownPinchBlurAnimator() {
-        guard let animator = pinchBlurAnimator else { return }
-        animator.stopAnimation(false)
-        animator.finishAnimation(at: .current)
-        pinchBlurAnimator = nil
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         backgroundHostingController.view.frame = bounds
         actionsBackground.frame = bounds
-        pinchBlur.frame = bounds
+        pinchDimmingOverlay.frame = bounds
         pinchHighlight.frame = bounds.insetBy(dx: 4, dy: 2)
 
         let iconSize: CGFloat = 22
@@ -1488,94 +1399,48 @@ final class HomeRowContainer: UIView {
         }
     }
 
-    /// Drive blur intensity via the paused animator's fractionComplete.
-    /// Non-anchor rows track pinch progress; anchor row stays at 0.
-    ///
-    /// Shape:
-    ///   * pow-curve eases the start (progress^1.8) so slight pinches
-    ///     don't slam straight into heavy blur.
-    ///   * multiplied by `pinchBlurCeiling` so even at full zoom the
-    ///     blur tops out below the animator's max — keeps siblings
-    ///     legible as silhouettes instead of milky squares.
-    private static let pinchBlurCeiling: CGFloat = 0.5
-    private static let pinchBlurExponent: CGFloat = 2.8
-    func setPinchBlurProgress(_ progress: CGFloat) {
-        // Mac modes (Catalyst + iOS-on-Mac) don't install the
-        // pinch-blur view (see init).
+    /// Dim non-anchor rows during a pinch. A normal view with direct alpha
+    /// is lifecycle-safe: interrupted modal/navigation animations cannot
+    /// materialize an opaque system blur over the row.
+    private static let pinchDimmingCeiling: CGFloat = 0.16
+    private static let pinchDimmingExponent: CGFloat = 2.8
+    func setPinchDimmingProgress(_ progress: CGFloat) {
         if LitterPlatform.rendersAsMacApp { return }
         guard !UIAccessibility.isReduceTransparencyEnabled else {
-            pinchBlur.removeFromSuperview()
-            pinchBlur.effect = nil
-            tearDownPinchBlurAnimator()
+            pinchDimmingOverlay.layer.removeAllAnimations()
+            pinchDimmingOverlay.alpha = 0
+            pinchDimmingOverlay.removeFromSuperview()
             return
         }
-        updatePinchBlurAvailability()
-        guard let pinchBlurAnimator else { return }
+        updatePinchDimmingAvailability()
+        pinchDimmingOverlay.layer.removeAllAnimations()
         let p = max(0, min(1, progress))
-        // Symmetric ease-out curve: blur tracks zoom progress both
-        // directions so a pinch-in that had slowly-building blur will
-        // slowly release it on the way back. No peak tracking — it
-        // introduced a fast-drop curve on collapse that felt like the
-        // blur abruptly vanished.
-        let eased = pow(p, Self.pinchBlurExponent) * Self.pinchBlurCeiling
-        pinchBlurAnimator.fractionComplete = max(0, min(0.999, eased))
+        pinchDimmingOverlay.alpha = pow(p, Self.pinchDimmingExponent) * Self.pinchDimmingCeiling
     }
 
-    /// No-op kept for the scroll host's `.began` call site; the
-    /// direction-aware curve was replaced with a symmetric one.
-    func resetPinchBlurPeak() {}
-
-    /// Force the pinch blur back to a clean, nil-effect state when no
-    /// pinch is in progress. Called from the scroll host's `apply()`
-    /// after every SwiftUI update — covers the case where iOS finishes
-    /// our paused `UIViewPropertyAnimator` out from under us during a
-    /// NavigationStack push/pop (e.g. into the terminal screen and
-    /// back), which otherwise snaps the blur to its end state and
-    /// leaves a milky band over the row.
-    func forceResetPinchBlurIfIdle() {
+    func forceResetPinchDimmingIfIdle() {
         if LitterPlatform.rendersAsMacApp { return }
-        if UIAccessibility.isReduceTransparencyEnabled { return }
-        // A live fade-out is still scrubbing the animator's
-        // fractionComplete back to 0 — don't yank the animator out
-        // from under it.
-        if fadeLink != nil { return }
-        // If the scroll host says a pinch is active, the animator is
-        // being scrubbed in real time. Leave it alone.
         if scrollHost?.pinchActive == true { return }
-        tearDownPinchBlurAnimator()
-        pinchBlur.effect = nil
-        pinchBlurAnimator = makePinchBlurAnimator()
+        pinchDimmingOverlay.layer.removeAllAnimations()
+        pinchDimmingOverlay.alpha = 0
+        updatePinchDimmingAvailability()
     }
 
-    /// Smoothly wind the blur back to zero on pinch release. Uses
-    /// a CADisplayLink-driven tween because UIViewPropertyAnimator's
-    /// `fractionComplete` can't be animated with `UIView.animate`.
-    func fadeOutPinchBlur(duration: TimeInterval = 0.25) {
+    func fadeOutPinchDimming(duration: TimeInterval = 0.25) {
         if LitterPlatform.rendersAsMacApp { return }
-        guard !UIAccessibility.isReduceTransparencyEnabled,
-              let pinchBlurAnimator else {
-            fadeLink?.invalidate()
-            fadeLink = nil
-            pinchBlur.removeFromSuperview()
-            pinchBlur.effect = nil
+        guard !UIAccessibility.isReduceTransparencyEnabled else {
+            pinchDimmingOverlay.layer.removeAllAnimations()
+            pinchDimmingOverlay.alpha = 0
+            pinchDimmingOverlay.removeFromSuperview()
             return
         }
-        fadeLink?.invalidate()
-        let start = CFAbsoluteTimeGetCurrent()
-        let from = pinchBlurAnimator.fractionComplete
-        let link = CADisplayLink(target: PinchBlurFadeTarget { [weak self] in
-            guard let self else { return }
-            let t = min(1, (CFAbsoluteTimeGetCurrent() - start) / duration)
-            let eased = 1 - (1 - t) * (1 - t)  // ease-out quad
-            let value = from * (1 - CGFloat(eased))
-            self.pinchBlurAnimator?.fractionComplete = max(0, value)
-            if t >= 1 {
-                self.fadeLink?.invalidate()
-                self.fadeLink = nil
-            }
-        }, selector: #selector(PinchBlurFadeTarget.tick))
-        link.add(to: .main, forMode: .common)
-        fadeLink = link
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]
+        ) {
+            self.pinchDimmingOverlay.alpha = 0
+        }
     }
 
     /// Set the highlight opacity directly (0–1). Used during a live
