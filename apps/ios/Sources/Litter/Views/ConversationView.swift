@@ -31,6 +31,23 @@ enum ConversationStreamingViewportPolicy {
     }
 }
 
+struct ConversationScrollViewportState: Equatable {
+    let isNearBottom: Bool
+    let showsScrollToBottom: Bool
+
+    static func resolve(
+        distanceFromBottom: CGFloat,
+        nearBottomDistance: CGFloat,
+        scrollToBottomDistance: CGFloat
+    ) -> ConversationScrollViewportState {
+        let distance = max(0, distanceFromBottom)
+        return ConversationScrollViewportState(
+            isNearBottom: distance <= nearBottomDistance,
+            showsScrollToBottom: distance > scrollToBottomDistance
+        )
+    }
+}
+
 struct ConversationView: View {
     @Environment(AppState.self) private var appState
     @Environment(AppModel.self) private var appModel
@@ -601,7 +618,7 @@ private struct ConversationMessageList: View {
     @State private var isNearBottom = true
     @State private var autoFollowStreaming = true
     @State private var userIsDraggingScroll = false
-    @State private var distanceFromBottom: CGFloat = 0
+    @State private var showsScrollToBottom = false
     @State private var waitingForDataExpired = false
     @State private var pinchBaseStep: Int?
     @State private var pinchAppliedDelta = 0
@@ -616,6 +633,7 @@ private struct ConversationMessageList: View {
     @State private var initialBottomScrollThreadScopeID: String?
     @State private var programmaticBottomScrollSettling = false
     @State private var programmaticBottomScrollGeneration = 0
+    @State private var pendingTranscriptSync = false
     @AppStorage("collapseTurns") private var collapseTurns = false
     private static let latestButtonShowDistance: CGFloat = 48
     private static let nearBottomRestoreDistance: CGFloat = 12
@@ -658,7 +676,7 @@ private struct ConversationMessageList: View {
     }
 
     private var shouldShowScrollToBottom: Bool {
-        !items.isEmpty && distanceFromBottom > Self.latestButtonShowDistance
+        !items.isEmpty && showsScrollToBottom
     }
 
     private var activeThreadScopeID: String {
@@ -757,10 +775,14 @@ private struct ConversationMessageList: View {
                 .scrollIndicators(.hidden)
                 .scrollDismissesKeyboard(.interactively)
                 .coordinateSpace(name: Self.scrollCoordinateSpaceName)
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
-                } action: { _, distance in
-                    updateDistanceFromBottom(distance)
+                .onScrollGeometryChange(for: ConversationScrollViewportState.self) { geometry in
+                    ConversationScrollViewportState.resolve(
+                        distanceFromBottom: geometry.contentSize.height - geometry.visibleRect.maxY,
+                        nearBottomDistance: Self.nearBottomRestoreDistance,
+                        scrollToBottomDistance: Self.latestButtonShowDistance
+                    )
+                } action: { _, viewportState in
+                    updateScrollViewportState(viewportState)
                 }
                 // Keep the chat initially bottom-aligned, but don't let keyboard-driven
                 // viewport size changes force a fresh bottom jump with stale lazy heights.
@@ -775,11 +797,19 @@ private struct ConversationMessageList: View {
                     case .tracking, .interacting:
                         programmaticBottomScrollSettling = false
                         userIsDraggingScroll = true
-                        if isStreaming { autoFollowStreaming = false }
+                        if isStreaming {
+                            autoFollowStreaming = false
+                            StreamingRendererCoordinator.shared.setViewportScrolling(true)
+                        }
                     case .decelerating:
                         userIsDraggingScroll = true
                     default:
                         userIsDraggingScroll = false
+                        StreamingRendererCoordinator.shared.setViewportScrolling(false)
+                        if pendingTranscriptSync {
+                            pendingTranscriptSync = false
+                            syncTranscriptTurns()
+                        }
                         if isNearBottom { autoFollowStreaming = true }
                     }
                 }
@@ -791,7 +821,7 @@ private struct ConversationMessageList: View {
                 .onChange(of: activeThreadKey) {
                     autoFollowStreaming = true
                     isNearBottom = true
-                    distanceFromBottom = 0
+                    showsScrollToBottom = false
                     initialBottomScrollThreadScopeID = nil
                     waitingForDataExpired = false
                     syncTranscriptTurns(resetExpansion: true)
@@ -803,6 +833,10 @@ private struct ConversationMessageList: View {
                     waitingForDataExpired = true
                 }
                 .onChange(of: items) { _, _ in
+                    if isStreaming && userIsDraggingScroll {
+                        pendingTranscriptSync = true
+                        return
+                    }
                     syncTranscriptTurns()
                     requestInitialBottomScrollIfNeeded(proxy)
                 }
@@ -816,7 +850,7 @@ private struct ConversationMessageList: View {
                 .onChange(of: sendScrollToken) {
                     autoFollowStreaming = true
                     isNearBottom = true
-                    distanceFromBottom = 0
+                    showsScrollToBottom = false
                     scrollToBottom(proxy)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
@@ -825,10 +859,14 @@ private struct ConversationMessageList: View {
                     }
                 }
                 .onChange(of: threadStatus) { oldStatus, _ in
+                    pendingTranscriptSync = false
                     syncTranscriptTurns()
                     // When streaming ends, finish active renderers so they
                     // switch to static rendering (no re-animation on view rebuild).
                     let wasStreaming = { if case .thinking = oldStatus { return true }; return false }()
+                    if !wasStreaming && isStreaming && userIsDraggingScroll {
+                        StreamingRendererCoordinator.shared.setViewportScrolling(true)
+                    }
                     if wasStreaming && !isStreaming {
                         StreamingRendererCoordinator.shared.finishActive()
                     }
@@ -838,6 +876,9 @@ private struct ConversationMessageList: View {
                             scrollToBottom(proxy)
                         }
                     }
+                }
+                .onDisappear {
+                    StreamingRendererCoordinator.shared.setViewportScrolling(false)
                 }
 
                 if isStreaming {
@@ -852,7 +893,7 @@ private struct ConversationMessageList: View {
                     ScrollToBottomIndicator {
                         autoFollowStreaming = true
                         isNearBottom = true
-                        distanceFromBottom = 0
+                        showsScrollToBottom = false
                         // Jump without animation first so LazyVStack realizes
                         // content near the bottom, then do an animated corrective
                         // scroll once layout has settled.  This avoids the
@@ -913,20 +954,22 @@ private struct ConversationMessageList: View {
         }
     }
 
-    private func updateDistanceFromBottom(_ distance: CGFloat) {
-        let clampedDistance = max(0, distance)
+    private func updateScrollViewportState(_ viewportState: ConversationScrollViewportState) {
         if programmaticBottomScrollSettling {
-            if clampedDistance <= Self.nearBottomRestoreDistance {
+            if viewportState.isNearBottom {
                 programmaticBottomScrollSettling = false
             } else {
                 return
             }
         }
 
-        distanceFromBottom = clampedDistance
-        let nextIsNearBottom = clampedDistance <= Self.nearBottomRestoreDistance
-        if nextIsNearBottom != isNearBottom { isNearBottom = nextIsNearBottom }
-        if nextIsNearBottom {
+        if viewportState.isNearBottom != isNearBottom {
+            isNearBottom = viewportState.isNearBottom
+        }
+        if viewportState.showsScrollToBottom != showsScrollToBottom {
+            showsScrollToBottom = viewportState.showsScrollToBottom
+        }
+        if viewportState.isNearBottom {
             autoFollowStreaming = true
         } else if isStreaming && userIsDraggingScroll {
             autoFollowStreaming = false
@@ -935,7 +978,7 @@ private struct ConversationMessageList: View {
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         isNearBottom = true
-        distanceFromBottom = 0
+        showsScrollToBottom = false
         programmaticBottomScrollGeneration &+= 1
         let generation = programmaticBottomScrollGeneration
         programmaticBottomScrollSettling = true

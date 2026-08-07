@@ -3,6 +3,45 @@ import XCTest
 
 @MainActor
 final class PerformanceHelpersTests: XCTestCase {
+    func testScrollViewportStateOnlyChangesAtRenderingThresholds() {
+        let nearBottom = ConversationScrollViewportState.resolve(
+            distanceFromBottom: 8,
+            nearBottomDistance: 12,
+            scrollToBottomDistance: 48
+        )
+        let middle = ConversationScrollViewportState.resolve(
+            distanceFromBottom: 30,
+            nearBottomDistance: 12,
+            scrollToBottomDistance: 48
+        )
+        let farFromBottom = ConversationScrollViewportState.resolve(
+            distanceFromBottom: 72,
+            nearBottomDistance: 12,
+            scrollToBottomDistance: 48
+        )
+
+        XCTAssertEqual(nearBottom, ConversationScrollViewportState(
+            isNearBottom: true,
+            showsScrollToBottom: false
+        ))
+        XCTAssertEqual(middle, ConversationScrollViewportState(
+            isNearBottom: false,
+            showsScrollToBottom: false
+        ))
+        XCTAssertEqual(farFromBottom, ConversationScrollViewportState(
+            isNearBottom: false,
+            showsScrollToBottom: true
+        ))
+        XCTAssertEqual(
+            middle,
+            ConversationScrollViewportState.resolve(
+                distanceFromBottom: 47,
+                nearBottomDistance: 12,
+                scrollToBottomDistance: 48
+            )
+        )
+    }
+
     func testTranscriptTurnBuilderCollapsesPreviousTurnOnceANewLiveTurnStarts() {
         let baseTime = Date(timeIntervalSince1970: 100)
         let turns = TranscriptTurn.build(

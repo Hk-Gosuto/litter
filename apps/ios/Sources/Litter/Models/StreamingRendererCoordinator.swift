@@ -11,15 +11,25 @@ final class StreamingRendererCoordinator {
 
     private var renderers: [String: StreamingMarkdownRenderer] = [:]
     private var activeItemId: String?
+    private var viewportIsScrolling = false
+    private var bufferedDeltas: [String: [String]] = [:]
 
     // MARK: - Delta feeding
 
     func appendDelta(_ delta: String, for itemId: String) {
         if activeItemId != itemId {
             if let oldId = activeItemId {
-                renderers[oldId]?.finish()
+                finishRenderer(
+                    itemId: oldId,
+                    remove: false,
+                    flushBuffered: !viewportIsScrolling
+                )
             }
             activeItemId = itemId
+        }
+        if viewportIsScrolling {
+            bufferedDeltas[itemId, default: []].append(delta)
+            return
         }
         // Only append to an existing renderer. The first delta arrives via
         // `ThreadItemChanged` (placeholder insert) and never reaches this
@@ -55,14 +65,21 @@ final class StreamingRendererCoordinator {
     }
 
     func finish(itemId: String) {
-        if let r = renderers.removeValue(forKey: itemId) {
-            r.finish()
-        }
+        finishRenderer(
+            itemId: itemId,
+            remove: true,
+            flushBuffered: !viewportIsScrolling
+        )
     }
 
     // MARK: - Streaming lifecycle
 
     func finishActive() {
+        if viewportIsScrolling {
+            bufferedDeltas.removeAll()
+        } else {
+            flushBufferedDeltas()
+        }
         for (_, r) in renderers {
             if !r.isFinished { r.finish() }
         }
@@ -72,7 +89,17 @@ final class StreamingRendererCoordinator {
     func reset() {
         for (_, r) in renderers { r.finish() }
         renderers.removeAll()
+        bufferedDeltas.removeAll()
         activeItemId = nil
+        viewportIsScrolling = false
+    }
+
+    func setViewportScrolling(_ isScrolling: Bool) {
+        guard viewportIsScrolling != isScrolling else { return }
+        viewportIsScrolling = isScrolling
+        if !isScrolling {
+            flushBufferedDeltas()
+        }
     }
 
     // MARK: - Private
@@ -84,5 +111,29 @@ final class StreamingRendererCoordinator {
         )
         renderers[itemId] = r
         return r
+    }
+
+    private func finishRenderer(itemId: String, remove: Bool, flushBuffered: Bool) {
+        if flushBuffered {
+            flushBufferedDeltas(for: itemId)
+        } else {
+            bufferedDeltas.removeValue(forKey: itemId)
+        }
+        let renderer = remove ? renderers.removeValue(forKey: itemId) : renderers[itemId]
+        renderer?.finish()
+    }
+
+    private func flushBufferedDeltas() {
+        let itemIds = Array(bufferedDeltas.keys)
+        for itemId in itemIds {
+            flushBufferedDeltas(for: itemId)
+        }
+    }
+
+    private func flushBufferedDeltas(for itemId: String) {
+        guard let deltas = bufferedDeltas.removeValue(forKey: itemId), !deltas.isEmpty else {
+            return
+        }
+        renderers[itemId]?.append(deltas.joined())
     }
 }
