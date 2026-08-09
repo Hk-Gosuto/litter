@@ -64,6 +64,8 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Verify kittylitter release version
+        run: ./tools/scripts/check-kittylitter-release-version.sh
       - name: Install dist
         # we specify bash to get pipefail; it guards against the `curl` command
         # failing. otherwise `sh` won't catch that `curl` returned non-0
@@ -116,9 +118,6 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
-      CODESIGN_CERTIFICATE: ${{ secrets.CODESIGN_CERTIFICATE }}
-      CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
-      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
     steps:
       - name: enable windows longpaths
         run: |
@@ -135,20 +134,31 @@ jobs:
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
       - name: "Configure sccache env for R2 backend"
+        id: sccache-config
+        env:
+          SCCACHE_R2_ENDPOINT: ${{ secrets.SCCACHE_R2_ENDPOINT }}
+          SCCACHE_R2_ACCESS_KEY_ID: ${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}
+          SCCACHE_R2_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}
         run: |
-          {
-            echo "RUSTC_WRAPPER=sccache"
-            echo "SCCACHE_BUCKET=rust-cache"
-            echo "SCCACHE_REGION=auto"
-            echo "SCCACHE_S3_USE_SSL=true"
-            echo "SCCACHE_S3_KEY_PREFIX=ci/kittylitter-release"
-            echo "SCCACHE_LOG=warn"
-            echo "SCCACHE_ENDPOINT=${{ secrets.SCCACHE_R2_ENDPOINT }}"
-            echo "AWS_ACCESS_KEY_ID=${{ secrets.SCCACHE_R2_ACCESS_KEY_ID }}"
-            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.SCCACHE_R2_SECRET_ACCESS_KEY }}"
-          } >> "$GITHUB_ENV"
+          if [[ -n "$SCCACHE_R2_ENDPOINT" && -n "$SCCACHE_R2_ACCESS_KEY_ID" && -n "$SCCACHE_R2_SECRET_ACCESS_KEY" ]]; then
+            {
+              echo "RUSTC_WRAPPER=sccache"
+              echo "SCCACHE_BUCKET=rust-cache"
+              echo "SCCACHE_REGION=auto"
+              echo "SCCACHE_S3_USE_SSL=true"
+              echo "SCCACHE_S3_KEY_PREFIX=ci/kittylitter-release"
+              echo "SCCACHE_LOG=warn"
+              echo "SCCACHE_ENDPOINT=$SCCACHE_R2_ENDPOINT"
+              echo "AWS_ACCESS_KEY_ID=$SCCACHE_R2_ACCESS_KEY_ID"
+              echo "AWS_SECRET_ACCESS_KEY=$SCCACHE_R2_SECRET_ACCESS_KEY"
+            } >> "$GITHUB_ENV"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
         shell: "bash"
       - name: "Install sccache"
+        if: steps.sccache-config.outputs.enabled == 'true'
         uses: "mozilla-actions/sccache-action@v0.0.9"
       - name: "Resolve Alleycat to latest main"
         run: "./tools/scripts/update-alleycat-main.sh --kittylitter"
@@ -165,6 +175,21 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
+      - name: Configure code signing
+        if: contains(join(matrix.targets, ','), 'apple-darwin')
+        env:
+          RELEASE_CODESIGN_CERTIFICATE: ${{ secrets.CODESIGN_CERTIFICATE }}
+          RELEASE_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
+          RELEASE_CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        shell: bash
+        run: |
+          if [[ -n "$RELEASE_CODESIGN_CERTIFICATE" && -n "$RELEASE_CODESIGN_CERTIFICATE_PASSWORD" && -n "$RELEASE_CODESIGN_IDENTITY" ]]; then
+            {
+              echo "CODESIGN_CERTIFICATE=$RELEASE_CODESIGN_CERTIFICATE"
+              echo "CODESIGN_CERTIFICATE_PASSWORD=$RELEASE_CODESIGN_CERTIFICATE_PASSWORD"
+              echo "CODESIGN_IDENTITY=$RELEASE_CODESIGN_IDENTITY"
+            } >> "$GITHUB_ENV"
+          fi
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot

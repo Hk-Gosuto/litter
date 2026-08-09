@@ -94,12 +94,23 @@ asc versions attach-build \
     --build "$BUILD_ID" \
     --output json >/dev/null
 
+echo "==> Completing current App Store age-rating fields"
+asc age-rating edit \
+    --version-id "$VERSION_ID" \
+    --social-media false \
+    --social-media-age-restricted false \
+    --output json >/dev/null
+
 echo "==> Validating App Store submission readiness"
-asc validate \
+validate_log="$BUILD_DIR/validation.json"
+if ! asc validate \
     --app "$APP_STORE_APP_ID" \
     --version-id "$VERSION_ID" \
     --strict \
-    --output json >/dev/null
+    --output json >"$validate_log" 2>&1; then
+    cat "$validate_log" >&2
+    exit 1
+fi
 
 echo "==> Submitting build for App Store review"
 SUBMISSION_ID="$(

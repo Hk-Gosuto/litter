@@ -176,6 +176,7 @@
 		40BE68DE19BEE162E0F2C25B /* MessageRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2325BAE1FF0D41A4D5ADE3AD /* MessageRecorder.swift */; };
 		40F262594905BCA726B1DF88 /* HomeBottomBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C2A455B0E2E7C8B6EE59A93 /* HomeBottomBar.swift */; };
 		41EBAC505474E27E708900E0 /* home_cat_entrance.png in Resources */ = {isa = PBXBuildFile; fileRef = D70AE5F73F3A58B628BFC08D /* home_cat_entrance.png */; };
+		421906FCD9348DE5EA7447D2 /* AlleycatPairingModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D9B7168247D5201C4795A69 /* AlleycatPairingModeTests.swift */; };
 		421F71E305371CDE71D5A10D /* github-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 760BBA087DD7F86B27829E23 /* github-light.json */; };
 		421FFC77E9CD0E243F365BBF /* HomeVoiceOrbButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 592BE0CE703BB2B31738D8C2 /* HomeVoiceOrbButton.swift */; };
 		42A4C9ADE94A9529F8C009B8 /* WatchSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E180C9F641FCFD7E60D943 /* WatchSnapshotStore.swift */; };
@@ -967,6 +968,7 @@
 		89172C83E4194291FF873A88 /* houston.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = houston.json; sourceTree = "<group>"; };
 		892D583790A9BD90CFD89701 /* LockScreenCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenCardView.swift; sourceTree = "<group>"; };
 		8BE99A02238FD8184F77DD49 /* WallpaperAdjustView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperAdjustView.swift; sourceTree = "<group>"; };
+		8D9B7168247D5201C4795A69 /* AlleycatPairingModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlleycatPairingModeTests.swift; sourceTree = "<group>"; };
 		8F98D2E0622F1A4DADC1E888 /* cat_transmission_01.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cat_transmission_01.png; sourceTree = "<group>"; };
 		923C3634CB4FDDA1286DB63F /* LitterLiveActivity.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LitterLiveActivity.entitlements; sourceTree = "<group>"; };
 		92B1669CE17E1EB46A17C610 /* kitty-litter-dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "kitty-litter-dark.json"; sourceTree = "<group>"; };
@@ -1236,6 +1238,7 @@
 		42471419A8813CCF74840C78 /* LitterTests */ = {
 			isa = PBXGroup;
 			children = (
+				8D9B7168247D5201C4795A69 /* AlleycatPairingModeTests.swift */,
 				A2B54BE7A4BAB652B94955CA /* AppLanguageTests.swift */,
 				49496FAE8491262D2C8CC657 /* AppSnapshotRuntimeTests.swift */,
 				F3474B8EA8D3148C94A7583F /* AppStatePermissionTests.swift */,
@@ -2255,6 +2258,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				421906FCD9348DE5EA7447D2 /* AlleycatPairingModeTests.swift in Sources */,
 				32981C07CD9D4598A5ABC698 /* AppLanguageTests.swift in Sources */,
 				D24451D266FD2443C0D7CBC4 /* AppSnapshotRuntimeTests.swift in Sources */,
 				620FC2343DCFADD1034E9CCB /* AppStatePermissionTests.swift in Sources */,
@@ -2935,7 +2939,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim";
-				MARKETING_VERSION = 1.7.0;
+				MARKETING_VERSION = 2.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client";
@@ -3085,7 +3089,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim";
-				MARKETING_VERSION = 1.7.0;
+				MARKETING_VERSION = 2.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -3174,7 +3178,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim";
-				MARKETING_VERSION = 1.7.0;
+				MARKETING_VERSION = 2.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client";

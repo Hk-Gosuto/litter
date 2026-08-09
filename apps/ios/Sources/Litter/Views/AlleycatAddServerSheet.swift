@@ -37,6 +37,10 @@ enum AlleycatPairingMode: String, Equatable, Identifiable {
             )
         }
     }
+
+    func includesAgent(named name: String) -> Bool {
+        self != .localStudio || name == "local-studio"
+    }
 }
 
 struct AlleycatAddServerSheet: View {
@@ -394,10 +398,7 @@ struct AlleycatAddServerSheet: View {
     }
 
     private var availableAgents: [AppAlleycatAgentInfo] {
-        // A Local Studio pairing credential grants access to the whole
-        // controller. Keep Codex and every other enabled runtime attached so
-        // their model catalogs remain available in the shared picker.
-        agents.filter(\.available)
+        agents.filter { $0.available && pairingMode.includesAgent(named: $0.name) }
     }
 
     private var selectedAgents: [AppAlleycatAgentInfo] {
@@ -449,7 +450,9 @@ struct AlleycatAddServerSheet: View {
                     guard parsedParams?.nodeId == params.nodeId else { return }
                     agents = loaded
                     selectedAgentNames = Set(
-                        loaded.filter(\.available).map(\.name)
+                        loaded
+                            .filter { $0.available && pairingMode.includesAgent(named: $0.name) }
+                            .map(\.name)
                     )
                     isLoadingAgents = false
                     agentError = nil

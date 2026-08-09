@@ -347,6 +347,28 @@ mod mobile_client_tests {
     }
 
     #[test]
+    fn thread_start_runtime_uses_sole_local_studio_runtime() {
+        let client = MobileClient::new();
+        client
+            .app_store
+            .upsert_server(&make_server_config("srv"), ServerHealthSnapshot::Connected);
+        client.app_store.update_server_agent_runtimes(
+            "srv",
+            vec![AgentRuntimeInfo {
+                kind: "local-studio".to_string(),
+                name: "local-studio".to_string(),
+                display_name: "Local Studio".to_string(),
+                available: true,
+            }],
+        );
+
+        assert_eq!(
+            client.runtime_for_thread_start("srv", None, None),
+            "local-studio".to_string()
+        );
+    }
+
+    #[test]
     fn thread_start_runtime_explicit_agent_wins_over_duplicate_model() {
         let client = MobileClient::new();
         client
@@ -474,13 +496,31 @@ mod mobile_client_tests {
     }
 
     #[test]
-    fn local_studio_controller_connections_expand_legacy_agent_selection() {
-        assert!(local_studio_controller_uses_all_agents(
+    fn local_studio_controller_connections_preserve_local_studio_scope() {
+        assert!(is_local_studio_controller(
             "alleycat:local-studio:controller-node"
         ));
-        assert!(!local_studio_controller_uses_all_agents(
-            "alleycat:controller-node"
+        assert!(!is_local_studio_controller("alleycat:controller-node"));
+        let all_agents = HashSet::from([
+            "local-studio".to_string(),
+            "codex".to_string(),
+            "pi".to_string(),
+        ]);
+        assert!(alleycat_agent_is_requested(
+            true,
+            &all_agents,
+            "local-studio"
         ));
+        assert!(!alleycat_agent_is_requested(true, &all_agents, "codex"));
+        assert!(!alleycat_agent_is_requested(true, &all_agents, "pi"));
+        assert!(alleycat_agent_is_requested(
+            false,
+            &all_agents,
+            "local-studio"
+        ));
+        assert!(alleycat_agent_is_requested(false, &all_agents, "codex"));
+        assert!(alleycat_agent_is_requested(false, &all_agents, "pi"));
+        assert!(alleycat_agent_is_requested(false, &HashSet::new(), "codex"));
         assert_eq!(
             alleycat_inventory_refresh_delays(true),
             ALLEYCAT_AGENT_INVENTORY_REFRESH_DELAYS_MS
@@ -541,38 +581,99 @@ mod mobile_client_tests {
     }
 
     #[test]
-    fn pi_runtimes_always_start_full_access() {
+    fn pi_runtimes_always_use_full_access_without_approvals() {
         let client = MobileClient::new();
-        for (runtime, approval_policy, sandbox) in [
-            ("pi", None, None),
-            (
-                "pi",
-                Some(upstream::AskForApproval::OnRequest),
-                Some(upstream::SandboxMode::WorkspaceWrite),
-            ),
-            ("local-studio", None, None),
-        ] {
-            let mut request = upstream::ClientRequest::ThreadStart {
-                request_id: upstream::RequestId::Integer(1),
-                params: upstream::ThreadStartParams {
-                    approval_policy,
-                    sandbox,
-                    ..Default::default()
+        for runtime in ["pi", "local-studio"] {
+            let mut requests = vec![
+                upstream::ClientRequest::ThreadStart {
+                    request_id: upstream::RequestId::Integer(1),
+                    params: upstream::ThreadStartParams::default(),
                 },
-            };
-            client.normalize_model_selection_for_request("srv", runtime.into(), &mut request);
-            let upstream::ClientRequest::ThreadStart { params, .. } = request else {
-                panic!("expected thread/start");
-            };
-            assert_eq!(
-                params.approval_policy,
-                Some(upstream::AskForApproval::Never)
-            );
-            assert_eq!(
-                params.sandbox,
-                Some(upstream::SandboxMode::DangerFullAccess)
-            );
+                upstream::ClientRequest::ThreadResume {
+                    request_id: upstream::RequestId::Integer(2),
+                    params: upstream::ThreadResumeParams::default(),
+                },
+                upstream::ClientRequest::ThreadFork {
+                    request_id: upstream::RequestId::Integer(3),
+                    params: upstream::ThreadForkParams::default(),
+                },
+                upstream::ClientRequest::TurnStart {
+                    request_id: upstream::RequestId::Integer(4),
+                    params: upstream::TurnStartParams::default(),
+                },
+            ];
+
+            for request in &mut requests {
+                client.normalize_model_selection_for_request("srv", runtime.into(), request);
+                match request {
+                    upstream::ClientRequest::ThreadStart { params, .. } => {
+                        assert_eq!(
+                            params.approval_policy,
+                            Some(upstream::AskForApproval::Never)
+                        );
+                        assert_eq!(
+                            params.sandbox,
+                            Some(upstream::SandboxMode::DangerFullAccess)
+                        );
+                    }
+                    upstream::ClientRequest::ThreadResume { params, .. } => {
+                        assert_eq!(
+                            params.approval_policy,
+                            Some(upstream::AskForApproval::Never)
+                        );
+                        assert_eq!(
+                            params.sandbox,
+                            Some(upstream::SandboxMode::DangerFullAccess)
+                        );
+                    }
+                    upstream::ClientRequest::ThreadFork { params, .. } => {
+                        assert_eq!(
+                            params.approval_policy,
+                            Some(upstream::AskForApproval::Never)
+                        );
+                        assert_eq!(
+                            params.sandbox,
+                            Some(upstream::SandboxMode::DangerFullAccess)
+                        );
+                    }
+                    upstream::ClientRequest::TurnStart { params, .. } => {
+                        assert_eq!(
+                            params.approval_policy,
+                            Some(upstream::AskForApproval::Never)
+                        );
+                        assert_eq!(
+                            params.sandbox_policy,
+                            Some(upstream::SandboxPolicy::DangerFullAccess)
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            }
         }
+    }
+
+    #[test]
+    fn codex_permission_overrides_remain_unchanged() {
+        let client = MobileClient::new();
+        let mut request = upstream::ClientRequest::ThreadStart {
+            request_id: upstream::RequestId::Integer(1),
+            params: upstream::ThreadStartParams {
+                approval_policy: Some(upstream::AskForApproval::OnRequest),
+                sandbox: Some(upstream::SandboxMode::WorkspaceWrite),
+                ..Default::default()
+            },
+        };
+
+        client.normalize_model_selection_for_request("srv", "codex".into(), &mut request);
+
+        let upstream::ClientRequest::ThreadStart { params, .. } = request else {
+            unreachable!();
+        };
+        assert_eq!(
+            params.approval_policy,
+            Some(upstream::AskForApproval::OnRequest)
+        );
+        assert_eq!(params.sandbox, Some(upstream::SandboxMode::WorkspaceWrite));
     }
 
     #[test]
