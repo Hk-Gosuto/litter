@@ -49,8 +49,8 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.ViewAgenda
-import androidx.compose.material.icons.outlined.ViewList
-import androidx.compose.material.icons.outlined.ViewQuilt
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.automirrored.outlined.ViewQuilt
 import androidx.compose.material.icons.outlined.ViewStream
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -230,14 +230,6 @@ fun HomeDashboardScreen(
         try { com.litter.android.state.SavedAppsStore.reload(context) } catch (_: Exception) {}
     }
     val savedAppsAll by com.litter.android.state.SavedAppsStore.apps.collectAsState()
-    val savedAppsByThread = remember(savedAppsAll) {
-        savedAppsAll
-            .asSequence()
-            .filter { it.originThreadId != null }
-            .groupBy { it.originThreadId!! }
-            .mapValues { (_, v) -> v.sortedByDescending { it.updatedAtMs } }
-    }
-
     var confirmAction by remember { mutableStateOf<ConfirmAction?>(null) }
     // Hoisted reply-sheet target. Both the row swipe and the long-press
     // "Reply" menu item set this; the QuickReplySheet renders once at this
@@ -272,8 +264,8 @@ fun HomeDashboardScreen(
 
     fun zoomIconFor(level: Int): ImageVector = when (level) {
         // Matches iOS semantics: 1 = most compact (scan), 4 = most detail (deep).
-        1 -> Icons.Outlined.ViewQuilt
-        2 -> Icons.Outlined.ViewList
+        1 -> Icons.AutoMirrored.Outlined.ViewQuilt
+        2 -> Icons.AutoMirrored.Outlined.ViewList
         3 -> Icons.Outlined.ViewAgenda
         else -> Icons.Outlined.ViewStream
     }
@@ -436,7 +428,6 @@ fun HomeDashboardScreen(
                     // QuickReplySheet. Nesting `SwipeToHideRow` inside
                     // `SessionReplySwipe` would have the two pointer handlers
                     // fighting over the same drag stream.
-                    val sessionApps = savedAppsByThread[session.key.threadId].orEmpty()
                     val sessionPinKey = PinnedThreadKey(
                         serverId = session.key.serverId,
                         threadId = session.key.threadId,

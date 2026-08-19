@@ -33,13 +33,8 @@ android {
         applicationId = "com.sigkitten.litter.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 200000254
-        versionName = "2.0.0"
-        buildConfigField("boolean", "ENABLE_ON_DEVICE_BRIDGE", "true")
-        buildConfigField("String", "RUNTIME_STARTUP_MODE", "\"hybrid\"")
-        buildConfigField("String", "APP_RUNTIME_TRANSPORT", "\"app_bridge_rpc_transport\"")
-        manifestPlaceholders["runtimeStartupMode"] = "hybrid"
-        manifestPlaceholders["enableOnDeviceBridge"] = "true"
+        versionCode = 210000001
+        versionName = "2.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += supportedAbis
@@ -165,6 +160,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-svg:2.7.0")
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-latex:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")

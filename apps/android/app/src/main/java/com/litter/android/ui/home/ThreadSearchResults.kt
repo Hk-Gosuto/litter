@@ -30,7 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
 import uniffi.codex_mobile_client.ThreadKey
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -181,7 +181,7 @@ fun ThreadSearchResults(
                             onUnpin = onUnpin,
                         )
                     }
-                    Divider(color = LitterTheme.border.copy(alpha = 0.15f))
+                    HorizontalDivider(color = LitterTheme.border.copy(alpha = 0.15f))
                 }
             }
         }
@@ -309,6 +309,11 @@ private fun ThreadSearchRow(
                         color = LitterTheme.textMuted.copy(alpha = 0.8f),
                         fontSize = 10f.scaled,
                         fontFamily = FontFamily.Monospace,
+                        // See SessionCanvasRow: an uncapped timestamp is the
+                        // only child free to wrap, so a narrow row breaks it
+                        // one character per line (#162).
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }
@@ -417,6 +422,8 @@ private fun ThreadSearchClusterRow(
                             color = LitterTheme.textMuted.copy(alpha = 0.8f),
                             fontSize = 10f.scaled,
                             fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            softWrap = false,
                         )
                     }
                 }

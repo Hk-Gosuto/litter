@@ -162,6 +162,13 @@ final class HomeSessionsScrollUIView: UIView {
     /// intrinsic SwiftUI layout — shift with the user's text-size
     /// preference.
     private var lastTextScale: CGFloat = 0
+    /// Whether a deferred measurement pass is already scheduled.
+    /// Prevents stacking multiple async measurement passes when
+    /// `apply()` fires rapidly (e.g. during initial session load).
+    private var deferredMeasureScheduled = false
+    /// Reentrancy guard: `performDeferredMeasurements` calls `relayout`, which
+    /// drains the flag again.
+    private var isPerformingDeferredMeasurements = false
 
     var zoomCommit: ((Int) -> Void)?
 
@@ -250,12 +257,11 @@ final class HomeSessionsScrollUIView: UIView {
     private func updateScrollEnabled() {
         let enabled = !(isPinching || activeSwipeRowCount > 0)
         scrollView.isScrollEnabled = enabled
-        // Also toggle the pan recognizer directly — `isScrollEnabled`
-        // is the public knob but the pan can occasionally still fire
-        // in-flight events. Disabling the recognizer cancels any
-        // pending pan gesture immediately so `contentOffset` stays
-        // under our pinch-anchor control.
-        scrollView.panGestureRecognizer.isEnabled = enabled
+        // Do not toggle `panGestureRecognizer.isEnabled` here. UIKit can
+        // cancel a row's long-press recognizer when the pan recognizer is
+        // disabled, skipping the row's normal cleanup and leaving the list
+        // permanently locked. `isScrollEnabled` is sufficient to freeze the
+        // offset while a committed horizontal swipe or pinch is active.
     }
 
     private func invalidateMeasurements() {
@@ -321,6 +327,7 @@ final class HomeSessionsScrollUIView: UIView {
         let newSet = Set(newIds)
         for key in Array(containers.keys) where !newSet.contains(key) {
             if let c = containers.removeValue(forKey: key) {
+                c.cancelSwipeIfNeeded()
                 c.removeFromSuperview()
             }
         }
@@ -443,6 +450,22 @@ final class HomeSessionsScrollUIView: UIView {
             scrollView.contentSize = newContentSize
             updatePageBackgroundVisibility()
         }
+
+        scheduleDeferredMeasurementsIfNeeded()
+    }
+
+    /// `rowHeight(for:at:width:)` sets `deferredMeasureScheduled` when it hands
+    /// back a fallback height, and it is reached from every `relayout` — not
+    /// just the one in `apply()`. Draining the flag here rather than at a
+    /// single call site is what stops a relayout driven by zoom commit, pinch
+    /// end, or a bounds change from leaving rows parked on fallback heights
+    /// until the next `apply()`.
+    private func scheduleDeferredMeasurementsIfNeeded() {
+        guard deferredMeasureScheduled, !isPinching, !isPerformingDeferredMeasurements else { return }
+        deferredMeasureScheduled = false
+        DispatchQueue.main.async { [weak self] in
+            self?.performDeferredMeasurements()
+        }
     }
 
     fileprivate func updatePageBackgroundVisibility() {
@@ -535,7 +558,15 @@ final class HomeSessionsScrollUIView: UIView {
             return measured
         }
         if container.currentDisplayZoom == zoomInt {
-            return container.forceMeasureHostHeight(width: width)
+            // During a pinch we need accurate heights immediately for
+            // smooth tracking. Otherwise, defer the measurement to the
+            // next runloop so we don't block the main thread (and the
+            // keyboard) while measuring 10+ hosted SwiftUI rows.
+            if isPinching {
+                return container.forceMeasureHostHeight(width: width)
+            }
+            deferredMeasureScheduled = true
+            return Self.staticFallbackHeight(for: zoomInt)
         }
         switch zoomInt {
         case 1: return ZoomHeights.z1
@@ -543,6 +574,41 @@ final class HomeSessionsScrollUIView: UIView {
         case 3: return ZoomHeights.z3
         default: return container.naturalHeightAtZoom4(width: width)
         }
+    }
+
+    /// Static fallback height used before a deferred measurement completes.
+    /// These match the pre-measurement anchors so the initial layout
+    /// is visually close to the final result.
+    private static func staticFallbackHeight(for zoomInt: Int) -> CGFloat {
+        switch zoomInt {
+        case 1: return ZoomHeights.z1
+        case 2: return ZoomHeights.z2
+        case 3: return ZoomHeights.z3
+        default: return 400
+        }
+    }
+
+    /// Measure all rows that still lack a cached height at their current
+    /// display zoom, then re-layout. Called on the next runloop after
+    /// `relayout` so the initial pass uses cheap fallback heights and
+    /// doesn't block the keyboard or other main-thread interactions.
+    private func performDeferredMeasurements() {
+        let width = bounds.width
+        guard width > 0 else { return }
+        // `relayout` below re-enters `rowHeight`, which would re-arm the flag
+        // and schedule another pass — an endless measure/relayout loop for any
+        // row whose height genuinely cannot be cached.
+        isPerformingDeferredMeasurements = true
+        defer { isPerformingDeferredMeasurements = false }
+        for key in order {
+            guard let container = containers[key] else { continue }
+            let zoom = container.currentDisplayZoom
+            if container.cachedNaturalHeight(atZoom: zoom, width: width) == nil {
+                container.forceMeasureHostHeight(width: width)
+            }
+        }
+        relayout(animated: false)
+        updatePageBackgroundVisibility()
     }
 
     // MARK: - Pinch
@@ -905,8 +971,8 @@ private struct HomeCatFooterView: View {
 
     @State private var showingLoop: Bool
 
-    private let entranceURL = Bundle.main.url(forResource: "home_cat_entrance", withExtension: "png")
-    private let loopURL = Bundle.main.url(forResource: "home_cat", withExtension: "png")
+    private let entranceURL = Bundle.main.url(forResource: "home_cat_entrance", withExtension: "webp")
+    private let loopURL = Bundle.main.url(forResource: "home_cat", withExtension: "webp")
 
     init(playEntrance: Bool) {
         self.playEntrance = playEntrance
@@ -1367,6 +1433,9 @@ final class HomeRowContainer: UIView {
         callbacks: HomeSessionsScrollView.Callbacks
     ) {
         let sessionChanged = self.session != session
+        if sessionChanged {
+            cancelSwipeIfNeeded()
+        }
         let stateChanged = self.isOpening != isOpening ||
             self.isHydrating != isHydrating ||
             self.isCancelling != isCancelling ||
@@ -1567,8 +1636,7 @@ final class HomeRowContainer: UIView {
         // bail immediately — reset offset and stop tracking.
         if g.numberOfTouches > 1 || scrollHost?.pinchActive == true {
             if swipeTracking {
-                swipeTracking = false
-                reset(animated: true)
+                cancelSwipeIfNeeded(animated: true)
             }
             return
         }
@@ -1606,14 +1674,9 @@ final class HomeRowContainer: UIView {
             layoutIfNeeded()
         case .ended, .cancelled, .failed:
             guard swipeTracking else { return }
-            swipeTracking = false
             let w = point.x - swipeStartPoint.x
             let shouldFire = activated && scrollHost?.pinchActive != true
-            if activated {
-                scrollHost?.noteRowSwipeChanged(activated: false)
-            }
-            activated = false
-            pastThreshold = false
+            cancelSwipeIfNeeded(animated: true)
             if shouldFire && w > Self.fullSwipeThreshold {
                 callbacks.onReply(session)
                 let gen = UIImpactFeedbackGenerator(style: .heavy)
@@ -1623,10 +1686,24 @@ final class HomeRowContainer: UIView {
                 let gen = UIImpactFeedbackGenerator(style: .heavy)
                 gen.impactOccurred(intensity: 0.9)
             }
-            reset(animated: true)
         default:
             break
         }
+    }
+
+    /// A row can leave the hierarchy or have its session replaced while a
+    /// horizontal swipe is committed. Make that cleanup idempotent so the
+    /// scroll host's swipe count cannot outlive the row that incremented it.
+    func cancelSwipeIfNeeded(animated: Bool = false) {
+        let wasActivated = activated
+        swipeTracking = false
+        activated = false
+        pastThreshold = false
+        if wasActivated {
+            scrollHost?.noteRowSwipeChanged(activated: false)
+        }
+        guard offsetX != 0 else { return }
+        reset(animated: animated)
     }
 
     private func reset(animated: Bool) {
@@ -1780,10 +1857,10 @@ private struct SessionContextMenuPreview: View {
             if !session.serverDisplayName.isEmpty {
                 HStack(spacing: 5) {
                     Text(session.agentRuntimeKind.displayLabel)
-                        .litterMonoFont(size: 9, weight: .semibold)
+                        .litterFont(size: 9, weight: .semibold)
                         .foregroundStyle(LitterTheme.accent.opacity(0.8))
                     Text(session.serverDisplayName)
-                        .litterMonoFont(size: 10)
+                        .litterFont(size: 10)
                         .foregroundStyle(LitterTheme.textSecondary.opacity(0.75))
                         .lineLimit(1)
                 }

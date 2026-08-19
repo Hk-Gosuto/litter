@@ -26,6 +26,13 @@ struct HomeDashboardView: View {
     let selectedServerId: String?
     let selectedProject: AppProject?
     let openingRecentSessionKey: ThreadKey?
+    /// Precomputed by HomeDashboardModel so `.onChange` doesn't
+    /// re-allocate + stringify the visible list on every body eval.
+    let visibleHydrationSignature: String
+    let visibleActivitySignature: String
+    /// Precomputed server snapshot lookup so HomeModelChip and other home
+    /// views don't read `appModel.snapshot` in body.
+    var serverSnapshotsById: [String: AppServerSnapshot] = [:]
     let onOpenRecentSession: @MainActor (HomeDashboardRecentSession) async -> Void
     let onSelectServer: (HomeDashboardServer) -> Void
     let onAddServer: () -> Void
@@ -200,7 +207,7 @@ struct HomeDashboardView: View {
             }
             .task { await TipJarStore.shared.loadProducts() }
             .onAppear { autoHydrateIfNeeded() }
-            .onChange(of: visibleSessions.map { hydrationId($0.key) }) { _, _ in
+            .onChange(of: visibleHydrationSignature) { _, _ in
                 autoHydrateIfNeeded()
             }
             .onChange(of: pinnedThreadKeys) { _, _ in
@@ -209,7 +216,7 @@ struct HomeDashboardView: View {
             // Clear a cancelled key once the snapshot says the turn is
             // actually gone. Gives the dot a brief red period while the
             // cancel is in flight, then reverts to normal indicator logic.
-            .onChange(of: visibleSessions.map { "\(hydrationId($0.key)):\($0.hasTurnActive)" }) { _, _ in
+            .onChange(of: visibleActivitySignature) { _, _ in
                 let stillActive = Set(
                     visibleSessions
                         .filter { $0.hasTurnActive }
@@ -520,6 +527,7 @@ struct HomeDashboardView: View {
                     HomeModelChip(
                         serverId: composerServerId,
                         disabled: selectedLaunchableServer == nil,
+                        server: composerServerId.flatMap { serverSnapshotsById[$0] },
                         onSheetStateChange: { isPresented in
                             suppressComposerCollapse = isPresented
                         }
@@ -640,8 +648,8 @@ struct HomeDashboardView: View {
 private struct EmptyHomeFatCatView: View {
     @State private var showingLoop = false
 
-    private let entranceURL = Bundle.main.url(forResource: "home_cat_entrance", withExtension: "png")
-    private let loopURL = Bundle.main.url(forResource: "home_cat", withExtension: "png")
+    private let entranceURL = Bundle.main.url(forResource: "home_cat_entrance", withExtension: "webp")
+    private let loopURL = Bundle.main.url(forResource: "home_cat", withExtension: "webp")
 
     var body: some View {
         CatTransmissionPressView {
@@ -773,7 +781,7 @@ struct SessionCanvasLine: View {
                     Spacer(minLength: 6)
                     if zoomLevel == 1 {
                         Text(timeAgo)
-                            .litterMonoFont(size: 10, weight: .regular)
+                            .litterFont(size: 10, weight: .regular)
                             .foregroundStyle(LitterTheme.textMuted.opacity(0.7))
                             .fixedSize()
                     }
@@ -873,39 +881,6 @@ struct SessionCanvasLine: View {
 
     // MARK: - Zoom 2: meta line
 
-    private var metaLine: some View {
-        HStack(spacing: 4) {
-            Text(timeAgo)
-                .foregroundStyle(LitterTheme.textMuted.opacity(0.8))
-            // Only show the tool label + pulsing dots when a tool call
-            // is actually executing. During pure LLM thinking/streaming
-            // we fall through to the server + workspace metadata, same
-            // as when the turn is idle.
-            if isActive && isToolCallRunning {
-                Text("\u{00b7}")
-                    .foregroundStyle(LitterTheme.textMuted.opacity(0.5))
-                toolActivityLabel
-                SessionPulsingDots()
-                statChips
-            } else {
-                Text("\u{00b7}")
-                    .foregroundStyle(LitterTheme.textMuted.opacity(0.5))
-                Text(session.serverDisplayName)
-                    .foregroundStyle(LitterTheme.textSecondary.opacity(0.7))
-                if let workspace = HomeDashboardSupport.workspaceLabel(for: session.cwd) {
-                    Text("\u{00b7}")
-                        .foregroundStyle(LitterTheme.textMuted.opacity(0.5))
-                    Text(workspace)
-                        .foregroundStyle(LitterTheme.textSecondary.opacity(0.8))
-                }
-                statChips
-            }
-        }
-        .litterMonoFont(size: 10, weight: .regular)
-        .lineLimit(1)
-        .padding(.top, 2)
-    }
-
     /// Inline stat chips: tool calls, turns, context %
     @ViewBuilder
     private var statChips: some View {
@@ -996,7 +971,7 @@ struct SessionCanvasLine: View {
             }
             Spacer(minLength: 0)
         }
-        .litterMonoFont(size: 10, weight: .regular)
+        .litterFont(size: 10, weight: .regular)
         .lineLimit(1)
         .truncationMode(.tail)
         .padding(.top, 1)
@@ -1067,7 +1042,7 @@ struct SessionCanvasLine: View {
                 }
                 Spacer(minLength: 0)
             }
-            .litterMonoFont(size: 10, weight: .regular)
+            .litterFont(size: 10, weight: .regular)
             .padding(.top, 4)
         }
     }
@@ -1156,7 +1131,7 @@ struct SessionCanvasLine: View {
                     }
                 }
             }
-            .litterMonoFont(size: 12, weight: .regular)
+            .litterFont(size: 12, weight: .regular)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 10)
             .overlay(alignment: .top) {
@@ -1179,11 +1154,11 @@ struct SessionCanvasLine: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text("GOAL")
-                    .litterMonoFont(size: 9, weight: .semibold)
+                    .litterFont(size: 9, weight: .semibold)
                     .tracking(1.2)
                     .foregroundStyle(LitterTheme.textMuted.opacity(0.65))
                 Text(goalStatusLabel(goal.status))
-                    .litterMonoFont(size: 9, weight: .semibold)
+                    .litterFont(size: 9, weight: .semibold)
                     .tracking(0.6)
                     .foregroundStyle(goalStatusTint(goal.status).opacity(0.85))
             }
@@ -1193,7 +1168,7 @@ struct SessionCanvasLine: View {
                     .frame(width: 6, height: 6)
                     .padding(.top, 5)
                 Text(goal.objective)
-                    .litterMonoFont(size: 12, weight: .regular)
+                    .litterFont(size: 12, weight: .regular)
                     .foregroundStyle(LitterTheme.textSecondary.opacity(0.95))
                     .lineLimit(2)
                     .truncationMode(.tail)
@@ -1240,7 +1215,7 @@ struct SessionCanvasLine: View {
                     .foregroundStyle(valueColor)
                 Text(LocalizedStringKey(label))
                     .foregroundStyle(LitterTheme.textMuted.opacity(0.65))
-                    .litterMonoFont(size: 11, weight: .regular)
+                    .litterFont(size: 11, weight: .regular)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1310,7 +1285,7 @@ struct SessionCanvasLine: View {
                     .foregroundStyle(LitterTheme.textMuted.opacity(0.7))
                 }
             }
-            .litterMonoFont(size: 10, weight: .regular)
+            .litterFont(size: 10, weight: .regular)
             .padding(.top, 1)
         }
     }
@@ -1385,7 +1360,7 @@ struct SessionCanvasLine: View {
     @ViewBuilder
     private var activityHeader: some View {
         Text("RECENT ACTIVITY")
-            .litterMonoFont(size: 9, weight: .semibold)
+            .litterFont(size: 9, weight: .semibold)
             .tracking(1.2)
             .foregroundStyle(LitterTheme.textMuted.opacity(0.65))
             .padding(.top, 10)
@@ -1401,7 +1376,7 @@ struct SessionCanvasLine: View {
     private var cwdFooter: some View {
         HStack(spacing: 8) {
             Text(PathDisplay.display(session.cwd, isLocal: session.isLocal))
-                .litterMonoFont(size: 10, weight: .regular)
+                .litterFont(size: 10, weight: .regular)
                 .foregroundStyle(LitterTheme.textMuted.opacity(0.7))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1411,7 +1386,7 @@ struct SessionCanvasLine: View {
                         .fill(LitterTheme.accent)
                         .frame(width: 4, height: 4)
                     Text("Working")
-                        .litterMonoFont(size: 9, weight: .semibold)
+                        .litterFont(size: 9, weight: .semibold)
                         .foregroundStyle(LitterTheme.accent.opacity(0.85))
                 }
                 .padding(.horizontal, 7)
@@ -1615,7 +1590,7 @@ struct SessionCanvasLine: View {
                 .litterFont(size: 8, weight: .semibold)
                 .foregroundStyle(LitterTheme.textSecondary.opacity(0.85))
             Text("\(lineage.branchIndex)/\(lineage.branchTotal)")
-                .litterMonoFont(size: 9, weight: .semibold)
+                .litterFont(size: 9, weight: .semibold)
                 .foregroundStyle(LitterTheme.accent)
         }
         .padding(.horizontal, 5)
@@ -1674,7 +1649,7 @@ struct SessionCanvasLine: View {
                     .foregroundStyle(LitterTheme.textMuted.opacity(0.55))
                 Spacer(minLength: 0)
             }
-            .litterMonoFont(size: 9, weight: .regular)
+            .litterFont(size: 9, weight: .regular)
             .padding(.bottom, 2)
         }
     }
@@ -1765,28 +1740,6 @@ private struct TurnStopwatchChip: View {
     }
 }
 
-private struct SessionPulsingDots: View {
-    @State private var phase = 0
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(LitterTheme.accent)
-                    .frame(width: 3, height: 3)
-                    .opacity(phase == i ? 1.0 : 0.25)
-            }
-        }
-        .onAppear {
-            Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { _ in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    phase = (phase + 1) % 3
-                }
-            }
-        }
-    }
-}
-
 private struct HomeRuntimeIcon: View {
     let kind: AgentRuntimeKind
 
@@ -1806,11 +1759,10 @@ private struct MarkdownMatchedTitleFont: ViewModifier {
     @Environment(\.textScale) private var textScale
     func body(content: Content) -> some View {
         content
-            .font(.custom(
-                LitterFont.markdownFontName,
-                size: LitterFont.conversationBodyPointSize * textScale
-            ))
-            .fontWeight(.medium)
+            .litterFont(
+                size: LitterFont.conversationBodyPointSize,
+                weight: .medium
+            )
     }
 }
 

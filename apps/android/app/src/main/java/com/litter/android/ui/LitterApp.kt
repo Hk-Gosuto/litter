@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import com.litter.android.state.AppModel
 import com.litter.android.state.LocalAccountLoginRequiredException
-import com.litter.android.state.NetworkDiscovery
 import com.litter.android.state.PetOverlayController
 import com.litter.android.state.AlleycatCredentialStore
 import com.litter.android.state.SavedServerStore
@@ -46,7 +45,6 @@ import com.litter.android.ui.settings.SettingsStartDestination
 import com.litter.android.ui.sessions.DirectoryPickerServerOption
 import com.litter.android.ui.sessions.DirectoryPickerSheet
 import com.litter.android.ui.sessions.SessionLaunchSupport
-import com.litter.android.ui.sessions.SessionsUiState
 import com.litter.android.ui.terminal.TerminalScreen
 import uniffi.codex_mobile_client.AppProject
 import uniffi.codex_mobile_client.ApprovalKind
@@ -118,7 +116,6 @@ fun LitterApp(
         // Navigation state
         var navStack by remember { mutableStateOf<List<Route>>(listOf(Route.Home)) }
         val currentRoute = navStack.lastOrNull() ?: Route.Home
-        val sessionsUiState = remember { SessionsUiState() }
 
         // Global sheet state
         var showDiscovery by remember { mutableStateOf(false) }
@@ -180,8 +177,6 @@ fun LitterApp(
             selectedProject = match
         }
 
-        // Network discovery
-        val networkDiscovery = remember { NetworkDiscovery(appModel.discovery) }
         val voiceController = remember { VoiceRuntimeController.shared }
 
         LaunchedEffect(openPetSettingsRequest) {
@@ -261,10 +256,7 @@ fun LitterApp(
                 directoryPickerServerId != null -> directoryPickerServerId = null
                 showProjectPicker -> showProjectPicker = false
                 showSettings -> showSettings = false
-                showDiscovery -> {
-                    showDiscovery = false
-                    networkDiscovery.stopScanning()
-                }
+                showDiscovery -> showDiscovery = false
                 navStack.size > 1 -> navStack = navStack.dropLast(1)
             }
         }
@@ -341,18 +333,6 @@ fun LitterApp(
                         } else {
                             null
                         },
-                    )
-                }
-
-                is Route.Sessions -> {
-                    com.litter.android.ui.sessions.SessionsScreen(
-                        serverId = route.serverId,
-                        title = route.title,
-                        sessionsUiState = sessionsUiState,
-                        onOpenConversation = navigateToConversation,
-                        onNewSession = { openDirectoryPicker(route.serverId) },
-                        onBack = navigateBack,
-                        onInfo = { navigate(Route.ServerInfo(route.serverId)) },
                     )
                 }
 
@@ -520,35 +500,13 @@ fun LitterApp(
 
         // Discovery bottom sheet
         if (showDiscovery) {
-            val discoveredServers by networkDiscovery.servers.collectAsState()
-            val isScanning by networkDiscovery.isScanning.collectAsState()
-            val scanProgress by networkDiscovery.scanProgress.collectAsState()
-            val scanProgressLabel by networkDiscovery.scanProgressLabel.collectAsState()
-            val context = LocalContext.current
-
-            // Start scanning when discovery sheet opens
-            LaunchedEffect(showDiscovery) {
-                networkDiscovery.startScanning(context)
-            }
-
             ModalBottomSheet(
-                onDismissRequest = {
-                    showDiscovery = false
-                    networkDiscovery.stopScanning()
-                },
+                onDismissRequest = { showDiscovery = false },
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 containerColor = LitterTheme.background,
             ) {
                 DiscoveryScreen(
-                    discoveredServers = discoveredServers,
-                    isScanning = isScanning,
-                    scanProgress = scanProgress,
-                    scanProgressLabel = scanProgressLabel,
-                    onRefresh = { networkDiscovery.startScanning(context) },
-                    onDismiss = {
-                        showDiscovery = false
-                        networkDiscovery.stopScanning()
-                    },
+                    onDismiss = { showDiscovery = false },
                 )
             }
         }

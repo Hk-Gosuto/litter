@@ -11,7 +11,6 @@ use crate::alleycat::{
     AgentInfo as AlleycatAgentInfo, AgentWire as AlleycatAgentWire, AlleycatReconnectTransport,
     ParsedPairPayload as ParsedAlleycatPairPayload,
 };
-use crate::discovery::{DiscoveredServer, DiscoveryConfig, DiscoveryService, MdnsSeed};
 use crate::session::connection::InProcessConfig;
 use crate::session::connection::{
     RemoteSessionExtras, RuntimeRemoteSessionResource, ServerConfig, ServerEvent, ServerSession,
@@ -54,18 +53,16 @@ pub use self::thread_projection::{
 /// Top-level entry point for platform code (iOS / Android).
 ///
 /// Ties together server sessions, thread management, event processing,
-/// discovery, auth, caching, and voice handoff into a single facade.
+/// auth, caching, and voice handoff into a single facade.
 /// All methods are safe to call from any thread (`Send + Sync`).
 pub struct MobileClient {
     pub(crate) sessions: Arc<RwLock<HashMap<String, Arc<ServerSession>>>>,
     pub(crate) event_processor: Arc<EventProcessor>,
     pub app_store: Arc<AppStoreReducer>,
     pub agent_metadata: Arc<crate::store::AgentMetadataStore>,
-    pub(crate) discovery: RwLock<DiscoveryService>,
     oauth_callback_tunnels: Arc<Mutex<HashMap<String, OAuthCallbackTunnel>>>,
     slingshot_apis: Arc<StdMutex<HashMap<String, codex_slingshot::SlingshotApi>>>,
     pub(crate) recorder: Arc<crate::recorder::MessageRecorder>,
-    pub(crate) ambient_cache: crate::ambient_suggestions::AmbientCache,
     /// One-shot hooks that fulfill when the next `show_widget` dynamic tool
     /// call finalizes on a specific thread. Keyed by `thread_id`.
     /// Used by `AppClient::update_saved_app`.
@@ -685,9 +682,7 @@ fn missing_runtime_kinds(
         .cloned()
         .collect::<HashSet<_>>();
     let mut missing = requested_runtime_kinds
-        .iter()
-        .cloned()
-        .filter(|kind| !existing.contains(kind))
+        .iter().filter(|&kind| !existing.contains(kind)).cloned()
         .collect::<Vec<_>>();
     missing.sort();
     missing
@@ -773,12 +768,10 @@ impl MobileClient {
             sessions,
             event_processor,
             app_store,
-            agent_metadata: crate::store::AgentMetadataStore::new(),
-            discovery: RwLock::new(DiscoveryService::new(DiscoveryConfig::default())),
+            agent_metadata: crate::store::AgentMetadataStore::with_builtin_catalog(),
             oauth_callback_tunnels: Arc::new(Mutex::new(HashMap::new())),
             slingshot_apis: Arc::new(StdMutex::new(HashMap::new())),
             recorder: Arc::new(crate::recorder::MessageRecorder::new()),
-            ambient_cache: crate::ambient_suggestions::new_ambient_cache(),
             widget_waiters: Arc::new(StdMutex::new(HashMap::new())),
             saved_apps_directory: Arc::new(StdMutex::new(None)),
             slingshot_credentials_directory: Arc::new(StdMutex::new(None)),
@@ -1230,7 +1223,7 @@ impl MobileClient {
                 .runtime_for_selected_model(&key.server_id, model)
                 .or_else(|| runtime_for_model_hint(model));
             if let Some(runtime_kind) = runtime_kind
-                && runtime_kind != "codex".to_string()
+                && runtime_kind != "codex"
             {
                 return Some(runtime_kind);
             }
@@ -1241,7 +1234,7 @@ impl MobileClient {
             .model_provider
             .as_deref()
             .and_then(runtime_for_model_hint)
-            .filter(|runtime_kind| *runtime_kind != "codex".to_string())
+            .filter(|runtime_kind| runtime_kind != "codex")
         {
             return Some(runtime_kind);
         }
@@ -1317,47 +1310,6 @@ impl MobileClient {
         .map_err(RpcClientError::Rpc)
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn server_thread_list(
-        &self,
-        server_id: &str,
-        params: upstream::ThreadListParams,
-    ) -> Result<upstream::ThreadListResponse, crate::RpcClientError> {
-        use crate::{RpcClientError, next_request_id};
-        let runtime_kinds = self
-            .get_session(server_id)
-            .map_err(|error| RpcClientError::Rpc(error.to_string()))?
-            .runtime_kinds();
-        let mut merged = upstream::ThreadListResponse {
-            data: Vec::new(),
-            next_cursor: None,
-            backwards_cursor: None,
-        };
-
-        for runtime_kind in runtime_kinds {
-            let response: upstream::ThreadListResponse = self
-                .request_typed_for_server_runtime(
-                    server_id,
-                    runtime_kind,
-                    upstream::ClientRequest::ThreadList {
-                        request_id: upstream::RequestId::Integer(next_request_id()),
-                        params: params.clone(),
-                    },
-                )
-                .await
-                .map_err(RpcClientError::Rpc)?;
-            merged.data.extend(response.data);
-            if merged.next_cursor.is_none() {
-                merged.next_cursor = response.next_cursor;
-            }
-            if merged.backwards_cursor.is_none() {
-                merged.backwards_cursor = response.backwards_cursor;
-            }
-        }
-
-        Ok(merged)
-    }
-
     pub(crate) async fn server_collaboration_mode_list(
         &self,
         server_id: &str,
@@ -1379,26 +1331,6 @@ impl MobileClient {
             .into_iter()
             .filter_map(|mask| AppCollaborationModePreset::try_from(mask).ok())
             .collect())
-    }
-
-    fn discovery_write(&self) -> std::sync::RwLockWriteGuard<'_, DiscoveryService> {
-        match self.discovery.write() {
-            Ok(guard) => guard,
-            Err(error) => {
-                warn!("MobileClient: recovering poisoned discovery write lock");
-                error.into_inner()
-            }
-        }
-    }
-
-    fn discovery_read(&self) -> std::sync::RwLockReadGuard<'_, DiscoveryService> {
-        match self.discovery.read() {
-            Ok(guard) => guard,
-            Err(error) => {
-                warn!("MobileClient: recovering poisoned discovery read lock");
-                error.into_inner()
-            }
-        }
     }
 
     async fn clear_oauth_callback_tunnel(&self, server_id: &str) {
@@ -3250,7 +3182,7 @@ impl MobileClient {
                 })
             }
             Err(error) if is_method_not_found(&error) => {
-                if runtime_kind == "codex".to_string() {
+                if runtime_kind == "codex" {
                     self.app_store
                         .set_server_supports_turn_pagination(server_id, false);
                 }
@@ -4008,7 +3940,7 @@ impl MobileClient {
         &self,
         bytes: Vec<u8>,
     ) -> Result<bool, crate::terminal::TerminalError> {
-        let active_id = self.app_store.snapshot().active_terminal_id.clone();
+        let active_id = self.app_store.active_terminal_id();
         let Some(id) = active_id else {
             return Ok(false);
         };
@@ -4080,39 +4012,6 @@ impl MobileClient {
         self.app_store.set_voice_handoff_thread(key);
     }
 
-    pub async fn scan_servers_with_mdns_context(
-        &self,
-        mdns_results: Vec<MdnsSeed>,
-        local_ipv4: Option<String>,
-    ) -> Vec<DiscoveredServer> {
-        let discovery = self.discovery_write();
-        discovery
-            .scan_once_with_context(&mdns_results, local_ipv4.as_deref())
-            .await
-    }
-
-    pub fn subscribe_scan_servers_with_mdns_context(
-        &self,
-        mdns_results: Vec<MdnsSeed>,
-        local_ipv4: Option<String>,
-    ) -> broadcast::Receiver<crate::discovery::ProgressiveDiscoveryUpdate> {
-        let (tx, rx) = broadcast::channel(32);
-        let discovery = self.discovery_read().clone_for_one_shot();
-
-        Self::spawn_detached(async move {
-            let _ = discovery
-                .scan_once_progressive_with_context(&mdns_results, local_ipv4.as_deref(), &tx)
-                .await;
-        });
-
-        rx
-    }
-
-    /// Invalidate the in-memory ambient suggestions cache for a server.
-    /// If `project_root` is `None`, all entries for the server are cleared.
-    pub fn invalidate_ambient_suggestions(&self, server_id: &str, project_root: Option<&str>) {
-        crate::ambient_suggestions::invalidate_cache(&self.ambient_cache, server_id, project_root);
-    }
 }
 
 /// Listener that feeds session output bytes into the reducer's ring

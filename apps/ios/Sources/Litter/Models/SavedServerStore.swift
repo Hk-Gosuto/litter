@@ -63,19 +63,6 @@ enum SavedServerStore {
         save(saved)
     }
 
-    /// Legacy Alleycat persistence path. Kept so old app builds can still
-    /// decode records; current host pairings use `rememberAlleycat`.
-    static func rememberAlleycat(_ server: DiscoveredServer, relayHost: String) {
-        var saved = load()
-        saved.removeAll { entry in matches(server, entry) }
-        saved.append(
-            SavedServer
-                .from(server, rememberedByUser: true)
-                .withAlleycatHost(relayHost)
-        )
-        save(saved)
-    }
-
     static func rememberAlleycat(
         _ server: DiscoveredServer,
         nodeId: String,
@@ -151,9 +138,37 @@ enum SavedServerStore {
     }
 
     static func remove(serverId: String) {
-        var saved = load()
-        saved.removeAll { $0.id == serverId }
-        save(saved)
+        let saved = load()
+        let nodeIdsToForget = orphanedAlleycatNodeIds(removing: serverId, from: saved)
+        let remaining = saved.filter { $0.id != serverId }
+        save(remaining)
+
+        for nodeId in nodeIdsToForget {
+            do {
+                try AlleycatCredentialStore.shared.deleteToken(nodeId: nodeId)
+            } catch {
+                LLog.error("alleycat", "keychain token deletion failed while forgetting server", error: error)
+            }
+        }
+    }
+
+    /// An Alleycat token is keyed by node ID, so retain it when another saved
+    /// server still refers to the same node. The installation-wide device key
+    /// is deliberately not part of this server-scoped cleanup.
+    static func orphanedAlleycatNodeIds(removing serverId: String, from servers: [SavedServer]) -> [String] {
+        let removedNodeIds = Set(
+            servers
+                .filter { $0.id == serverId }
+                .compactMap { normalizedAlleycatNodeId($0.alleycatNodeId) }
+        )
+        guard !removedNodeIds.isEmpty else { return [] }
+
+        let retainedNodeIds = Set(
+            servers
+                .filter { $0.id != serverId }
+                .compactMap { normalizedAlleycatNodeId($0.alleycatNodeId) }
+        )
+        return removedNodeIds.subtracting(retainedNodeIds).sorted()
     }
 
     static func rename(serverId: String, newName: String) {
@@ -262,5 +277,12 @@ enum SavedServerStore {
             return "Alleycat \(nodeId)"
         }
         return "Alleycat \(nodeId.prefix(8))...\(nodeId.suffix(8))"
+    }
+
+    private static func normalizedAlleycatNodeId(_ nodeId: String?) -> String? {
+        let normalized = nodeId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized?.isEmpty == false ? normalized : nil
     }
 }

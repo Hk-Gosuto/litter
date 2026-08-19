@@ -1,7 +1,6 @@
 package com.litter.android.ui.discovery
 
 import android.content.Context
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -33,10 +32,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.DeveloperBoard
 import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Laptop
-import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,7 +59,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -78,10 +73,7 @@ import com.litter.android.state.SavedSshCredential
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.SshAuthMethod
 import com.litter.android.state.SshCredentialStore
-import com.litter.android.state.connectionProgressDetail
 import com.litter.android.state.isConnected
-import com.litter.android.state.statusColor
-import com.litter.android.state.statusLabel
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalAppModel
@@ -89,9 +81,6 @@ import com.litter.android.ui.common.AgentIconView
 import com.litter.android.ui.common.BetaBadge
 import com.litter.android.ui.common.isBeta
 import com.litter.android.util.LLog
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
@@ -109,7 +98,6 @@ import com.litter.android.ui.common.runtimeSortIndex
 import uniffi.codex_mobile_client.AppSshSessionResult
 import uniffi.codex_mobile_client.AppServerHealth
 import uniffi.codex_mobile_client.AppServerSnapshot
-import uniffi.codex_mobile_client.AppDiscoveredServer
 import uniffi.codex_mobile_client.RemoteAgentAvailability
 import uniffi.codex_mobile_client.AppSlingshotEnvironment
 import uniffi.codex_mobile_client.SshBridgeTransport
@@ -125,16 +113,10 @@ private data class SshBridgeAgentContext(
 private const val SLINGSHOT_BASE_URL = "https://chatgpt.com/backend-api"
 
 /**
- * Server discovery and connection screen.
- * Displays discovered + saved servers merged.
+ * Server connection screen.
  */
 @Composable
 fun DiscoveryScreen(
-    discoveredServers: List<AppDiscoveredServer>,
-    isScanning: Boolean,
-    scanProgress: Float = 0f,
-    scanProgressLabel: String? = null,
-    onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val logTag = "DiscoveryScreen"
@@ -154,13 +136,11 @@ fun DiscoveryScreen(
     var pendingManualSshServer by remember { mutableStateOf<SavedServer?>(null) }
     var sshServer by remember { mutableStateOf<SavedServer?>(null) }
     var sshAgentContext by remember { mutableStateOf<SshBridgeAgentContext?>(null) }
-    var connectionChoiceServer by remember { mutableStateOf<SavedServer?>(null) }
     var pendingAutoNavigateServerId by remember { mutableStateOf<String?>(null) }
     var pendingSlingshotEnvironment by remember { mutableStateOf<AppSlingshotEnvironment?>(null) }
     var authorizedSlingshotConnect by remember { mutableStateOf<Pair<AppSlingshotEnvironment, String>?>(null) }
     var wakingServerId by remember { mutableStateOf<String?>(null) }
     var connectError by remember { mutableStateOf<String?>(null) }
-    var renameTarget by remember { mutableStateOf<SavedServer?>(null) }
     val slingshotStepUpLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -182,11 +162,6 @@ fun DiscoveryScreen(
         authorizedSlingshotConnect = environment to stepUpToken
     }
 
-    var savedServers by remember { mutableStateOf(SavedServerStore.load(context)) }
-    LaunchedEffect(Unit) {
-        savedServers = SavedServerStore.load(context)
-    }
-
     LaunchedEffect(showManualEntry, pendingManualSshServer) {
         if (!showManualEntry && pendingManualSshServer != null) {
             sshServer = pendingManualSshServer
@@ -206,14 +181,6 @@ fun DiscoveryScreen(
                 connectError = message
             }
         }
-    }
-
-    val merged = remember(discoveredServers, savedServers) {
-        mergeServers(discoveredServers, savedServers)
-    }
-
-    suspend fun reloadSavedServers() {
-        savedServers = SavedServerStore.load(context)
     }
 
     suspend fun loadSlingshotEnvironments() {
@@ -258,7 +225,6 @@ fun DiscoveryScreen(
             stepUpToken,
         )
         SavedServerStore.remember(context, server.normalizedForPersistence())
-        reloadSavedServers()
         appModel.refreshSnapshot()
     }
 
@@ -400,38 +366,36 @@ fun DiscoveryScreen(
     }
 
     suspend fun prepareServerForSelection(entry: SavedServer): SavedServer {
-        if (entry.source == "local" || entry.websocketURL != null) {
+        if (entry.websocketURL != null) {
             return entry
         }
 
         wakingServerId = entry.id
         try {
             return when (
-                val wakeResult = waitForWakeSignal(
+                val probeResult = probeManualServer(
                     host = entry.hostname,
                     preferredCodexPort = entry.directCodexPort ?: entry.availableDirectCodexPorts.firstOrNull(),
-                    preferredSshPort = entry.sshPort ?: if (entry.canConnectViaSsh) entry.resolvedSshPort else null,
-                    timeoutMillis = if (entry.hasCodexServer) 12_000L else 18_000L,
-                    wakeMac = entry.wakeMAC,
+                    timeoutMillis = 12_000L,
                 )
             ) {
-                is WakeSignalResult.Codex -> entry.copy(
-                    port = wakeResult.port,
-                    codexPorts = listOf(wakeResult.port) + entry.availableDirectCodexPorts.filter { it != wakeResult.port },
+                is ManualServerProbeResult.Codex -> entry.copy(
+                    port = probeResult.port,
+                    codexPorts = listOf(probeResult.port) + entry.availableDirectCodexPorts.filter { it != probeResult.port },
                     hasCodexServer = true,
                     preferredConnectionMode = entry.preferredConnectionMode,
-                    preferredCodexPort = wakeResult.port,
+                    preferredCodexPort = probeResult.port,
                 ).normalizedForPersistence()
 
-                is WakeSignalResult.Ssh -> entry.copy(
-                    port = wakeResult.port,
-                    sshPort = wakeResult.port,
+                is ManualServerProbeResult.Ssh -> entry.copy(
+                    port = probeResult.port,
+                    sshPort = probeResult.port,
                     hasCodexServer = false,
                     preferredConnectionMode = "ssh",
                     preferredCodexPort = null,
                 ).normalizedForPersistence()
 
-                WakeSignalResult.None -> entry
+                ManualServerProbeResult.None -> entry
             }
         } finally {
             wakingServerId = null
@@ -440,23 +404,11 @@ fun DiscoveryScreen(
 
     suspend fun connectPreparedRemoteUrl(prepared: SavedServer) {
         val websocketURL = prepared.websocketURL ?: return
-        if (isSlingshotUrl(websocketURL)) {
-            val tokens = loadSlingshotTokens(context)
-            appModel.serverBridge.connectRemoteSlingshotUrlServer(
-                prepared.id,
-                prepared.name,
-                websocketURL,
-                tokens.accessToken,
-                tokens.accountId,
-                "",
-            )
-        } else {
-            appModel.serverBridge.connectRemoteUrlServer(
-                prepared.id,
-                prepared.name,
-                websocketURL,
-            )
-        }
+        appModel.serverBridge.connectRemoteUrlServer(
+            prepared.id,
+            prepared.name,
+            websocketURL,
+        )
     }
 
     suspend fun connectSelectedServer(entry: SavedServer) {
@@ -474,48 +426,29 @@ fun DiscoveryScreen(
 
             val prepared = prepareServerForSelection(entry)
             when {
-                prepared.source == "local" -> {
-                    appModel.serverBridge.connectLocalServer(
-                        prepared.id,
-                        prepared.name,
-                        prepared.hostname,
-                        prepared.port.toUShort(),
-                    )
-                    appModel.restoreStoredLocalAuthState(prepared.id)
-                    SavedServerStore.remember(context, prepared.normalizedForPersistence())
-                    reloadSavedServers()
-                    appModel.refreshSnapshot()
-                    onDismiss()
-                }
-
                 prepared.websocketURL != null -> {
                     connectPreparedRemoteUrl(prepared)
                     SavedServerStore.remember(context, prepared.normalizedForPersistence())
-                    reloadSavedServers()
                     appModel.refreshSnapshot()
                     onDismiss()
-                }
-
-                prepared.requiresConnectionChoice -> {
-                    connectionChoiceServer = prepared
                 }
 
                 prepared.prefersSshConnection || (!prepared.hasCodexServer && prepared.canConnectViaSsh) -> {
                     sshServer = prepared.withPreferredConnection("ssh")
                 }
 
-                prepared.directCodexPort != null -> {
+                else -> {
+                    val directCodexPort = checkNotNull(prepared.directCodexPort)
                     appModel.serverBridge.connectRemoteServer(
                         prepared.id,
                         prepared.name,
                         prepared.hostname,
-                        prepared.directCodexPort!!.toUShort(),
+                        directCodexPort.toUShort(),
                     )
                     SavedServerStore.remember(
                         context,
-                        prepared.withPreferredConnection("directCodex", prepared.directCodexPort),
+                        prepared.withPreferredConnection("directCodex", directCodexPort),
                     )
-                    reloadSavedServers()
                     appModel.refreshSnapshot()
                     onDismiss()
                 }
@@ -780,7 +713,6 @@ fun DiscoveryScreen(
                             context,
                             server.withPreferredConnection("ssh"),
                         )
-                        reloadSavedServers()
                         appModel.refreshSnapshot()
                         pendingAutoNavigateServerId = server.id
                         LLog.t(
@@ -831,7 +763,6 @@ fun DiscoveryScreen(
                         context,
                         agentContext.server.withPreferredConnection("ssh"),
                     )
-                    reloadSavedServers()
                     appModel.refreshSnapshot()
                     pendingAutoNavigateServerId = agentContext.server.id
                     sshAgentContext = null
@@ -861,7 +792,6 @@ fun DiscoveryScreen(
                     )
                     appModel.sshSessionStore.record(result.serverId, agentContext.sessionId)
                     SavedServerStore.remember(context, server)
-                    reloadSavedServers()
                     appModel.refreshSnapshot()
                     pendingAutoNavigateServerId = result.serverId
                     sshAgentContext = null
@@ -878,24 +808,6 @@ fun DiscoveryScreen(
                     )
                     e.message ?: context.getString(R.string.discovery_ssh_agents_failed)
                 }
-            },
-        )
-    }
-
-    renameTarget?.let { server ->
-        RenameServerDialog(
-            server = server,
-            onDismiss = { renameTarget = null },
-            onRename = { newName ->
-                scope.launch {
-                    SavedServerStore.upsert(
-                        context,
-                        server.copy(name = newName.ifBlank { server.hostname }).normalizedForPersistence(),
-                    )
-                    reloadSavedServers()
-                    appModel.refreshSnapshot()
-                }
-                renameTarget = null
             },
         )
     }
@@ -936,7 +848,6 @@ fun DiscoveryScreen(
                             agentName = result.agentName,
                             agentWire = alleycatWireStorageValue(result.agentWire),
                         )
-                        reloadSavedServers()
                         appModel.refreshSnapshot()
                         pendingAutoNavigateServerId = result.serverId
                     }
@@ -1941,31 +1852,6 @@ private fun sshBridgeStateRoot(context: Context, host: String): String {
     return dir.absolutePath
 }
 
-private fun serverIconForEntry(entry: SavedServer): androidx.compose.ui.graphics.vector.ImageVector {
-    if (entry.source == "local") return Icons.Outlined.PhoneAndroid
-    val os = entry.os?.lowercase()
-    if (os != null) {
-        if (os.contains("windows")) return Icons.Outlined.DesktopWindows
-        if (os.contains("raspbian")) return Icons.Outlined.DeveloperBoard
-        if (
-            os.contains("ubuntu") ||
-            os.contains("debian") ||
-            os.contains("fedora") ||
-            os.contains("red hat") ||
-            os.contains("freebsd") ||
-            os.contains("linux")
-        ) {
-            return Icons.Outlined.Dns
-        }
-    }
-    return when (entry.source) {
-        "bonjour" -> Icons.Outlined.Laptop
-        "tailscale" -> Icons.Outlined.Lan
-        "ssh" -> Icons.Outlined.Terminal
-        else -> Icons.Outlined.Dns
-    }
-}
-
 private fun connectedSnapshot(
     entry: SavedServer,
     servers: List<AppServerSnapshot>,
@@ -2212,57 +2098,44 @@ private fun parseBareHostAndPort(raw: String): Pair<String, Int>? {
     return raw to 8390
 }
 
-private fun isSlingshotUrl(rawUrl: String): Boolean =
-    runCatching { Uri.parse(rawUrl).scheme?.equals("slingshot", ignoreCase = true) == true }
-        .getOrDefault(false)
-
 private suspend fun loadSlingshotTokens(context: Context) =
     ChatGPTOAuth.requireStoredOrRefreshedTokens(
         context,
         context.getString(R.string.discovery_sign_in_slingshot),
     )
 
-private sealed interface WakeSignalResult {
-    data class Codex(val port: Int) : WakeSignalResult
-    data class Ssh(val port: Int) : WakeSignalResult
-    data object None : WakeSignalResult
+private sealed interface ManualServerProbeResult {
+    data class Codex(val port: Int) : ManualServerProbeResult
+    data class Ssh(val port: Int) : ManualServerProbeResult
+    data object None : ManualServerProbeResult
 }
 
-private suspend fun waitForWakeSignal(
+private suspend fun probeManualServer(
     host: String,
     preferredCodexPort: Int?,
-    preferredSshPort: Int?,
     timeoutMillis: Long,
-    wakeMac: String?,
-): WakeSignalResult = withContext(Dispatchers.IO) {
+): ManualServerProbeResult = withContext(Dispatchers.IO) {
     val codexPorts = orderedCodexPorts(preferredCodexPort)
-    val sshPorts = orderedSshPorts(preferredSshPort)
+    val sshPorts = orderedSshPorts()
     val deadline = System.currentTimeMillis() + maxOf(timeoutMillis, 500L)
-    var lastWakePacketAt = 0L
 
     while (System.currentTimeMillis() < deadline) {
-        val now = System.currentTimeMillis()
-        if (!wakeMac.isNullOrBlank() && now - lastWakePacketAt >= 2_000L) {
-            sendWakeMagicPacket(wakeMac, host)
-            lastWakePacketAt = now
-        }
-
         for (port in codexPorts) {
             if (isPortOpen(host, port, 700)) {
-                return@withContext WakeSignalResult.Codex(port)
+                return@withContext ManualServerProbeResult.Codex(port)
             }
         }
 
         for (port in sshPorts) {
             if (isPortOpen(host, port, 700)) {
-                return@withContext WakeSignalResult.Ssh(port)
+                return@withContext ManualServerProbeResult.Ssh(port)
             }
         }
 
         delay(350)
     }
 
-    WakeSignalResult.None
+    ManualServerProbeResult.None
 }
 
 private fun orderedCodexPorts(preferred: Int?): List<Int> = buildList {
@@ -2270,50 +2143,7 @@ private fun orderedCodexPorts(preferred: Int?): List<Int> = buildList {
     addAll(listOf(8390, 9234, 4222))
 }.filter { it in 1..65535 }.distinct()
 
-private fun orderedSshPorts(preferred: Int?): List<Int> = buildList {
-    preferred?.let(::add)
-    add(22)
-}.filter { it in 1..65535 }.distinct()
-
-private fun sendWakeMagicPacket(wakeMac: String, hostHint: String) {
-    val mac = SavedServer.normalizeWakeMac(wakeMac) ?: return
-    val macBytes = mac.split(':').mapNotNull { it.toIntOrNull(16)?.toByte() }
-    if (macBytes.size != 6) {
-        return
-    }
-
-    val packet = ByteArray(6 + 16 * macBytes.size)
-    repeat(6) { packet[it] = 0xFF.toByte() }
-    for (index in 0 until 16) {
-        macBytes.forEachIndexed { byteIndex, value ->
-            packet[6 + index * macBytes.size + byteIndex] = value
-        }
-    }
-
-    wakeBroadcastTargets(hostHint).forEach { target ->
-        sendBroadcastUdp(packet, target, 9)
-        sendBroadcastUdp(packet, target, 7)
-    }
-}
-
-private fun wakeBroadcastTargets(host: String): Set<String> {
-    val targets = linkedSetOf("255.255.255.255")
-    val ipv4Parts = host.split('.')
-    if (ipv4Parts.size == 4 && ipv4Parts.all { it.toIntOrNull() != null }) {
-        targets += "${ipv4Parts[0]}.${ipv4Parts[1]}.${ipv4Parts[2]}.255"
-    }
-    return targets
-}
-
-private fun sendBroadcastUdp(packet: ByteArray, host: String, port: Int) {
-    runCatching {
-        DatagramSocket().use { socket ->
-            socket.broadcast = true
-            val address = InetAddress.getByName(host)
-            socket.send(DatagramPacket(packet, packet.size, address, port))
-        }
-    }
-}
+private fun orderedSshPorts(): List<Int> = listOf(22)
 
 private fun isPortOpen(host: String, port: Int, timeoutMillis: Int): Boolean =
     runCatching {

@@ -2,25 +2,6 @@ import SwiftUI
 import HairballUI
 import UIKit
 
-enum ConversationLiveDetailRetentionPolicy {
-    static func retainedRichDetailItemIDs(for items: [ConversationItem]) -> Set<String> {
-        var retained = Set<String>()
-
-        if let active = items.last(where: { $0.liveDetailStatus == .inProgress }) {
-            retained.insert(active.id)
-        }
-
-        if let latestCompleted = items.reversed().first(where: { item in
-            guard let status = item.liveDetailStatus else { return false }
-            return status != .inProgress
-        }) {
-            retained.insert(latestCompleted.id)
-        }
-
-        return retained
-    }
-}
-
 struct ConversationTurnTimeline: View {
     @AppStorage(ConversationDisplayPreferenceKey.reasoning) private var reasoningDisplayModeRaw = ConversationDetailDisplayMode.collapsed.rawValue
     @AppStorage(ConversationDisplayPreferenceKey.commands) private var commandDisplayModeRaw = ConversationDetailDisplayMode.collapsed.rawValue
@@ -35,6 +16,8 @@ struct ConversationTurnTimeline: View {
     let onStreamingSnapshotRendered: (() -> Void)?
     let onLiveContentLayoutChanged: (() -> Void)?
     let resolveTargetLabel: (String) -> String?
+    let resolveThreadKey: (String) -> ThreadKey?
+    let resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
     let onWidgetPrompt: (String) -> Void
     let onEditUserItem: (ConversationItem) -> Void
     let onForkFromUserItem: (ConversationItem) -> Void
@@ -46,25 +29,17 @@ struct ConversationTurnTimeline: View {
 
     private var timelineContent: some View {
         let rows = rowDescriptors
-        let retainedRichDetailItemIDs = ConversationLiveDetailRetentionPolicy.retainedRichDetailItemIDs(for: items)
-        let commandDisplayMode = ConversationDetailDisplayMode.resolve(commandDisplayModeRaw)
-        let latestCommandExecutionItemId = rows.reversed().compactMap { row -> String? in
-            guard case .item(let item) = row,
-                  case .commandExecution(let data) = item.content,
-                  !data.isPureExploration else { return nil }
-            return item.id
-        }.first
+        // Hoisted: this used to be a computed property doing an O(n)
+        // `items.last(where:)` scan, and `rowView` read it twice per row —
+        // O(n²) across the live turn on every body evaluation.
+        let streamingItemId = streamingAssistantItemId
 
-        return VStack(alignment: .leading, spacing: 10) {
+        return LazyVStack(alignment: .leading, spacing: 10) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 rowView(
                     row,
                     isLastRow: index == rows.indices.last,
-                    isPreferredExpandedCommandRow: row.preferredExpandedCommandRow(
-                        latestCommandExecutionItemId: latestCommandExecutionItemId,
-                        commandDisplayMode: commandDisplayMode
-                    ),
-                    retainedRichDetailItemIDs: retainedRichDetailItemIDs
+                    streamingAssistantItemId: streamingItemId
                 )
                     .id(row.id)
                     .onGeometryChange(for: CGFloat.self) { geometry in
@@ -78,16 +53,12 @@ struct ConversationTurnTimeline: View {
     }
 
     private var rowDescriptors: [ConversationTimelineRowDescriptor] {
-        ConversationTimelineRowDescriptor.mergeConsecutiveExplorationRows(
-            ConversationTimelineRowDescriptor.build(from: items)
+        ConversationTimelineRowCache.shared.rows(
+            for: items,
+            reasoningDisplayMode: reasoningDisplayMode,
+            commandDisplayMode: commandDisplayMode,
+            toolDisplayMode: toolDisplayMode
         )
-        .filter {
-            $0.isVisible(
-                reasoningDisplayMode: reasoningDisplayMode,
-                commandDisplayMode: commandDisplayMode,
-                toolDisplayMode: toolDisplayMode
-            )
-        }
     }
 
     private var streamingAssistantItemId: String? {
@@ -115,8 +86,7 @@ struct ConversationTurnTimeline: View {
     private func rowView(
         _ row: ConversationTimelineRowDescriptor,
         isLastRow: Bool,
-        isPreferredExpandedCommandRow: Bool,
-        retainedRichDetailItemIDs: Set<String>
+        streamingAssistantItemId: String?
     ) -> AnyView {
         switch row {
         case .item(let item):
@@ -126,10 +96,8 @@ struct ConversationTurnTimeline: View {
                     serverId: serverId,
                     originThreadId: originThreadId,
                     agentDirectoryVersion: agentDirectoryVersion,
-                    isPreferredExpandedCommandRow: isPreferredExpandedCommandRow,
                     isLiveTurn: isLive,
                     isStreamingMessage: item.id == streamingAssistantItemId,
-                    shouldPreserveRichDetail: retainedRichDetailItemIDs.contains(item.id),
                     reasoningDisplayMode: reasoningDisplayMode,
                     commandDisplayMode: commandDisplayMode,
                     toolDisplayMode: toolDisplayMode,
@@ -137,6 +105,8 @@ struct ConversationTurnTimeline: View {
                     onStreamingSnapshotRendered: item.id == streamingAssistantItemId ? onStreamingSnapshotRendered : nil,
                     onLiveContentLayoutChanged: onLiveContentLayoutChanged,
                     resolveTargetLabel: resolveTargetLabel,
+                    resolveThreadKey: resolveThreadKey,
+                    resolveLiveStatus: resolveLiveStatus,
                     onWidgetPrompt: onWidgetPrompt,
                     onEditUserItem: onEditUserItem,
                     onForkFromUserItem: onForkFromUserItem,
@@ -152,12 +122,16 @@ struct ConversationTurnTimeline: View {
                     showsCollapsedPreview: isLastRow,
                     displayMode: commandDisplayMode
                 )
+                .equatable()
             )
         case .subagentGroup(_, let merged, _):
             return AnyView(
                 SubagentCardView(
                     data: merged,
-                    serverId: serverId
+                    serverId: serverId,
+                    resolveTargetLabel: resolveTargetLabel,
+                    resolveThreadKey: resolveThreadKey,
+                    resolveLiveStatus: resolveLiveStatus
                 )
             )
         }
@@ -387,16 +361,13 @@ extension AnyTransition {
 
 private struct ConversationTimelineItemRow: View, Equatable {
     private let renderCache = MessageRenderCache.shared
-    @Environment(ThemeManager.self) private var themeManager
 
     let item: ConversationItem
     let serverId: String
     let originThreadId: String?
     let agentDirectoryVersion: UInt64
-    let isPreferredExpandedCommandRow: Bool
     let isLiveTurn: Bool
     let isStreamingMessage: Bool
-    let shouldPreserveRichDetail: Bool
     let reasoningDisplayMode: ConversationDetailDisplayMode
     let commandDisplayMode: ConversationDetailDisplayMode
     let toolDisplayMode: ConversationDetailDisplayMode
@@ -404,6 +375,8 @@ private struct ConversationTimelineItemRow: View, Equatable {
     let onStreamingSnapshotRendered: (() -> Void)?
     let onLiveContentLayoutChanged: (() -> Void)?
     let resolveTargetLabel: (String) -> String?
+    let resolveThreadKey: (String) -> ThreadKey?
+    let resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
     let onWidgetPrompt: (String) -> Void
     let onEditUserItem: (ConversationItem) -> Void
     let onForkFromUserItem: (ConversationItem) -> Void
@@ -419,12 +392,10 @@ private struct ConversationTimelineItemRow: View, Equatable {
         // StreamingMarkdownContentView and replay the token reveal.
         let result = lhs.item.id == rhs.item.id &&
             (isAssistant || lhs.item.renderDigest == rhs.item.renderDigest) &&
-            (isAssistant || lhs.shouldPreserveRichDetail == rhs.shouldPreserveRichDetail) &&
             (isAssistant || lhs.isStreamingMessage == rhs.isStreamingMessage) &&
             lhs.serverId == rhs.serverId &&
             lhs.originThreadId == rhs.originThreadId &&
             lhs.agentDirectoryVersion == rhs.agentDirectoryVersion &&
-            lhs.isPreferredExpandedCommandRow == rhs.isPreferredExpandedCommandRow &&
             lhs.isLiveTurn == rhs.isLiveTurn &&
             lhs.reasoningDisplayMode == rhs.reasoningDisplayMode &&
             lhs.commandDisplayMode == rhs.commandDisplayMode &&
@@ -468,7 +439,10 @@ private struct ConversationTimelineItemRow: View, Equatable {
                     ComputerUseToolCallView(
                         data: data,
                         view: view,
-                        externalExpanded: toolDefaultExpanded(isFailed: data.status == .failed)
+                        externalExpanded: toolDefaultExpanded(
+                            isFailed: data.status == .failed,
+                            isInProgress: data.status == .inProgress
+                        )
                     )
                 )
             } else {
@@ -486,7 +460,10 @@ private struct ConversationTimelineItemRow: View, Equatable {
             return AnyView(
                 SubagentCardView(
                     data: data,
-                    serverId: serverId
+                    serverId: serverId,
+                    resolveTargetLabel: resolveTargetLabel,
+                    resolveThreadKey: resolveThreadKey,
+                    resolveLiveStatus: resolveLiveStatus
                 )
             )
         case .webSearch(let data):
@@ -500,7 +477,10 @@ private struct ConversationTimelineItemRow: View, Equatable {
             return AnyView(
                 ImageGenerationToolCallView(
                     data: data,
-                    externalExpanded: toolDefaultExpanded(isFailed: data.status == .failed)
+                    externalExpanded: toolDefaultExpanded(
+                        isFailed: data.status == .failed,
+                        isInProgress: data.status == .inProgress
+                    )
                 )
             )
         case .widget(let data):
@@ -540,7 +520,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
     private func commandExecutionRow(_ data: ConversationCommandExecutionData) -> some View {
         ConversationCommandExecutionRow(
             data: data,
-            isPreferredExpanded: commandDefaultExpanded(data),
+            isInitiallyExpanded: commandDefaultExpanded(data),
             displayMode: commandDisplayMode
         )
     }
@@ -550,17 +530,20 @@ private struct ConversationTimelineItemRow: View, Equatable {
         ToolCallCardView(
             model: model,
             serverId: serverId,
-            externalExpanded: toolDefaultExpanded(isFailed: model.status == .failed)
+            externalExpanded: toolDefaultExpanded(
+                isFailed: model.status == .failed,
+                isInProgress: model.status == .inProgress
+            )
         )
     }
 
-    private func toolDefaultExpanded(isFailed: Bool) -> Bool {
-        if toolDisplayMode == .collapsed,
-           !isLiveTurn,
-           shouldPreserveRichDetail {
-            return true
-        }
-        return toolDisplayMode.defaultExpanded(isFailed: isFailed)
+    /// Mirrors `commandDefaultExpanded`: a running tool call stays open so its
+    /// result streams in, rather than staying collapsed until the turn ends.
+    /// Takes flags rather than a status because callers hand in two different
+    /// enums — `ToolCallStatus` for card models, `AppOperationStatus` for the
+    /// MCP/image-generation rows.
+    private func toolDefaultExpanded(isFailed: Bool, isInProgress: Bool) -> Bool {
+        toolDisplayMode.defaultExpanded(isFailed: isFailed, isInProgress: isInProgress)
     }
 
     private func commandDefaultExpanded(_ data: ConversationCommandExecutionData) -> Bool {
@@ -609,7 +592,6 @@ private struct ConversationTimelineItemRow: View, Equatable {
             text: data.text,
             isStreaming: isStreamingMessage,
             label: assistantLabel,
-            themeVersion: themeManager.themeVersion,
             onSnapshotRendered: isStreamingMessage ? onStreamingSnapshotRendered : nil
         )
     }
@@ -843,7 +825,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
     }
 }
 
-private struct ConversationExplorationGroupRow: View {
+private struct ConversationExplorationGroupRow: View, Equatable {
     @Environment(\.textScale) private var textScale
 
     let id: String
@@ -852,6 +834,15 @@ private struct ConversationExplorationGroupRow: View {
     let displayMode: ConversationDetailDisplayMode
 
     @State private var expanded = false
+
+    /// `ConversationItem.==` is now id + renderDigest, so the item comparison
+    /// is a cheap integer walk rather than a deep content compare.
+    static func == (lhs: ConversationExplorationGroupRow, rhs: ConversationExplorationGroupRow) -> Bool {
+        lhs.id == rhs.id &&
+            lhs.showsCollapsedPreview == rhs.showsCollapsedPreview &&
+            lhs.displayMode == rhs.displayMode &&
+            lhs.items == rhs.items
+    }
 
     var body: some View {
         let entries = explorationEntries
@@ -1375,20 +1366,20 @@ private struct ConversationTurnDiffRow: View {
 
 private struct ConversationCommandExecutionRow: View {
     let data: ConversationCommandExecutionData
-    let isPreferredExpanded: Bool
+    let isInitiallyExpanded: Bool
     let displayMode: ConversationDetailDisplayMode
 
     @State private var expanded: Bool
 
     init(
         data: ConversationCommandExecutionData,
-        isPreferredExpanded: Bool,
+        isInitiallyExpanded: Bool,
         displayMode: ConversationDetailDisplayMode
     ) {
         self.data = data
-        self.isPreferredExpanded = isPreferredExpanded
+        self.isInitiallyExpanded = isInitiallyExpanded
         self.displayMode = displayMode
-        _expanded = State(initialValue: isPreferredExpanded)
+        _expanded = State(initialValue: isInitiallyExpanded)
     }
 
     var body: some View {
@@ -1411,7 +1402,7 @@ private struct ConversationCommandExecutionRow: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .animation(.spring(duration: 0.35, bounce: 0.15), value: expanded)
-        .onChange(of: isPreferredExpanded) { _, newValue in
+        .onChange(of: isInitiallyExpanded) { _, newValue in
             expanded = newValue
         }
         .onChange(of: displayMode) { _, newValue in
@@ -2202,39 +2193,10 @@ private struct DiffIndicatorLabel: View {
     }
 }
 
-private struct DiffLine: Identifiable {
-    enum Kind {
-        case addition, deletion, hunk, context
-
-        var foregroundColor: Color {
-            switch self {
-            case .addition: LitterTheme.success
-            case .deletion: LitterTheme.danger
-            case .hunk: LitterTheme.accentStrong
-            case .context: LitterTheme.textBody
-            }
-        }
-
-        var backgroundColor: Color {
-            switch self {
-            case .addition: LitterTheme.success.opacity(0.12)
-            case .deletion: LitterTheme.danger.opacity(0.12)
-            case .hunk: LitterTheme.accentStrong.opacity(0.12)
-            case .context: LitterTheme.codeBackground.opacity(0.72)
-            }
-        }
-    }
-
-    let id: Int
-    let text: String
-    let kind: Kind
-}
-
 private struct ConversationDiffDetailSheet: View {
     let title: String
     let stats: DiffStats
     let sections: [PresentedDiffSectionModel]
-    @Environment(ThemeManager.self) private var themeManager
     @Environment(\.dismiss) private var dismiss
     @State private var collapsedSectionIDs: Set<String> = []
     private let fullDiffFontSize = LitterFont.conversationDiffPointSize
@@ -2309,7 +2271,6 @@ private struct ConversationDiffDetailSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .id(themeManager.themeVersion)
     }
 
     private var usesStickyHeaders: Bool {
@@ -2326,7 +2287,6 @@ private struct ConversationDiffDetailSheet: View {
                 ScrollView(.horizontal, showsIndicators: true) {
                     SyntaxHighlightedDiffText(
                         diff: section.diff,
-                        titleHint: section.title.isEmpty ? nil : section.title,
                         fontSize: fullDiffFontSize
                     )
                         .padding(.horizontal, 8)
@@ -2496,29 +2456,6 @@ private extension ToolCallStatus {
             return LitterTheme.danger
         case .unknown:
             return LitterTheme.textSecondary
-        }
-    }
-}
-
-private extension ConversationItem {
-    var liveDetailStatus: ToolCallStatus? {
-        switch content {
-        case .commandExecution(let data):
-            return data.status.toolCallStatus
-        case .fileChange(let data):
-            return data.status.toolCallStatus
-        case .mcpToolCall(let data):
-            return data.status.toolCallStatus
-        case .dynamicToolCall(let data):
-            return data.status.toolCallStatus
-        case .webSearch(let data):
-            return data.isInProgress ? .inProgress : .completed
-        case .imageView:
-            return .completed
-        case .imageGeneration(let data):
-            return data.status.toolCallStatus
-        default:
-            return nil
         }
     }
 }

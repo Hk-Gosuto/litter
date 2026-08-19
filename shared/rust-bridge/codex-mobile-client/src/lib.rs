@@ -115,7 +115,6 @@ pub fn ish_run(cmd: String, cwd: String) -> IshRunResult {
 }
 
 mod local_studio;
-pub mod local_studio_realtime;
 #[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
 mod mobile_exec_command;
 mod shell_quoting;
@@ -138,13 +137,9 @@ pub mod proot_runtime;
 pub mod shell_preflight;
 
 pub mod alleycat;
-pub mod ambient_suggestions;
-pub mod capability;
 pub mod cloud_sync;
 pub mod conversation;
 pub mod conversation_uniffi;
-pub mod discovery;
-pub mod discovery_uniffi;
 pub mod ffi;
 pub mod hydration;
 mod local_runtime_instructions;

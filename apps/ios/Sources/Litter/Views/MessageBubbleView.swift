@@ -50,15 +50,17 @@ struct LitterMarkdownView: View {
     var selectionEnabled = true
 
     @State private var debugSettings = DebugSettings.shared
+    @Environment(\.fontPreferenceObserver) private var fontPreferenceObserver
 
     var body: some View {
         if debugSettings.enabled && debugSettings.disableMarkdown {
             Text(markdown)
-                .font(.system(size: bodySize, design: .monospaced))
+                .font(LitterFont.markdownBodyFont(size: bodySize))
                 .foregroundColor(style == .system ? LitterTheme.textSecondary : LitterTheme.textPrimary)
                 .textSelection(.enabled)
         } else {
             renderedMarkdown(selectionEnabled: selectionEnabled)
+                .id(fontPreferenceObserver.revision)
         }
     }
 
@@ -71,20 +73,29 @@ struct LitterMarkdownView: View {
                 bodySize: bodySize, codeSize: codeSize,
                 selectionEnabled: selectionEnabled
             )
+            .environment(\.openURL, externalBrowserAction)
         case .system:
             view.litterSystemMarkdown(
                 bodySize: bodySize, codeSize: codeSize,
                 selectionEnabled: selectionEnabled
             )
+            .environment(\.openURL, externalBrowserAction)
+        }
+    }
+
+    private var externalBrowserAction: OpenURLAction {
+        OpenURLAction { url in
+            guard let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                return .systemAction
+            }
+            UIApplication.shared.open(url)
+            return .handled
         }
     }
 }
 
 struct InlineSelectableMarkdownMessage<Content: View>: View {
-    let markdown: String
-    var style: LitterMarkdownStyleVariant = .content
-    var bodySize: CGFloat = LitterFont.conversationBodyPointSize
-    var codeSize: CGFloat = LitterFont.conversationBodyPointSize
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -92,24 +103,20 @@ struct InlineSelectableMarkdownMessage<Content: View>: View {
     }
 }
 
-private extension LitterMarkdownStyleVariant {
-    var cacheKey: String {
-        switch self {
-        case .content:
-            return "content"
-        case .system:
-            return "system"
-        }
-    }
-}
-
-struct UserBubble: View {
+struct UserBubble: View, Equatable {
     let text: String
     var images: [ChatImage] = []
     var compact: Bool = false
     var maxVisibleCharacters: Int = 1_000
     @State private var expandedLongText = false
     private let contentFontSize = LitterFont.conversationBodyPointSize
+
+    static func == (lhs: UserBubble, rhs: UserBubble) -> Bool {
+        lhs.text == rhs.text &&
+        lhs.images == rhs.images &&
+        lhs.compact == rhs.compact &&
+        lhs.maxVisibleCharacters == rhs.maxVisibleCharacters
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -217,7 +224,7 @@ struct UserBubble: View {
         )
     }
 
-    private static func imageData(forSource source: String) -> Data? {
+    private nonisolated static func imageData(forSource source: String) -> Data? {
         if source.hasPrefix("file://") {
             let path = String(source.dropFirst("file://".count))
             return FileManager.default.contents(atPath: path)
@@ -233,7 +240,6 @@ struct AssistantBubble: View, Equatable {
     let markdownIdentity: Int
     var label: String? = nil
     var compact: Bool = false
-    var themeVersion: Int = 0
     var allowsInlineSelection: Bool = true
     private let contentFontSize = LitterFont.conversationBodyPointSize
 
@@ -241,14 +247,12 @@ struct AssistantBubble: View, Equatable {
         text: String,
         label: String? = nil,
         compact: Bool = false,
-        themeVersion: Int = 0,
         allowsInlineSelection: Bool = true
     ) {
         self.markdownString = text
         self.markdownIdentity = text.hashValue
         self.label = label
         self.compact = compact
-        self.themeVersion = themeVersion
         self.allowsInlineSelection = allowsInlineSelection
     }
 
@@ -257,14 +261,12 @@ struct AssistantBubble: View, Equatable {
         markdownIdentity: Int,
         label: String? = nil,
         compact: Bool = false,
-        themeVersion: Int = 0,
         allowsInlineSelection: Bool = true
     ) {
         self.markdownString = markdownString
         self.markdownIdentity = markdownIdentity
         self.label = label
         self.compact = compact
-        self.themeVersion = themeVersion
         self.allowsInlineSelection = allowsInlineSelection
     }
 
@@ -272,19 +274,13 @@ struct AssistantBubble: View, Equatable {
         lhs.markdownIdentity == rhs.markdownIdentity &&
         lhs.label == rhs.label &&
         lhs.compact == rhs.compact &&
-        lhs.themeVersion == rhs.themeVersion &&
         lhs.allowsInlineSelection == rhs.allowsInlineSelection
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             if allowsInlineSelection {
-                InlineSelectableMarkdownMessage(
-                    markdown: markdownString,
-                    style: .content,
-                    bodySize: contentFontSize,
-                    codeSize: contentFontSize
-                ) {
+                InlineSelectableMarkdownMessage {
                     bubbleContent
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -312,6 +308,7 @@ struct AssistantBubble: View, Equatable {
             .fixedSize(horizontal: false, vertical: true)
             .transaction { $0.animation = nil }
         }
+        .modifier(MessageTextContextMenu(payload: .text(markdownString)))
     }
 }
 
@@ -339,6 +336,7 @@ struct AssistantBlocksBubble: View {
                 }
             }
             .transaction { $0.animation = nil }
+            .modifier(MessageTextContextMenu(payload: .segments(segments)))
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: compact ? 8 : 20)
         }
@@ -370,41 +368,17 @@ struct AssistantBlocksBubble: View {
                 .id(identity)
             }
         case .image(let data, let cacheKey):
-            LazyImage(
-                request: ImageRequest(
-                    id: cacheKey,
-                    data: { data },
-                    processors: [
-                        ImageProcessors.Resize(
-                            size: CGSize(width: 1200, height: 300),
-                            unit: .points,
-                            contentMode: .aspectFit
-                        )
-                    ]
-                )
-            ) { state in
-                if let image = state.image {
-                    if let ui = state.imageContainer?.image {
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 300)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .draggable(Image(uiImage: ui)) {
-                                Image(uiImage: ui)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 120)
-                            }
-                    } else {
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 300)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-            }
+            ResolvedChatImageView(
+                source: .data(data),
+                maxHeight: 300
+            )
+            .id(cacheKey)
+        case .localImage(let path, let cacheKey):
+            ResolvedChatImageView(
+                source: .path(path),
+                maxHeight: 320
+            )
+            .id(cacheKey)
         }
     }
 
@@ -434,7 +408,6 @@ struct StreamingAssistantBubble: View {
     let text: String
     var isStreaming: Bool = false
     var label: String? = nil
-    var themeVersion: Int = 0
     var onSnapshotRendered: (() -> Void)? = nil
     private let contentFontSize: CGFloat
 
@@ -449,7 +422,6 @@ struct StreamingAssistantBubble: View {
         text: String,
         isStreaming: Bool = false,
         label: String? = nil,
-        themeVersion: Int = 0,
         bodySize: CGFloat = LitterFont.conversationBodyPointSize,
         onSnapshotRendered: (() -> Void)? = nil
     ) {
@@ -457,7 +429,6 @@ struct StreamingAssistantBubble: View {
         self.text = text
         self.isStreaming = isStreaming
         self.label = label
-        self.themeVersion = themeVersion
         self.contentFontSize = bodySize
         self.onSnapshotRendered = onSnapshotRendered
 
@@ -490,7 +461,7 @@ struct StreamingAssistantBubble: View {
     }
 
     private var shouldUseSegmentedRenderer: Bool {
-        !isStreaming || MessageContentBridge.containsMath(text)
+        !isStreaming || StreamingMathDetectionCache.shared.containsMath(itemId: itemId, text: text)
     }
 
     private var segmentedRenderSegments: [MessageRenderCache.AssistantSegment] {
@@ -534,147 +505,99 @@ struct StreamingAssistantBubble: View {
     }
 }
 
-// MARK: - Full message bubble (used in conversation)
+// MARK: - Streaming Math Detection
 
-struct MessageBubbleView: View {
-    private let renderCache = MessageRenderCache.shared
-    @Environment(\.activeThreadKey) private var activeThreadKey
-    let message: ChatMessage
-    let serverId: String?
-    let originThreadId: String?
-    let agentDirectoryVersion: UInt64
-    let isStreamingMessage: Bool
-    let actionsDisabled: Bool
-    let onStreamingSnapshotRendered: (() -> Void)?
-    let resolveTargetLabel: ((String) -> String?)?
-    let onWidgetPrompt: ((String) -> Void)?
-    let onEditUserMessage: ((ChatMessage) -> Void)?
-    let onForkFromUserMessage: ((ChatMessage) -> Void)?
-    private let contentFontSize = LitterFont.conversationBodyPointSize
+/// Caches `MessageContentBridge.containsMath` for the live streaming message.
+///
+/// `containsMath` is a synchronous Rust FFI call that parses the whole message.
+/// Calling it from `body` on a message that keeps growing made the live turn
+/// quadratic in its own length.
+///
+/// The Rust math segmenter (`find_math_spans`) only opens or closes a math span
+/// at a `$` or a `\` byte, and every closing delimiter (`$`, `$$`, `\]`, `\)`)
+/// contains one of those bytes. So while a message is only being appended to,
+/// math can *newly appear* only if the appended tail contains `$` or `\`. That
+/// makes the per-tick cost O(appended bytes) instead of O(message length), with
+/// no detection delay for real math.
+@MainActor
+private final class StreamingMathDetectionCache {
+    static let shared = StreamingMathDetectionCache()
 
-    init(
-        message: ChatMessage,
-        serverId: String? = nil,
-        originThreadId: String? = nil,
-        agentDirectoryVersion: UInt64 = 0,
-        isStreamingMessage: Bool = false,
-        actionsDisabled: Bool = false,
-        onStreamingSnapshotRendered: (() -> Void)? = nil,
-        resolveTargetLabel: ((String) -> String?)? = nil,
-        onWidgetPrompt: ((String) -> Void)? = nil,
-        onEditUserMessage: ((ChatMessage) -> Void)? = nil,
-        onForkFromUserMessage: ((ChatMessage) -> Void)? = nil
-    ) {
-        self.message = message
-        self.serverId = serverId
-        self.originThreadId = originThreadId
-        self.agentDirectoryVersion = agentDirectoryVersion
-        self.isStreamingMessage = isStreamingMessage
-        self.actionsDisabled = actionsDisabled
-        self.onStreamingSnapshotRendered = onStreamingSnapshotRendered
-        self.resolveTargetLabel = resolveTargetLabel
-        self.onWidgetPrompt = onWidgetPrompt
-        self.onEditUserMessage = onEditUserMessage
-        self.onForkFromUserMessage = onForkFromUserMessage
+    private struct Entry {
+        var scannedUTF8Count: Int
+        var result: Bool
     }
 
-    var body: some View {
-        Group {
-            if message.role == .user {
-                userBubbleWithActions
-            } else if message.role == .assistant {
-                assistantContent
-            } else if isReasoning {
-                HStack(alignment: .top, spacing: 0) {
-                    reasoningContent
-                    Spacer(minLength: 20)
+    private let maxEntries = 64
+    private let trimTarget = 48
+
+    private var entries: [String: Entry] = [:]
+    private var accessStamps: [String: UInt64] = [:]
+    private var accessCounter: UInt64 = 0
+
+    func containsMath(itemId: String, text: String) -> Bool {
+        let utf8Count = text.utf8.count
+
+        if let entry = entries[itemId] {
+            if utf8Count == entry.scannedUTF8Count {
+                touch(itemId)
+                return entry.result
+            }
+            if utf8Count > entry.scannedUTF8Count {
+                // Math never un-appears from an append-only stream, and a new
+                // span needs a trigger byte in the appended tail.
+                if entry.result {
+                    entries[itemId] = Entry(scannedUTF8Count: utf8Count, result: true)
+                    touch(itemId)
+                    return true
                 }
-            } else {
-                HStack(alignment: .top, spacing: 0) {
-                    systemBubble
-                    Spacer(minLength: 20)
+                let appended = utf8Count - entry.scannedUTF8Count
+                // +2 bytes of overlap so a `\[` / `\]` straddling the boundary
+                // is still seen.
+                if !Self.tailContainsMathTrigger(text, tailByteCount: appended + 2) {
+                    entries[itemId] = Entry(scannedUTF8Count: utf8Count, result: false)
+                    touch(itemId)
+                    return false
                 }
             }
         }
+
+        let result = MessageContentBridge.containsMath(text)
+        entries[itemId] = Entry(scannedUTF8Count: utf8Count, result: result)
+        touch(itemId)
+        trimIfNeeded()
+        return result
     }
 
-    private var renderRevisionKey: MessageRenderCache.RevisionKey {
-        MessageRenderCache.makeRevisionKey(
-            for: message,
-            serverId: serverId,
-            agentDirectoryVersion: agentDirectoryVersion,
-            isStreaming: isStreamingMessage
-        )
+    func reset() {
+        entries.removeAll(keepingCapacity: false)
+        accessStamps.removeAll(keepingCapacity: false)
+        accessCounter = 0
     }
 
-    private var resolvedOriginThreadId: String? {
-        originThreadId ?? activeThreadKey?.threadId
-    }
-
-    private var isReasoning: Bool {
-        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("### ") else { return false }
-        let firstLine = trimmed.prefix(while: { $0 != "\n" })
-        return firstLine.lowercased().contains("reason")
-    }
-
-    private var supportsUserActions: Bool {
-        message.role == .user &&
-            message.isFromUserTurnBoundary &&
-            message.sourceTurnIndex != nil
-    }
-
-    private var canCopyMessageText: Bool {
-        !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var userBubbleWithActions: some View {
-        UserBubble(text: message.text, images: message.images)
-            .contextMenu {
-                if canCopyMessageText {
-                    Button("Copy Message") {
-                        UIPasteboard.general.string = message.text
-                    }
-                }
-
-                if supportsUserActions {
-                    Button("Edit Message") {
-                        onEditUserMessage?(message)
-                    }
-                    .disabled(actionsDisabled || onEditUserMessage == nil)
-
-                    Button("Fork From Here") {
-                        onForkFromUserMessage?(message)
-                    }
-                    .disabled(actionsDisabled || onForkFromUserMessage == nil)
-                }
-            }
-    }
-
-    @ViewBuilder
-    private var assistantContent: some View {
-        Group {
-            if isStreamingMessage {
-                StreamingAssistantBubble(
-                    itemId: message.id.uuidString,
-                    text: message.text,
-                    isStreaming: true,
-                    label: assistantAgentLabel,
-                    onSnapshotRendered: onStreamingSnapshotRendered
-                )
-            } else {
-                AssistantBlocksBubble(
-                    segments: assistantSegmentsForRendering,
-                    label: assistantAgentLabel
-                )
-            }
+    private static func tailContainsMathTrigger(_ text: String, tailByteCount: Int) -> Bool {
+        guard tailByteCount > 0 else { return false }
+        var remaining = tailByteCount
+        for byte in text.utf8.reversed() {
+            if byte == UInt8(ascii: "$") || byte == UInt8(ascii: "\\") { return true }
+            remaining -= 1
+            if remaining == 0 { break }
         }
-        .contextMenu {
-            if canCopyMessageText {
-                Button("Copy Message") {
-                    UIPasteboard.general.string = message.text
-                }
-            }
+        return false
+    }
+
+    private func touch(_ itemId: String) {
+        accessCounter &+= 1
+        accessStamps[itemId] = accessCounter
+    }
+
+    private func trimIfNeeded() {
+        guard entries.count > maxEntries else { return }
+        let removeCount = entries.count - trimTarget
+        guard removeCount > 0 else { return }
+        for (key, _) in accessStamps.sorted(by: { $0.value < $1.value }).prefix(removeCount) {
+            entries.removeValue(forKey: key)
+            accessStamps.removeValue(forKey: key)
         }
     }
 
@@ -824,37 +747,95 @@ struct MessageBubbleView: View {
 
 // MARK: - Litter Markdown Themes
 
+/// Memoizes the two `MarkdownTheme` builders.
+///
+/// Each build constructed ~10 fonts plus a `HeadingStyleSet`, an
+/// `InlineCodeStyle`, a `CodeBlockStyle`, a `TableStyle` and friends — and ran
+/// once per markdown view per render pass.
+@MainActor
+private final class MarkdownThemeCache {
+    static let shared = MarkdownThemeCache()
+
+    fileprivate struct Key: Hashable {
+        let bodySize: CGFloat
+        let codeSize: CGFloat
+        let isDark: Bool
+        /// Slug of the currently-resolved theme. PR #317 removed
+        /// `ThemeManager.themeVersion` in favour of an `@Observable`
+        /// `ThemeStore`, so the slug is what now identifies a theme
+        /// generation. Cached `MarkdownTheme`s bake in resolved colors, so
+        /// this must change whenever those colors do.
+        let themeSlug: String
+        let fontRevision: Int
+    }
+
+    private var contentThemes: [Key: MarkdownTheme] = [:]
+    private var systemThemes: [Key: MarkdownTheme] = [:]
+    private var lastThemeSlug: String?
+    private var lastFontRevision: Int?
+
+    fileprivate func contentTheme(_ key: Key, build: () -> MarkdownTheme) -> MarkdownTheme {
+        invalidateIfNeeded(key)
+        if let cached = contentThemes[key] { return cached }
+        let theme = build()
+        contentThemes[key] = theme
+        return theme
+    }
+
+    fileprivate func systemTheme(_ key: Key, build: () -> MarkdownTheme) -> MarkdownTheme {
+        invalidateIfNeeded(key)
+        if let cached = systemThemes[key] { return cached }
+        let theme = build()
+        systemThemes[key] = theme
+        return theme
+    }
+
+    /// Theme/font revisions bump rarely; dropping everything on a bump keeps
+    /// the caches bounded without an LRU (the only other key axes are the two
+    /// point sizes and the color scheme, so a live generation stays tiny).
+    private func invalidateIfNeeded(_ key: Key) {
+        guard lastThemeSlug != key.themeSlug || lastFontRevision != key.fontRevision else { return }
+        lastThemeSlug = key.themeSlug
+        lastFontRevision = key.fontRevision
+        contentThemes.removeAll(keepingCapacity: true)
+        systemThemes.removeAll(keepingCapacity: true)
+    }
+}
+
 private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> MarkdownTheme {
     var theme = MarkdownTheme.default
-    theme.bodyFont = .custom(LitterFont.markdownFontName, size: bodySize)
+    theme.bodyFont = LitterFont.markdownBodyFont(size: bodySize)
     theme.bodyFontSize = bodySize
-    theme.foregroundColor = LitterTheme.textBody
+    // Conversation prose is the reading surface. Keep it at the theme's
+    // primary foreground rather than the muted metadata color so long replies
+    // retain contrast on dark themes.
+    theme.foregroundColor = LitterTheme.textPrimary
     theme.paragraphSpacing = 8
     theme.blockSpacing = 8
 
     theme.headingStyleSet = HeadingStyleSet(
-        h1: HeadingStyle(fontSize: bodySize * 1.43, weight: .bold,
+        h1: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.43, weight: .bold), fontSize: bodySize * 1.43, weight: .bold,
                          topSpacing: 16, bottomSpacing: 8, color: LitterTheme.textPrimary),
-        h2: HeadingStyle(fontSize: bodySize * 1.21, weight: .semibold,
+        h2: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.21, weight: .semibold), fontSize: bodySize * 1.21, weight: .semibold,
                          topSpacing: 12, bottomSpacing: 6, color: LitterTheme.textPrimary),
-        h3: HeadingStyle(fontSize: bodySize * 1.07, weight: .semibold,
+        h3: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.07, weight: .semibold), fontSize: bodySize * 1.07, weight: .semibold,
                          topSpacing: 10, bottomSpacing: 4, color: LitterTheme.textPrimary),
-        h4: HeadingStyle(fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
-        h5: HeadingStyle(fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
-        h6: HeadingStyle(fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary)
+        h4: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize, weight: .semibold), fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
+        h5: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize, weight: .semibold), fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
+        h6: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize, weight: .semibold), fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary)
     )
 
     theme.inlineCode = InlineCodeStyle(
         backgroundColor: LitterTheme.surfaceLight,
         textColor: LitterTheme.textPrimary,
-        font: .custom(LitterFont.markdownFontName, size: codeSize),
+        font: .custom(LitterFont.codeFontName, size: codeSize),
         fontSize: codeSize
     )
 
     theme.codeBlock = CodeBlockStyle(
         backgroundColor: LitterTheme.codeBackground.opacity(0.8),
         textColor: LitterTheme.textPrimary,
-        font: .custom(LitterFont.markdownFontName, size: codeSize),
+        font: .custom(LitterFont.codeFontName, size: codeSize),
         fontSize: codeSize,
         cornerRadius: 8,
         showLanguageLabel: false,
@@ -876,6 +857,9 @@ private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdow
             even: LitterTheme.surface.opacity(0.5),
             odd: .clear
         ),
+        cellConfiguration: TableCellConfiguration(horizontalPadding: 10, verticalPadding: 6),
+        fontSize: bodySize,
+        verticalMargin: 10,
         cornerRadius: 8
     )
 
@@ -897,35 +881,35 @@ private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdow
 
 private func litterSystemTheme(bodySize: CGFloat, codeSize: CGFloat) -> MarkdownTheme {
     var theme = MarkdownTheme.default
-    theme.bodyFont = .custom(LitterFont.markdownFontName, size: bodySize)
+    theme.bodyFont = LitterFont.markdownBodyFont(size: bodySize)
     theme.bodyFontSize = bodySize
     theme.foregroundColor = LitterTheme.textSystem
     theme.paragraphSpacing = 6
     theme.blockSpacing = 6
 
     theme.headingStyleSet = HeadingStyleSet(
-        h1: HeadingStyle(fontSize: bodySize * 1.31, weight: .bold,
+        h1: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.31, weight: .bold), fontSize: bodySize * 1.31, weight: .bold,
                          topSpacing: 12, bottomSpacing: 6, color: LitterTheme.textPrimary),
-        h2: HeadingStyle(fontSize: bodySize * 1.15, weight: .semibold,
+        h2: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.15, weight: .semibold), fontSize: bodySize * 1.15, weight: .semibold,
                          topSpacing: 10, bottomSpacing: 4, color: LitterTheme.textPrimary),
-        h3: HeadingStyle(fontSize: bodySize * 1.08, weight: .semibold,
+        h3: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.08, weight: .semibold), fontSize: bodySize * 1.08, weight: .semibold,
                          topSpacing: 8, bottomSpacing: 4, color: LitterTheme.textPrimary),
-        h4: HeadingStyle(fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
-        h5: HeadingStyle(fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
-        h6: HeadingStyle(fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary)
+        h4: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize, weight: .semibold), fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
+        h5: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize, weight: .semibold), fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary),
+        h6: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize, weight: .semibold), fontSize: bodySize, weight: .semibold, color: LitterTheme.textPrimary)
     )
 
     theme.inlineCode = InlineCodeStyle(
         backgroundColor: LitterTheme.surfaceLight,
         textColor: LitterTheme.textPrimary,
-        font: .custom(LitterFont.markdownFontName, size: codeSize),
+        font: .custom(LitterFont.codeFontName, size: codeSize),
         fontSize: codeSize
     )
 
     theme.codeBlock = CodeBlockStyle(
         backgroundColor: LitterTheme.codeBackground.opacity(0.8),
         textColor: LitterTheme.textPrimary,
-        font: .custom(LitterFont.markdownFontName, size: codeSize),
+        font: .custom(LitterFont.codeFontName, size: codeSize),
         fontSize: codeSize,
         cornerRadius: 8,
         showLanguageLabel: false,
@@ -947,6 +931,9 @@ private func litterSystemTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdown
             even: LitterTheme.surface.opacity(0.5),
             odd: .clear
         ),
+        cellConfiguration: TableCellConfiguration(horizontalPadding: 10, verticalPadding: 6),
+        fontSize: bodySize,
+        verticalMargin: 8,
         cornerRadius: 8
     )
 
@@ -986,7 +973,6 @@ struct LitterCodeBlockRenderer: CodeBlockRenderer {
                 ScrollView(.horizontal, showsIndicators: false) {
                     SyntaxHighlightedDiffText(
                         diff: configuration.code,
-                        titleHint: configuration.language,
                         fontSize: LitterFont.conversationDiffPointSize
                     )
                     .padding(configuration.theme.codeBlock.padding)
@@ -1009,21 +995,189 @@ struct LitterCodeBlockRenderer: CodeBlockRenderer {
 private struct CodeBlockTerminalContextMenu: ViewModifier {
     let code: String
 
+    /// Resolved on appear rather than inside `body`.
+    ///
+    /// `store.activeTerminalId()` is a synchronous UniFFI call; reading it from
+    /// the `contextMenu` builder meant one main-thread FFI hop per rendered
+    /// code block per render pass.
+    @State private var hasActiveTerminal = false
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = code
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                if hasActiveTerminal {
+                    Button {
+                        let bytes = Data(code.utf8)
+                        Task {
+                            _ = try? await AppModel.shared.store.writeToActiveTerminal(bytes: bytes)
+                        }
+                    } label: {
+                        Label("Run in Terminal", systemImage: "terminal")
+                    }
+                }
+            }
+            .onAppear {
+                hasActiveTerminal = ActiveTerminalAvailability.shared.isAvailable()
+            }
+    }
+}
+
+/// Short-TTL memo over `store.activeTerminalId()` so that scrolling a transcript
+/// full of code blocks does not fire one FFI call per block per appearance.
+@MainActor
+private final class ActiveTerminalAvailability {
+    static let shared = ActiveTerminalAvailability()
+
+    private static let ttl: TimeInterval = 2
+
+    private var cachedValue = false
+    private var lastCheck: TimeInterval = -.greatestFiniteMagnitude
+
+    func isAvailable() -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastCheck < Self.ttl { return cachedValue }
+        lastCheck = now
+        cachedValue = AppModel.shared.store.activeTerminalId() != nil
+        return cachedValue
+    }
+}
+
+// MARK: - Message Text Selection / Copy
+
+/// What a message context menu should put on the pasteboard.
+///
+/// Held as an enum rather than a pre-joined `String` so that assistant messages
+/// rendered as segments do not pay a join on every body evaluation — the text is
+/// only materialized inside the menu action, which runs on tap.
+private enum MessageCopyPayload {
+    case text(String)
+    case segments([MessageRenderCache.AssistantSegment])
+
+    var plainText: String {
+        switch self {
+        case .text(let value):
+            return value
+        case .segments(let segments):
+            var parts: [String] = []
+            parts.reserveCapacity(segments.count)
+            for segment in segments {
+                switch segment.kind {
+                case .markdown(let content, _):
+                    parts.append(content)
+                case .codeBlock(let language, let code, _):
+                    let fence = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    parts.append("```\(fence)\n\(code)\n```")
+                case .image, .localImage:
+                    continue
+                }
+            }
+            return parts.joined(separator: "\n\n")
+        }
+    }
+}
+
+/// Adds a long-press "Copy" / "Select Text" menu to a chat message.
+///
+/// Mirrors `CodeBlockTerminalContextMenu`, and is deliberately cheap on the
+/// render path:
+/// * the `contextMenu` builder is only evaluated when the menu opens, so the
+///   trim/join work never runs during scrolling or streaming;
+/// * it stores a payload rather than a closure, so no per-body-eval allocation;
+/// * "Select Text" presents imperatively through the window scene instead of a
+///   `.sheet` modifier — one presentation modifier per transcript row would cost
+///   real memory and layout work on long threads.
+///
+/// Fine-grained in-place selection still comes from `.textSelection(.enabled)`
+/// applied by the markdown modifiers; this menu guarantees a whole-message copy
+/// and a selectable full-text view even where the renderer swallows the drag.
+private struct MessageTextContextMenu: ViewModifier {
+    let payload: MessageCopyPayload
+
     func body(content: Content) -> some View {
         content.contextMenu {
-            Button {
-                UIPasteboard.general.string = code
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
-            }
-            if AppModel.shared.store.activeTerminalId() != nil {
+            let text = payload.plainText
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button {
-                    let bytes = Data(code.utf8)
-                    Task {
-                        _ = try? await AppModel.shared.store.writeToActiveTerminal(bytes: bytes)
-                    }
+                    UIPasteboard.general.string = text
                 } label: {
-                    Label("Run in Terminal", systemImage: "terminal")
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                Button {
+                    MessageTextSelectionPresenter.present(text: text)
+                } label: {
+                    Label("Select Text", systemImage: "character.cursor.ibeam")
+                }
+            }
+        }
+    }
+}
+
+/// Presents `MessageTextSelectionView` without attaching a `.sheet` modifier to
+/// every transcript row.
+@MainActor
+private enum MessageTextSelectionPresenter {
+    private final class HostBox {
+        weak var controller: UIViewController?
+    }
+
+    static func present(text: String) {
+        guard let presenter = topViewController() else { return }
+        let box = HostBox()
+        let host = UIHostingController(
+            rootView: MessageTextSelectionView(text: text) { [box] in
+                box.controller?.dismiss(animated: true)
+            }
+        )
+        box.controller = host
+        host.modalPresentationStyle = .pageSheet
+        presenter.present(host, animated: true)
+    }
+
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        guard var top = scene?.keyWindow?.rootViewController else { return nil }
+        while let presented = top.presentedViewController {
+            top = presented
+        }
+        return top
+    }
+}
+
+/// Plain-text view of a message whose body is fully selectable, so a reader can
+/// drag out an arbitrary range instead of copying the whole message.
+private struct MessageTextSelectionView: View {
+    let text: String
+    let onDone: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(text)
+                    .litterFont(size: LitterFont.conversationBodyPointSize)
+                    .foregroundColor(LitterTheme.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+            .background(LitterTheme.surface.ignoresSafeArea())
+            .navigationTitle("Select Text")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        UIPasteboard.general.string = text
+                    } label: {
+                        Label("Copy All", systemImage: "doc.on.doc")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done", action: onDone)
                 }
             }
         }
@@ -1032,8 +1186,94 @@ private struct CodeBlockTerminalContextMenu: ViewModifier {
 
 // MARK: - Syntax Highlighting Theme Mapping
 
+/// Memoizes Highlightr's JS-based code tokenization.
+///
+/// `HighlightrCodeSyntaxHighlighter.highlightCode` runs highlight.js through
+/// JavaScriptCore — a synchronous, main-thread expensive call that also bakes
+/// the current theme's token colors into the result. HairballUI's
+/// `CodeBlockBody` calls it inline in `body`, so without memoization the same
+/// block is re-tokenized on every SwiftUI re-evaluation (streaming deltas,
+/// snapshot updates, scroll layout passes, theme changes).
+///
+/// The cache is keyed on the full render inputs — `(code, language, themeName)`
+/// — the same "compute once per inputs, reuse until they change" pattern the
+/// app already uses for diff rendering (`SyntaxHighlightedDiffText`). Because
+/// most Litter themes map to a shared Highlightr palette (e.g. the whole
+/// "atom-one-dark" family), switching between those themes does not change
+/// `themeName`, so the cached tokenization survives the switch and code blocks
+/// simply recolor through the theme environment instead of re-running the JS
+/// tokenizer.
+private final class CachedHighlightrCodeSyntaxHighlighter: CodeSyntaxHighlighter {
+    private struct Key: Hashable {
+        let code: String
+        let language: String?
+        let themeName: String
+    }
+
+    private let inner: HighlightrCodeSyntaxHighlighter
+    private let lock = NSLock()
+    private var cache: [Key: AttributedString] = [:]
+    private var insertionOrder: [Key] = []
+
+    private static let maxEntries = 256
+
+    init(theme: String) {
+        self.inner = HighlightrCodeSyntaxHighlighter(theme: theme)
+    }
+
+    var themeName: String {
+        inner.themeName
+    }
+
+    @discardableResult
+    func setTheme(_ name: String) -> Bool {
+        inner.setTheme(name)
+    }
+
+    func highlightCode(_ code: String, language: String?) -> AttributedString {
+        let key = Key(code: code, language: language, themeName: inner.themeName)
+
+        lock.lock()
+        if let hit = cache[key] {
+            touchLocked(key)
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
+        let result = inner.highlightCode(code, language: language)
+
+        lock.lock()
+        // Guard against caching a result colored by a theme that changed while
+        // the JS call was in flight (all current callers are main-thread, so
+        // this is defensive).
+        if cache[key] == nil && inner.themeName == key.themeName {
+            cache[key] = result
+            insertionOrder.append(key)
+            trimIfNeededLocked()
+        }
+        lock.unlock()
+        return result
+    }
+
+    private func touchLocked(_ key: Key) {
+        if let index = insertionOrder.firstIndex(of: key) {
+            insertionOrder.remove(at: index)
+        }
+        insertionOrder.append(key)
+    }
+
+    private func trimIfNeededLocked() {
+        guard cache.count > Self.maxEntries else { return }
+        while cache.count > Self.maxEntries * 3 / 4, let oldest = insertionOrder.first {
+            insertionOrder.removeFirst()
+            cache.removeValue(forKey: oldest)
+        }
+    }
+}
+
 /// Shared highlighter instance — theme is switched at runtime via `setTheme(_:)`.
-private let sharedHighlighter = HighlightrCodeSyntaxHighlighter(theme: "atom-one-dark")
+private let sharedHighlighter = CachedHighlightrCodeSyntaxHighlighter(theme: "atom-one-dark")
 
 /// Maps a Litter theme slug to the closest Highlightr theme name.
 /// Direct matches are checked first, then known family prefixes, then light/dark fallback.
@@ -1139,6 +1379,7 @@ private func syncHighlighterTheme(for colorScheme: ColorScheme) {
 private struct ScaledContentMarkdownModifier: ViewModifier {
     @Environment(\.textScale) private var textScale
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.fontPreferenceObserver) private var fontPreferenceObserver
     let baseBodySize: CGFloat
     let baseCodeSize: CGFloat
     let selectionEnabled: Bool
@@ -1147,10 +1388,22 @@ private struct ScaledContentMarkdownModifier: ViewModifier {
         let scaledBody = baseBodySize * textScale
         let scaledCode = baseCodeSize * textScale
         let _ = syncHighlighterTheme(for: colorScheme)
+        let themeKey = MarkdownThemeCache.Key(
+            bodySize: scaledBody,
+            codeSize: scaledCode,
+            isDark: colorScheme == .dark,
+            themeSlug: LitterTheme.activeThemeSlug,
+            fontRevision: fontPreferenceObserver.revision
+        )
         let themed = content
-            .markdownTheme(litterContentTheme(bodySize: scaledBody, codeSize: scaledCode))
+            .markdownTheme(
+                MarkdownThemeCache.shared.contentTheme(themeKey) {
+                    litterContentTheme(bodySize: scaledBody, codeSize: scaledCode)
+                }
+            )
             .codeSyntaxHighlighter(sharedHighlighter)
             .codeBlockRenderer(LitterCodeBlockRenderer())
+            .id(fontPreferenceObserver.revision)
         if selectionEnabled {
             themed.textSelection(.enabled)
         } else {
@@ -1162,6 +1415,7 @@ private struct ScaledContentMarkdownModifier: ViewModifier {
 private struct ScaledSystemMarkdownModifier: ViewModifier {
     @Environment(\.textScale) private var textScale
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.fontPreferenceObserver) private var fontPreferenceObserver
     let baseBodySize: CGFloat
     let baseCodeSize: CGFloat
     let selectionEnabled: Bool
@@ -1170,10 +1424,22 @@ private struct ScaledSystemMarkdownModifier: ViewModifier {
         let scaledBody = baseBodySize * textScale
         let scaledCode = baseCodeSize * textScale
         let _ = syncHighlighterTheme(for: colorScheme)
+        let themeKey = MarkdownThemeCache.Key(
+            bodySize: scaledBody,
+            codeSize: scaledCode,
+            isDark: colorScheme == .dark,
+            themeSlug: LitterTheme.activeThemeSlug,
+            fontRevision: fontPreferenceObserver.revision
+        )
         let themed = content
-            .markdownTheme(litterSystemTheme(bodySize: scaledBody, codeSize: scaledCode))
+            .markdownTheme(
+                MarkdownThemeCache.shared.systemTheme(themeKey) {
+                    litterSystemTheme(bodySize: scaledBody, codeSize: scaledCode)
+                }
+            )
             .codeSyntaxHighlighter(sharedHighlighter)
             .codeBlockRenderer(LitterCodeBlockRenderer())
+            .id(fontPreferenceObserver.revision)
         if selectionEnabled {
             themed.textSelection(.enabled)
         } else {
@@ -1211,21 +1477,3 @@ extension View {
         )
     }
 }
-
-#if DEBUG
-#Preview("Message Bubbles") {
-    LitterPreviewScene {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(LitterPreviewData.sampleMessages) { message in
-                    MessageBubbleView(
-                        message: message,
-                        serverId: LitterPreviewData.sampleServer.id
-                    )
-                }
-            }
-            .padding(16)
-        }
-    }
-}
-#endif

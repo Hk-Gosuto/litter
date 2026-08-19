@@ -156,7 +156,6 @@ class HomeDashboardSupportTests {
         ),
         connectionProgress = null,
         usageStats = null,
-        codexVersion = null,
     )
 
     private fun session(serverId: String, threadId: String, runtimeKind: String) = AppSessionSummary(

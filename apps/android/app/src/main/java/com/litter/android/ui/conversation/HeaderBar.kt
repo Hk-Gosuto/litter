@@ -2,48 +2,21 @@ package com.litter.android.ui.conversation
 
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,85 +38,73 @@ import com.litter.android.state.statusColor
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.LitterTheme
-import com.litter.android.ui.common.modelPickerDisplayName
-import com.litter.android.ui.common.matchesModelSelection
-import com.litter.android.ui.common.reportsEffectiveThreadPermissions
-import com.litter.android.ui.scaled
+import com.litter.android.ui.LocalAppModel
 import kotlinx.coroutines.launch
-import uniffi.codex_mobile_client.AppModeKind
-import uniffi.codex_mobile_client.AppServerHealth
 import uniffi.codex_mobile_client.AppThreadSnapshot
-import uniffi.codex_mobile_client.ThreadKey
 
-/**
- * Top bar showing model, reasoning, status dot, cwd.
- * Inline model selector expands on tap.
- */
+/** Floating conversation navigation; model and mode controls live in the composer. */
 @Composable
 fun HeaderBar(
     thread: AppThreadSnapshot?,
     onBack: () -> Unit,
     onInfo: (() -> Unit)? = null,
-    showModelSelector: Boolean,
-    onToggleModelSelector: () -> Unit,
     onReloadError: ((String) -> Unit)? = null,
-    transparentBackground: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val appModel = LocalAppModel.current
     val context = LocalContext.current
     val snapshot by appModel.snapshot.collectAsState()
-    val launchState by appModel.launchState.snapshot.collectAsState()
     val scope = rememberCoroutineScope()
     val server = remember(snapshot, thread) {
-        thread?.let { t -> snapshot?.servers?.find { it.serverId == t.key.serverId } }
+        thread?.let { current -> snapshot?.servers?.find { it.serverId == current.key.serverId } }
     }
-    val pendingModelId = launchState.selectedModel.trim()
-    val pendingRuntime = launchState.selectedAgentRuntimeKind
-    val pendingModelLabel = server?.availableModels
-        ?.firstOrNull { it.matchesModelSelection(pendingModelId, pendingRuntime) }
-        ?.modelPickerDisplayName()
-        ?.ifBlank { pendingModelId }
-        ?: pendingModelId.ifBlank { null }
-    val currentModelId = pendingModelId.ifBlank {
-        (thread?.model ?: thread?.info?.model ?: "").trim()
-    }
-    val currentRuntime = pendingRuntime ?: thread?.agentRuntimeKind
-    val selectedModelDefinition = remember(server?.availableModels, currentModelId, currentRuntime) {
-        server?.availableModels?.firstOrNull { it.matchesModelSelection(currentModelId, currentRuntime) }
-            ?: server?.availableModels?.firstOrNull { it.isDefault }
-            ?: server?.availableModels?.firstOrNull()
-    }
-    val reasoningLabel = remember(launchState.reasoningEffort, thread?.reasoningEffort, selectedModelDefinition) {
-        val pendingReasoning = launchState.reasoningEffort.trim()
-        if (pendingReasoning.isNotEmpty()) {
-            pendingReasoning
-        } else {
-            val threadReasoning = thread?.reasoningEffort?.trim().orEmpty()
-            if (threadReasoning.isNotEmpty()) {
-                threadReasoning
-            } else if (selectedModelDefinition?.supportedReasoningEfforts?.isEmpty() == true) {
-                ""
-            } else {
-                selectedModelDefinition?.defaultReasoningEffort?.let(::effortLabelLocal) ?: "default"
-            }
-        }
-    }
-    val modelLabel = remember(pendingModelLabel, thread?.displayModelLabel) {
-        (pendingModelLabel ?: thread?.displayModelLabel).orEmpty().ifBlank { "litter" }
-    }
+    var isReloading by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (!transparentBackground) Modifier.background(LitterTheme.surface) else Modifier),
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+        FloatingHeaderButton(onClick = onBack) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = LitterTheme.textPrimary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        FloatingHeaderButton(
+            enabled = !isReloading && thread != null,
+            onClick = {
+                val currentThread = thread ?: return@FloatingHeaderButton
+                scope.launch {
+                    isReloading = true
+                    try {
+                        if (server?.requiresOpenaiAuth == true && server.account == null) {
+                            val authUrl = appModel.client.startRemoteSshOauthLogin(currentThread.key.serverId)
+                            CustomTabsIntent.Builder().setShowTitle(true).build()
+                                .launchUrl(context, Uri.parse(authUrl))
+                        } else {
+                            val nextKey = appModel.refreshThreadIncludingTurns(currentThread.key)
+                            appModel.store.setActiveThread(nextKey)
+                        }
+                    } catch (error: Exception) {
+                        onReloadError?.invoke(error.message ?: "Failed to reload conversation")
+                    } finally {
+                        isReloading = false
+                    }
+                }
+            },
         ) {
-            IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
+            if (isReloading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = LitterTheme.accent,
+                )
+            } else {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.common_back),
@@ -336,58 +296,37 @@ fun HeaderBar(
             }
         }
 
-        // Inline model selector — shared panel lives in
-        // `com.litter.android.ui.common.ModelSelectorPanel`; the home
-        // composer's HomeModelChip uses the same panel inside a
-        // ModalBottomSheet.
-        AnimatedVisibility(
-            visible = showModelSelector,
-            enter = expandVertically(),
-            exit = shrinkVertically(),
-        ) {
-            com.litter.android.ui.common.ModelSelectorPanel(
-                thread = thread,
-                availableModels = server?.availableModels ?: emptyList(),
-                catalogLoaded = server?.availableModels != null,
-                catalogError = server?.serverId?.let(appModel::modelCatalogError),
-                onRetryModels = {
-                    server?.serverId?.let { serverId ->
-                        scope.launch { appModel.loadAvailableModelsIfNeeded(serverId, force = true) }
-                    }
-                },
-                onToggleMode = { mode ->
-                    thread?.let { t ->
-                        scope.launch {
-                            try {
-                                appModel.store.setThreadCollaborationMode(t.key, mode)
-                            } catch (_: Exception) {}
-                        }
-                    }
-                },
-                fastMode = HeaderOverrides.pendingFastMode,
-                onFastModeChange = { HeaderOverrides.pendingFastMode = it },
-                showBackground = false,
-            )
+        if (onInfo != null) {
+            FloatingHeaderButton(onClick = onInfo) {
+                Icon(
+                    Icons.Outlined.Info,
+                    contentDescription = "Info",
+                    tint = LitterTheme.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }
 
-/**
- * Holds the fast-mode override selected in the header.
- * Launch model/effort state lives in [AppLaunchState].
- */
+@Composable
+private fun FloatingHeaderButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(LitterTheme.surface.copy(alpha = 0.86f)),
+        content = content,
+    )
+}
+
+/** Shared fast-tier override selected from the model options sheet. */
 object HeaderOverrides {
     var pendingFastMode by mutableStateOf(false)
 }
-
-private fun effortLabelLocal(value: uniffi.codex_mobile_client.ReasoningEffort): String =
-    when (value) {
-        uniffi.codex_mobile_client.ReasoningEffort.NONE -> "none"
-        uniffi.codex_mobile_client.ReasoningEffort.MINIMAL -> "minimal"
-        uniffi.codex_mobile_client.ReasoningEffort.LOW -> "low"
-        uniffi.codex_mobile_client.ReasoningEffort.MEDIUM -> "medium"
-        uniffi.codex_mobile_client.ReasoningEffort.HIGH -> "high"
-        uniffi.codex_mobile_client.ReasoningEffort.X_HIGH -> "xhigh"
-        uniffi.codex_mobile_client.ReasoningEffort.MAX -> "max"
-        uniffi.codex_mobile_client.ReasoningEffort.ULTRA -> "ultra"
-    }

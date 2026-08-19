@@ -54,28 +54,101 @@ const LOCAL_USER_MESSAGE_ITEM_PREFIX: &str = "local-user-message:";
 const DESKTOP_FILE_CONTEXT_HEADER: &str = "# Files mentioned by the user:";
 const DESKTOP_FILE_CONTEXT_REQUEST_HEADER: &str = "## My request for Codex:";
 
+/// Bytes of the serialized item head that are fed to the hasher verbatim.
+const FINGERPRINT_HEAD_BYTES: usize = 4096;
+/// Bytes of the serialized item tail that are fed to the hasher verbatim.
+const FINGERPRINT_TAIL_BYTES: usize = 1024;
+
+/// `std::io::Write` sink that digests a bounded head + tail of the stream
+/// plus the exact total length, instead of the whole stream.
+///
+/// A completed command execution can carry >100 KiB of captured output;
+/// hashing all of it on every emit dominated the store's per-event cost.
+/// Head + tail + total length still discriminates every way an item
+/// actually changes in practice: text fields only ever grow or get replaced
+/// wholesale (length changes), and the small status/lifecycle fields sit in
+/// the head or the tail of the encoding.
+struct BoundedHashWriter<'a> {
+    hasher: &'a mut DefaultHasher,
+    head_remaining: usize,
+    tail: [u8; FINGERPRINT_TAIL_BYTES],
+    tail_len: usize,
+    tail_start: usize,
+    total: usize,
+}
+
+impl<'a> BoundedHashWriter<'a> {
+    fn new(hasher: &'a mut DefaultHasher) -> Self {
+        Self {
+            hasher,
+            head_remaining: FINGERPRINT_HEAD_BYTES,
+            tail: [0; FINGERPRINT_TAIL_BYTES],
+            tail_len: 0,
+            tail_start: 0,
+            total: 0,
+        }
+    }
+
+    /// Fold the retained tail bytes and the total length into the hasher.
+    fn finish(self) {
+        for offset in 0..self.tail_len {
+            let index = (self.tail_start + offset) % FINGERPRINT_TAIL_BYTES;
+            self.hasher.write_u8(self.tail[index]);
+        }
+        self.hasher.write_usize(self.total);
+    }
+}
+
+impl std::io::Write for BoundedHashWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.head_remaining > 0 {
+            let take = self.head_remaining.min(buf.len());
+            self.hasher.write(&buf[..take]);
+            self.head_remaining -= take;
+        }
+        self.total = self.total.saturating_add(buf.len());
+
+        // Keep a rolling window of the final `FINGERPRINT_TAIL_BYTES`.
+        let tail_slice = if buf.len() >= FINGERPRINT_TAIL_BYTES {
+            self.tail_len = 0;
+            self.tail_start = 0;
+            &buf[buf.len() - FINGERPRINT_TAIL_BYTES..]
+        } else {
+            buf
+        };
+        for byte in tail_slice {
+            if self.tail_len == FINGERPRINT_TAIL_BYTES {
+                self.tail[self.tail_start] = *byte;
+                self.tail_start = (self.tail_start + 1) % FINGERPRINT_TAIL_BYTES;
+            } else {
+                let index = (self.tail_start + self.tail_len) % FINGERPRINT_TAIL_BYTES;
+                self.tail[index] = *byte;
+                self.tail_len += 1;
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Compute a 64-bit fingerprint of a projected `HydratedConversationItem`
 /// suitable for redundant-emit dedup in `emit_thread_item_changed`. Streams
-/// the item's serde representation directly into the hasher so we never
-/// retain a full clone of the item alongside the canonical store copy.
+/// the item's serde representation into a bounded hasher so we neither
+/// retain a full clone of the item alongside the canonical store copy nor
+/// pay to digest large captured outputs on every delta.
 ///
 /// A u64 collision would only cost us a single skipped `ThreadItemChanged`
 /// emit (followed immediately by another differing fingerprint on the next
 /// delta), which is acceptable at our item counts.
 fn item_fingerprint(item: &HydratedConversationItem) -> u64 {
-    struct HashWriter<'a>(&'a mut DefaultHasher);
-    impl std::io::Write for HashWriter<'_> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.write(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     let mut hasher = DefaultHasher::new();
-    serde_json::to_writer(HashWriter(&mut hasher), item)
+    let mut writer = BoundedHashWriter::new(&mut hasher);
+    serde_json::to_writer(&mut writer, item)
         .expect("HydratedConversationItem Serialize impl is infallible");
+    writer.finish();
     hasher.finish()
 }
 
@@ -112,12 +185,20 @@ pub struct AppStoreReducer {
             ),
         >,
     >,
-    /// Per-(thread, item_id) fingerprint of the last emitted projected item,
-    /// used to skip redundant `ThreadItemChanged` emits. Storing a u64 hash
-    /// instead of the item itself avoids a long-lived second copy of every
-    /// item in memory — on a 5k-item streaming thread that doubled the
+    /// Per-thread, per-item-id fingerprint of the last emitted projected
+    /// item, used to skip redundant `ThreadItemChanged` emits. Storing a u64
+    /// hash instead of the item itself avoids a long-lived second copy of
+    /// every item in memory — on a 5k-item streaming thread that doubled the
     /// canonical `ThreadSnapshot.items` heap footprint.
-    last_thread_item_upserts: RwLock<HashMap<(ThreadKey, String), u64>>,
+    ///
+    /// Nested by `ThreadKey` so `clear_thread_update_caches` is a single
+    /// `remove` rather than a full-map `retain` on every thread upsert.
+    last_thread_item_upserts: RwLock<HashMap<ThreadKey, HashMap<String, u64>>>,
+    /// Memoized `current_agent_directory_version`. Invalidated whenever a
+    /// snapshot write guard is released (see [`Self::write_snapshot`]), so a
+    /// burst of emits that follow a single mutation recompute it at most
+    /// once.
+    agent_directory_memo: RwLock<Option<u64>>,
     /// Per-call-id running buffer of streaming `dynamic_tool_call` argument
     /// JSON. Keyed by `(thread_key, call_id)`. Entries are cleared when the
     /// call completes or fails (via `ItemCompleted` on the matching
@@ -143,6 +224,40 @@ enum ItemMutationUpdate {
     Upsert(HydratedConversationItem),
 }
 
+/// Write guard over [`AppStoreReducer::snapshot`] that invalidates every
+/// snapshot-derived memo when it is released.
+///
+/// The memo is cleared *before* the underlying write lock is dropped (fields
+/// drop after the `Drop` body), so no reader can observe the new snapshot
+/// alongside a memo computed from the old one.
+struct SnapshotWriteGuard<'a> {
+    guard: std::sync::RwLockWriteGuard<'a, AppSnapshot>,
+    agent_directory_memo: &'a RwLock<Option<u64>>,
+}
+
+impl std::ops::Deref for SnapshotWriteGuard<'_> {
+    type Target = AppSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for SnapshotWriteGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
+impl Drop for SnapshotWriteGuard<'_> {
+    fn drop(&mut self) {
+        *self
+            .agent_directory_memo
+            .write()
+            .expect("agent directory memo poisoned") = None;
+    }
+}
+
 impl AppStoreReducer {
     pub fn new() -> Self {
         // Streaming turns can burst small deltas quickly; keep enough headroom so
@@ -153,6 +268,7 @@ impl AppStoreReducer {
             pending_local_studio_thread_routes: RwLock::new(HashSet::new()),
             last_thread_state_updates: RwLock::new(HashMap::new()),
             last_thread_item_upserts: RwLock::new(HashMap::new()),
+            agent_directory_memo: RwLock::new(None),
             dynamic_tool_arg_buffers: RwLock::new(HashMap::new()),
             updates_tx,
             voice_state: VoiceRealtimeState::default(),
@@ -166,6 +282,34 @@ impl AppStoreReducer {
             .clone()
     }
 
+    /// Acquire the snapshot write lock. Releasing the returned guard drops
+    /// every memo derived from the snapshot, so derived-state caches cannot
+    /// outlive the state they were computed from.
+    fn write_snapshot(&self) -> SnapshotWriteGuard<'_> {
+        SnapshotWriteGuard {
+            guard: self.snapshot.write().expect("app store lock poisoned"),
+            agent_directory_memo: &self.agent_directory_memo,
+        }
+    }
+
+    /// `current_agent_directory_version`, memoized until the next snapshot
+    /// mutation. The caller must already hold a read lock on the snapshot.
+    fn agent_directory_version(&self, snapshot: &AppSnapshot) -> u64 {
+        if let Some(version) = *self
+            .agent_directory_memo
+            .read()
+            .expect("agent directory memo poisoned")
+        {
+            return version;
+        }
+        let version = current_agent_directory_version(snapshot);
+        *self
+            .agent_directory_memo
+            .write()
+            .expect("agent directory memo poisoned") = Some(version);
+        version
+    }
+
     pub(crate) fn thread_snapshot(&self, key: &ThreadKey) -> Option<ThreadSnapshot> {
         self.snapshot
             .read()
@@ -175,13 +319,34 @@ impl AppStoreReducer {
             .cloned()
     }
 
+    /// Project a single thread for the FFI boundary without cloning the rest
+    /// of the app snapshot (all servers, all other threads, all terminal
+    /// output tails) first.
+    pub(crate) fn project_thread_snapshot(
+        &self,
+        key: &ThreadKey,
+    ) -> Result<Option<crate::store::AppThreadSnapshot>, String> {
+        let snapshot = self.snapshot.read().expect("app store lock poisoned");
+        super::boundary::project_thread_snapshot(&snapshot, key)
+    }
+
+    /// Read the focused terminal session id without cloning the snapshot.
+    /// Called synchronously from the UI thread once per rendered code block.
+    pub(crate) fn active_terminal_id(&self) -> Option<String> {
+        self.snapshot
+            .read()
+            .expect("app store lock poisoned")
+            .active_terminal_id
+            .clone()
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<AppStoreUpdateRecord> {
         self.updates_tx.subscribe()
     }
 
     pub fn upsert_server(&self, config: &ServerConfig, health: ServerHealthSnapshot) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let (
                 existing_wake_mac,
                 existing_account,
@@ -192,7 +357,6 @@ impl AppStoreReducer {
                 existing_agent_runtimes,
                 existing_connection_progress,
                 existing_transport,
-                existing_codex_version,
                 existing_supports_turn_pagination,
             ) = if let Some(existing) = snapshot.servers.get(&config.server_id) {
                 (
@@ -205,7 +369,6 @@ impl AppStoreReducer {
                     existing.agent_runtimes.clone(),
                     existing.connection_progress.clone(),
                     existing.transport.clone(),
-                    existing.codex_version.clone(),
                     existing.supports_turn_pagination,
                 )
             } else {
@@ -224,7 +387,6 @@ impl AppStoreReducer {
                     }],
                     None,
                     ServerTransportDiagnostics::default(),
-                    None,
                     true,
                 )
             };
@@ -246,7 +408,6 @@ impl AppStoreReducer {
                     agent_runtimes: existing_agent_runtimes,
                     connection_progress: existing_connection_progress,
                     transport: existing_transport,
-                    codex_version: existing_codex_version,
                     supports_turn_pagination: existing_supports_turn_pagination,
                 },
             );
@@ -260,7 +421,7 @@ impl AppStoreReducer {
         let mut removed_thread_keys = Vec::new();
         let agent_directory_version;
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             snapshot.servers.remove(server_id);
             snapshot.threads.retain(|key, _| {
                 let keep = key.server_id != server_id;
@@ -314,6 +475,24 @@ impl AppStoreReducer {
         self.emit(AppStoreUpdateRecord::ActiveThreadChanged { key: None });
     }
 
+    /// Whether a thread that is absent from an incoming `thread/list` page
+    /// should survive the reconcile anyway. Besides the active thread and
+    /// local-studio, never evict a thread we are actively using: one with an
+    /// in-flight turn, queued follow-ups, a staged local overlay, or one
+    /// created within the last minute. The brand-new-thread window matters
+    /// because a just-started OpenCode session may not appear in
+    /// `GET /session` until its first message lands; evicting it then causes
+    /// the first `turn/start` overlay and its streamed events to be dropped
+    /// (0xSero/litter#283).
+    fn keep_thread_absent_from_incoming_page(thread: &ThreadSnapshot) -> bool {
+        thread.active_turn_id.is_some()
+            || !thread.queued_follow_ups.is_empty()
+            || !thread.local_overlay_items.is_empty()
+            || thread.info.created_at.is_some_and(|created_at| {
+                created_at > 0 && (now_ms() as i64 / 1000).saturating_sub(created_at) < 60
+            })
+    }
+
     pub fn sync_thread_list(&self, server_id: &str, threads: &[ThreadInfo]) {
         self.sync_thread_list_for_runtime(server_id, "codex".to_string(), threads);
     }
@@ -336,13 +515,14 @@ impl AppStoreReducer {
         let mut pending_user_inputs = None;
         let agent_directory_version;
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let active_thread_key = snapshot.active_thread.clone();
             snapshot.threads.retain(|key, thread| {
                 let keep = key.server_id != server_id
                     || incoming_ids.contains(&key.thread_id)
                     || active_thread_key.as_ref() == Some(key)
-                    || thread.agent_runtime_kind == "local-studio";
+                    || thread.agent_runtime_kind == "local-studio"
+                    || Self::keep_thread_absent_from_incoming_page(thread);
                 if !keep {
                     removed_thread_keys.push(key.clone());
                 }
@@ -497,13 +677,14 @@ impl AppStoreReducer {
         let mut pending_user_inputs = None;
         let agent_directory_version;
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let active_thread_key = snapshot.active_thread.clone();
             snapshot.threads.retain(|key, thread| {
                 let keep = key.server_id != server_id
                     || incoming_ids.contains(&key.thread_id)
                     || active_thread_key.as_ref() == Some(key)
-                    || thread.agent_runtime_kind == "local-studio";
+                    || thread.agent_runtime_kind == "local-studio"
+                    || Self::keep_thread_absent_from_incoming_page(thread);
                 if !keep {
                     removed_thread_keys.push(key.clone());
                 }
@@ -595,7 +776,7 @@ impl AppStoreReducer {
     pub fn upsert_thread_snapshot(&self, mut thread: ThreadSnapshot) {
         let key = thread.key.clone();
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if self
                 .pending_local_studio_thread_routes
                 .write()
@@ -604,47 +785,11 @@ impl AppStoreReducer {
             {
                 thread.agent_runtime_kind = "local-studio".to_string();
             }
-            let existing = snapshot.threads.get(&key).cloned();
-            if let Some(existing) = existing.as_ref() {
-                // Diagnostic for the duplicate-user-message bug (task #11):
-                // catch transient overlap where the incoming snapshot's
-                // hydrated User items match an overlay that's already in
-                // existing.local_overlay_items (sticking around past its
-                // dedupe). Logs once per upsert when the condition fires.
-                let user_overlay_count = existing
-                    .local_overlay_items
-                    .iter()
-                    .filter(|item| {
-                        matches!(&item.content, HydratedConversationItemContent::User(_))
-                    })
-                    .count();
-                let incoming_user_count = thread
-                    .items
-                    .iter()
-                    .filter(|item| {
-                        matches!(&item.content, HydratedConversationItemContent::User(_))
-                    })
-                    .count();
-                if user_overlay_count > 0 && incoming_user_count > 0 {
-                    tracing::warn!(
-                        target: "store",
-                        server_id = key.server_id,
-                        thread_id = key.thread_id,
-                        existing_user_overlay_count = user_overlay_count,
-                        incoming_user_item_count = incoming_user_count,
-                        existing_user_item_count = existing
-                            .items
-                            .iter()
-                            .filter(|item| {
-                                matches!(
-                                    &item.content,
-                                    HydratedConversationItemContent::User(_)
-                                )
-                            })
-                            .count(),
-                        "upsert_thread_snapshot: existing overlay + incoming user items overlap"
-                    );
-                }
+            // Borrowed, not cloned: `thread` is a local, so the existing
+            // entry can be read in place. Cloning it here duplicated every
+            // item of the thread on every upsert just to read a handful of
+            // preserved fields.
+            if let Some(existing) = snapshot.threads.get(&key) {
                 preserve_thread_title(&existing.info, &mut thread.info);
                 preserve_thread_preview(&existing.info, &mut thread.info);
                 preserve_thread_created_at(&existing.info, &mut thread.info);
@@ -656,6 +801,7 @@ impl AppStoreReducer {
                 thread.is_resumed = thread.is_resumed || existing.is_resumed;
                 preserve_local_overlay_items(existing, &mut thread);
                 preserve_queued_follow_ups(existing, &mut thread);
+                preserve_live_tool_items(existing, &mut thread);
                 // Preserve existing items when the incoming snapshot has none
                 // (e.g. thread/read with include_turns=false).
                 if thread.items.is_empty() && !existing.items.is_empty() {
@@ -672,7 +818,7 @@ impl AppStoreReducer {
 
     pub fn mark_thread_resumed(&self, key: &ThreadKey, is_resumed: bool) {
         let changed = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let Some(thread) = snapshot.threads.get_mut(key) else {
                 return;
             };
@@ -807,11 +953,7 @@ impl AppStoreReducer {
             .mutate_thread_with_result(key, |thread| {
                 let mut updated_item = None;
                 let mut needs_reprojection = false;
-                if let Some(item) = thread
-                    .local_overlay_items
-                    .iter_mut()
-                    .find(|item| item.id == item_id)
-                {
+                if let Some(item) = thread.local_overlay_items.get_mut_by_id(item_id) {
                     if item.source_turn_id.as_deref() != Some(turn_id) {
                         item.source_turn_id = Some(turn_id.to_string());
                         needs_reprojection = true;
@@ -849,10 +991,14 @@ impl AppStoreReducer {
             .mutate_thread_with_result(key, |thread| {
                 let mut updated_item = None;
                 let mut needs_reprojection = false;
-                if let Some(item) = thread.local_overlay_items.iter_mut().find(|item| {
-                    item.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
-                        && item.source_turn_id.is_none()
-                }) {
+                let pending_overlay_index =
+                    thread.local_overlay_items.iter().position(|item| {
+                        item.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
+                            && item.source_turn_id.is_none()
+                    });
+                if let Some(item) = pending_overlay_index
+                    .and_then(|index| thread.local_overlay_items.get_mut(index))
+                {
                     item.source_turn_id = Some(turn_id.to_string());
                     needs_reprojection = true;
                     updated_item = Some(item.clone());
@@ -1043,7 +1189,7 @@ impl AppStoreReducer {
     pub fn remove_thread(&self, key: &ThreadKey) {
         let agent_directory_version;
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             snapshot.threads.remove(key);
             if snapshot.active_thread.as_ref() == Some(key) {
                 snapshot.active_thread = None;
@@ -1079,7 +1225,7 @@ impl AppStoreReducer {
 
     pub fn set_active_thread(&self, key: Option<ThreadKey>) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             snapshot.active_thread = key.clone();
         }
         self.emit(AppStoreUpdateRecord::ActiveThreadChanged { key });
@@ -1087,7 +1233,7 @@ impl AppStoreReducer {
 
     pub fn set_voice_handoff_thread(&self, key: Option<ThreadKey>) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             snapshot.voice_session.handoff_thread_key = key;
         }
         self.emit(AppStoreUpdateRecord::VoiceSessionChanged);
@@ -1095,7 +1241,7 @@ impl AppStoreReducer {
 
     pub fn replace_pending_approvals(&self, approvals: Vec<PendingApproval>) {
         let changed = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if snapshot.pending_approvals == approvals && snapshot.pending_approval_seeds.is_empty()
             {
                 false
@@ -1132,7 +1278,7 @@ impl AppStoreReducer {
             })
             .collect::<HashMap<_, _>>();
         let changed = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if snapshot.pending_approvals == public_approvals
                 && snapshot.pending_approval_seeds == next_seeds
             {
@@ -1152,7 +1298,7 @@ impl AppStoreReducer {
 
     pub fn replace_pending_user_inputs(&self, requests: Vec<PendingUserInputRequest>) {
         let changed = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if snapshot.pending_user_inputs == requests {
                 false
             } else {
@@ -1178,7 +1324,7 @@ impl AppStoreReducer {
 
     pub fn resolve_approval(&self, request_id: &str) {
         let approvals = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             snapshot
                 .pending_approvals
                 .retain(|approval| approval.id != request_id);
@@ -1224,7 +1370,7 @@ impl AppStoreReducer {
 
     pub fn resolve_pending_user_input(&self, request_id: &str) {
         let requests = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             snapshot
                 .pending_user_inputs
                 .retain(|request| request.id != request_id);
@@ -1242,7 +1388,7 @@ impl AppStoreReducer {
         answers: Vec<PendingUserInputAnswer>,
     ) {
         let (requests, thread_key) = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let request = snapshot
                 .pending_user_inputs
                 .iter()
@@ -1288,7 +1434,7 @@ impl AppStoreReducer {
         requires_openai_auth: bool,
     ) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.account = account;
                 server.requires_openai_auth = requires_openai_auth;
@@ -1306,7 +1452,7 @@ impl AppStoreReducer {
         rate_limits: Option<crate::types::RateLimitSnapshot>,
     ) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 match rate_limits.clone() {
                     Some(snapshot_value) => {
@@ -1332,7 +1478,7 @@ impl AppStoreReducer {
         models: Option<Vec<crate::types::ModelInfo>>,
     ) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.available_models = models;
             }
@@ -1345,7 +1491,7 @@ impl AppStoreReducer {
     pub fn update_server_agent_runtimes(&self, server_id: &str, runtimes: Vec<AgentRuntimeInfo>) {
         let runtimes = dedupe_agent_runtimes(runtimes);
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.agent_runtimes = runtimes;
             }
@@ -1357,7 +1503,7 @@ impl AppStoreReducer {
 
     pub fn set_thread_agent_runtime(&self, key: &ThreadKey, runtime_kind: AgentRuntimeKind) {
         let changed = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let Some(thread) = snapshot.threads.get_mut(key) else {
                 if runtime_kind == "local-studio" {
                     self.pending_local_studio_thread_routes
@@ -1385,7 +1531,7 @@ impl AppStoreReducer {
 
     pub fn update_server_health(&self, server_id: &str, health: ServerHealthSnapshot) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.health = health;
             }
@@ -1397,7 +1543,7 @@ impl AppStoreReducer {
 
     pub fn set_server_supports_turn_pagination(&self, server_id: &str, supports: bool) {
         let changed = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             match snapshot.servers.get_mut(server_id) {
                 Some(server) if server.supports_turn_pagination != supports => {
                     server.supports_turn_pagination = supports;
@@ -1424,7 +1570,7 @@ impl AppStoreReducer {
 
     pub fn note_app_lifecycle_phase(&self, phase: AppLifecyclePhaseSnapshot) {
         let now = std::time::Instant::now();
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         for server in snapshot.servers.values_mut() {
             server.transport.last_lifecycle_phase = phase;
             server.transport.last_lifecycle_transition_at = Some(now);
@@ -1468,7 +1614,7 @@ impl AppStoreReducer {
     ) -> String {
         let request_id = uuid::Uuid::new_v4().to_string();
         let started_at = std::time::Instant::now();
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if let Some(server) = snapshot.servers.get_mut(server_id) {
             server.transport.pending_mutation = Some(PendingServerMutatingCommand {
                 kind,
@@ -1483,7 +1629,7 @@ impl AppStoreReducer {
 
     pub fn finish_server_mutating_command_success(&self, server_id: &str, local_request_id: &str) {
         let now = std::time::Instant::now();
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if let Some(server) = snapshot.servers.get_mut(server_id) {
             if server
                 .transport
@@ -1498,7 +1644,7 @@ impl AppStoreReducer {
     }
 
     pub fn finish_server_mutating_command_failure(&self, server_id: &str, local_request_id: &str) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if let Some(server) = snapshot.servers.get_mut(server_id)
             && server
                 .transport
@@ -1511,7 +1657,7 @@ impl AppStoreReducer {
     }
 
     pub fn note_server_direct_request_success(&self, server_id: &str) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if let Some(server) = snapshot.servers.get_mut(server_id) {
             server.transport.last_direct_request_ok_at = Some(std::time::Instant::now());
         }
@@ -1523,7 +1669,7 @@ impl AppStoreReducer {
         connection_progress: Option<AppConnectionProgressSnapshot>,
     ) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.connection_progress = connection_progress;
             }
@@ -1535,7 +1681,7 @@ impl AppStoreReducer {
 
     pub fn rename_server(&self, server_id: &str, display_name: String) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.display_name = display_name;
             }
@@ -1547,7 +1693,7 @@ impl AppStoreReducer {
 
     pub fn update_server_wake_mac(&self, server_id: &str, wake_mac: Option<String>) {
         {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             if let Some(server) = snapshot.servers.get_mut(server_id) {
                 server.wake_mac = wake_mac;
             }
@@ -1999,7 +2145,7 @@ impl AppStoreReducer {
             }
             UiEvent::ApprovalRequested { approval, .. } => {
                 let approvals = {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     if !snapshot
                         .pending_approvals
                         .iter()
@@ -2040,7 +2186,7 @@ impl AppStoreReducer {
             }
             UiEvent::ConnectionStateChanged { server_id, health } => {
                 {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     if let Some(server) = snapshot.servers.get_mut(server_id) {
                         let next_health = ServerHealthSnapshot::from_wire(health);
                         server.health = match (&server.connection_progress, next_health) {
@@ -2073,7 +2219,7 @@ impl AppStoreReducer {
             UiEvent::RealtimeStarted { key, notification } => {
                 self.voice_state.reset_thread(key);
                 {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     snapshot.voice_session.active_thread = Some(key.clone());
                     snapshot.voice_session.session_id = notification.realtime_session_id.clone();
                     snapshot.voice_session.phase = Some(AppVoiceSessionPhase::Listening);
@@ -2119,15 +2265,12 @@ impl AppStoreReducer {
                     .voice_state
                     .handle_typed_transcript_delta(key, role, text)
                 {
-                    match update {
-                        VoiceDerivedUpdate::Transcript(update) => {
-                            self.apply_voice_transcript_update(key, &update);
-                            self.emit(AppStoreUpdateRecord::RealtimeTranscriptUpdated {
-                                key: key.clone(),
-                                update,
-                            });
-                        }
-                        _ => {}
+                    if let VoiceDerivedUpdate::Transcript(update) = update {
+                        self.apply_voice_transcript_update(key, &update);
+                        self.emit(AppStoreUpdateRecord::RealtimeTranscriptUpdated {
+                            key: key.clone(),
+                            update,
+                        });
                     }
                 }
             }
@@ -2144,7 +2287,7 @@ impl AppStoreReducer {
                         VoiceDerivedUpdate::HandoffRequest(request) => {
                             {
                                 let mut snapshot =
-                                    self.snapshot.write().expect("app store lock poisoned");
+                                    self.write_snapshot();
                                 snapshot.voice_session.phase = Some(AppVoiceSessionPhase::Handoff);
                             }
                             self.emit(AppStoreUpdateRecord::VoiceSessionChanged);
@@ -2156,7 +2299,7 @@ impl AppStoreReducer {
                         VoiceDerivedUpdate::SpeechStarted => {
                             {
                                 let mut snapshot =
-                                    self.snapshot.write().expect("app store lock poisoned");
+                                    self.write_snapshot();
                                 snapshot.voice_session.phase =
                                     Some(AppVoiceSessionPhase::Listening);
                             }
@@ -2170,7 +2313,7 @@ impl AppStoreReducer {
             }
             UiEvent::RealtimeOutputAudioDelta { key, notification } => {
                 {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     if snapshot.voice_session.active_thread.as_ref() == Some(key) {
                         snapshot.voice_session.phase = Some(AppVoiceSessionPhase::Speaking);
                     }
@@ -2193,7 +2336,7 @@ impl AppStoreReducer {
             }
             UiEvent::RealtimeError { key, notification } => {
                 {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     snapshot.voice_session.phase = Some(AppVoiceSessionPhase::Error);
                     snapshot.voice_session.last_error = Some(notification.message.clone());
                 }
@@ -2210,7 +2353,7 @@ impl AppStoreReducer {
             UiEvent::RealtimeClosed { key, notification } => {
                 self.voice_state.clear_thread(key);
                 {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     if let Some(thread) = snapshot.threads.get_mut(key) {
                         thread.realtime_session_id = None;
                     }
@@ -2258,7 +2401,7 @@ impl AppStoreReducer {
             }
             UiEvent::UserInputRequested { request, seed } => {
                 let requests = {
-                    let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+                    let mut snapshot = self.write_snapshot();
                     snapshot
                         .pending_user_inputs
                         .retain(|existing| existing.id != request.id);
@@ -2290,7 +2433,7 @@ impl AppStoreReducer {
         F: FnOnce(&mut ThreadSnapshot),
     {
         let inserted = {
-            let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+            let mut snapshot = self.write_snapshot();
             let pending_local_studio_route = self
                 .pending_local_studio_thread_routes
                 .write()
@@ -2370,7 +2513,7 @@ impl AppStoreReducer {
     where
         F: FnOnce(&mut ThreadSnapshot) -> R,
     {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         let thread = snapshot.threads.get_mut(key)?;
         Some(mutate(thread))
     }
@@ -2400,7 +2543,8 @@ impl AppStoreReducer {
     pub(crate) fn emit_thread_metadata_changed(&self, key: &ThreadKey) {
         let update = {
             let snapshot = self.snapshot.read().expect("app store lock poisoned");
-            match project_thread_state_update(&snapshot, key) {
+            let version = self.agent_directory_version(&snapshot);
+            match project_thread_state_update(&snapshot, key, version) {
                 Ok(Some((mut state, mut session_summary, agent_directory_version))) => {
                     if state.active_turn_id.is_some()
                         || state.info.status == ThreadSummaryStatus::Active
@@ -2464,26 +2608,21 @@ impl AppStoreReducer {
             .write()
             .expect("thread state cache lock poisoned")
             .remove(key);
+        // Nested by thread so clearing one thread costs O(items in that
+        // thread) rather than O(items across every thread ever emitted).
         self.last_thread_item_upserts
             .write()
             .expect("thread item cache lock poisoned")
-            .retain(|(thread_key, _), _| thread_key != key);
+            .remove(key);
     }
 
     pub(crate) fn emit_thread_upsert(&self, key: &ThreadKey) {
         self.clear_thread_update_caches(key);
         let update = {
             let snapshot = self.snapshot.read().expect("app store lock poisoned");
-            match project_thread_update(&snapshot, key) {
+            let version = self.agent_directory_version(&snapshot);
+            match project_thread_update(&snapshot, key, version) {
                 Ok(Some((thread, session_summary, agent_directory_version))) => {
-                    tracing::warn!(
-                        target: "store",
-                        server_id = key.server_id,
-                        thread_id = key.thread_id,
-                        item_count = thread.hydrated_conversation_items.len(),
-                        active_turn = ?thread.active_turn_id,
-                        "emit_thread_upsert"
-                    );
                     Some(AppStoreUpdateRecord::ThreadUpserted {
                         thread,
                         session_summary,
@@ -2511,19 +2650,19 @@ impl AppStoreReducer {
     pub(crate) fn emit_thread_item_changed(&self, key: &ThreadKey, item: HydratedConversationItem) {
         let item = {
             let snapshot = self.snapshot.read().expect("app store lock poisoned");
-            project_hydrated_item(&snapshot, &key.server_id, &item)
+            project_hydrated_item(&snapshot, &key.server_id, &item).into_owned()
         };
         let fingerprint = item_fingerprint(&item);
-        let cache_key = (key.clone(), item.id.clone());
         {
             let mut cache = self
                 .last_thread_item_upserts
                 .write()
                 .expect("thread item cache lock poisoned");
-            if cache.get(&cache_key) == Some(&fingerprint) {
+            let thread_cache = cache.entry(key.clone()).or_default();
+            if thread_cache.get(&item.id) == Some(&fingerprint) {
                 return;
             }
-            cache.insert(cache_key, fingerprint);
+            thread_cache.insert(item.id.clone(), fingerprint);
         }
         let session_summary = self.compute_session_summary(key);
         self.emit(AppStoreUpdateRecord::ThreadItemChanged {
@@ -2554,7 +2693,7 @@ impl AppStoreReducer {
             snapshot
                 .threads
                 .get(key)
-                .and_then(|thread| thread.items.iter().find(|item| item.id == item_id).cloned())
+                .and_then(|thread| thread.items.get_by_id(item_id).cloned())
         };
         if let Some(item) = item {
             self.emit_thread_item_changed(key, item);
@@ -2577,81 +2716,25 @@ impl AppStoreReducer {
     }
 
     fn apply_item_update(&self, key: &ThreadKey, item: HydratedConversationItem) {
-        let is_user_message = matches!(&item.content, HydratedConversationItemContent::User(_));
-        let incoming_item_id = item.id.clone();
         let result = self.mutate_thread_with_result(key, |thread| {
-            let existing = thread
-                .items
-                .iter()
-                .find(|existing| existing.id == item.id)
-                .cloned();
+            let existing = thread.items.get_by_id(&item.id).cloned();
             let item = merge_reasoning_item_with_existing(existing.as_ref(), item);
             let active_turn_id = thread.active_turn_id.as_deref();
-            let removed_overlay_ids = thread
-                .local_overlay_items
-                .iter()
-                .filter(|existing| is_superseded_overlay_item(existing, &item, active_turn_id))
-                .map(|existing| existing.id.clone())
-                .collect::<Vec<_>>();
-            // Diagnostic for the duplicate-user-message bug (task #11):
-            // when an upstream UserMessage arrives, log the surrounding
-            // store state so we can see whether the local overlay was
-            // present-and-deduped, present-and-NOT-deduped, or absent —
-            // and whether `thread.items` already contains a sibling User
-            // item with matching content.
-            if is_user_message {
-                let other_user_items: Vec<_> = thread
-                    .items
-                    .iter()
-                    .filter(|existing| {
-                        existing.id != item.id
-                            && matches!(&existing.content, HydratedConversationItemContent::User(_))
-                    })
-                    .map(|existing| existing.id.clone())
-                    .collect();
-                let overlay_count = thread.local_overlay_items.len();
-                let user_overlay_ids: Vec<_> = thread
-                    .local_overlay_items
-                    .iter()
-                    .filter_map(|existing| {
-                        if matches!(&existing.content, HydratedConversationItemContent::User(_)) {
-                            Some(existing.id.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                tracing::warn!(
-                    target: "store",
-                    server_id = key.server_id,
-                    thread_id = key.thread_id,
-                    item_id = item.id,
-                    item_turn_id = item.source_turn_id.as_deref().unwrap_or(""),
-                    item_boundary = item.is_from_user_turn_boundary,
-                    existing_user_items = ?other_user_items,
-                    user_overlays = ?user_overlay_ids,
-                    overlay_count = overlay_count,
-                    will_remove_overlays = ?removed_overlay_ids,
-                    has_existing_with_id = existing.is_some(),
-                    "apply_item_update UserMessage diagnostic"
-                );
+            let mut removed_overlay_ids = Vec::new();
+            for existing in thread.local_overlay_items.iter() {
+                if is_superseded_overlay_item(existing, &item, active_turn_id) {
+                    removed_overlay_ids.push(existing.id.clone());
+                }
             }
-            thread
-                .local_overlay_items
-                .retain(|existing| !is_superseded_overlay_item(existing, &item, active_turn_id));
+            if !removed_overlay_ids.is_empty() {
+                thread.local_overlay_items.retain(|existing| {
+                    !is_superseded_overlay_item(existing, &item, active_turn_id)
+                });
+            }
             let mutation = classify_item_mutation(existing.as_ref(), &item);
             upsert_item(thread, item);
             (mutation, false, removed_overlay_ids)
         });
-        if result.is_none() && is_user_message {
-            tracing::warn!(
-                target: "store",
-                server_id = key.server_id,
-                thread_id = key.thread_id,
-                item_id = incoming_item_id,
-                "apply_item_update UserMessage skipped: thread not in store"
-            );
-        }
 
         match result {
             Some((Some(ItemMutationUpdate::Upsert(item)), queued_changed, removed_overlay_ids)) => {
@@ -2681,7 +2764,7 @@ impl AppStoreReducer {
     }
 
     fn apply_voice_transcript_update(&self, key: &ThreadKey, update: &AppVoiceTranscriptUpdate) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if snapshot.voice_session.active_thread.as_ref() != Some(key) {
             return;
         }
@@ -2857,7 +2940,7 @@ impl AppStoreReducer {
         cols: u16,
         rows: u16,
     ) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         snapshot.terminal_sessions.push(TerminalSessionSnapshot {
             id: id.clone(),
             backend_kind,
@@ -2884,7 +2967,7 @@ impl AppStoreReducer {
     /// [`TERMINAL_OUTPUT_TAIL_LIMIT`]. Bumps `last_activity_ts_ms`. No-op
     /// if `id` is unknown.
     pub fn append_terminal_output(&self, id: &str, bytes: &[u8]) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         let Some(session) = snapshot.terminal_sessions.iter_mut().find(|s| s.id == id) else {
             return;
         };
@@ -2899,7 +2982,7 @@ impl AppStoreReducer {
 
     /// Update the session's row/col dimensions after a successful resize.
     pub fn update_terminal_size(&self, id: &str, cols: u16, rows: u16) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if let Some(session) = snapshot.terminal_sessions.iter_mut().find(|s| s.id == id) {
             session.cols = cols;
             session.rows = rows;
@@ -2910,7 +2993,7 @@ impl AppStoreReducer {
     /// Mark the session as exited with the given code and clear it from
     /// being active.
     pub fn mark_terminal_exited(&self, id: &str, exit_code: i32) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         if let Some(session) = snapshot.terminal_sessions.iter_mut().find(|s| s.id == id) {
             session.phase = AppTerminalSessionPhase::Exited;
             session.exit_code = Some(exit_code);
@@ -2929,7 +3012,7 @@ impl AppStoreReducer {
     /// dropped the live session handle and no longer needs the buffered
     /// output (e.g. an explicit "close session and forget" path).
     pub fn remove_terminal_session_record(&self, id: &str) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         snapshot.terminal_sessions.retain(|s| s.id != id);
         if snapshot.active_terminal_id.as_deref() == Some(id) {
             snapshot.active_terminal_id = snapshot.terminal_sessions.last().map(|s| s.id.clone());
@@ -2943,7 +3026,7 @@ impl AppStoreReducer {
     /// Set the currently-focused terminal session id. The id must match
     /// an existing snapshot entry, otherwise active is cleared.
     pub fn set_active_terminal_id(&self, id: Option<String>) {
-        let mut snapshot = self.snapshot.write().expect("app store lock poisoned");
+        let mut snapshot = self.write_snapshot();
         let next = id.filter(|candidate| {
             snapshot
                 .terminal_sessions
@@ -3012,14 +3095,9 @@ fn upsert_item(
     thread: &mut ThreadSnapshot,
     item: crate::conversation_uniffi::HydratedConversationItem,
 ) {
-    if let Some(existing) = thread
-        .items
-        .iter_mut()
-        .find(|existing| existing.id == item.id)
-    {
-        *existing = item;
-    } else {
-        thread.items.push(item);
+    match thread.items.index_of(&item.id) {
+        Some(index) => thread.items.replace_at(index, item),
+        None => thread.items.push(item),
     }
 }
 
@@ -3061,7 +3139,7 @@ fn merge_reasoning_item_with_existing(
 
 fn append_assistant_delta(thread: &mut ThreadSnapshot, item_id: &str, delta: &str) -> bool {
     let mut inserted_placeholder = false;
-    if !thread.items.iter().any(|item| item.id == item_id) {
+    if !thread.items.contains_id(item_id) {
         thread.items.push(HydratedConversationItem {
             id: item_id.to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
@@ -3078,7 +3156,7 @@ fn append_assistant_delta(thread: &mut ThreadSnapshot, item_id: &str, delta: &st
         inserted_placeholder = true;
     }
 
-    let Some(item) = thread.items.iter_mut().find(|item| item.id == item_id) else {
+    let Some(item) = thread.items.get_mut_by_id(item_id) else {
         return inserted_placeholder;
     };
     if let HydratedConversationItemContent::Assistant(message) = &mut item.content {
@@ -3110,9 +3188,12 @@ fn append_reasoning_delta(
     item_id: &str,
     delta: &str,
 ) -> LiveDeltaApplyResult {
-    match thread.items.iter().position(|item| item.id == item_id) {
+    match thread.items.index_of(item_id) {
         Some(index) => {
-            let item = &mut thread.items[index];
+            let item = thread
+                .items
+                .get_mut(index)
+                .expect("index_of returned an in-bounds index");
             match &mut item.content {
                 HydratedConversationItemContent::Reasoning(reasoning) => {
                     if let Some(last) = reasoning.content.last_mut() {
@@ -3157,9 +3238,12 @@ fn append_plan_delta(
     item_id: &str,
     delta: &str,
 ) -> LiveDeltaApplyResult {
-    match thread.items.iter().position(|item| item.id == item_id) {
+    match thread.items.index_of(item_id) {
         Some(index) => {
-            let item = &mut thread.items[index];
+            let item = thread
+                .items
+                .get_mut(index)
+                .expect("index_of returned an in-bounds index");
             match &mut item.content {
                 HydratedConversationItemContent::ProposedPlan(plan) => {
                     plan.content.push_str(delta);
@@ -3198,9 +3282,12 @@ fn append_command_output_delta(
     item_id: &str,
     delta: &str,
 ) -> LiveDeltaApplyResult {
-    match thread.items.iter().position(|item| item.id == item_id) {
+    match thread.items.index_of(item_id) {
         Some(index) => {
-            let item = &mut thread.items[index];
+            let item = thread
+                .items
+                .get_mut(index)
+                .expect("index_of returned an in-bounds index");
             match &mut item.content {
                 HydratedConversationItemContent::CommandExecution(command) => {
                     let output = command.output.get_or_insert_with(String::new);
@@ -3262,9 +3349,12 @@ fn append_mcp_progress(
     item_id: &str,
     message: &str,
 ) -> LiveDeltaApplyResult {
-    match thread.items.iter().position(|item| item.id == item_id) {
+    match thread.items.index_of(item_id) {
         Some(index) => {
-            let item = &mut thread.items[index];
+            let item = thread
+                .items
+                .get_mut(index)
+                .expect("index_of returned an in-bounds index");
             match &mut item.content {
                 HydratedConversationItemContent::McpToolCall(call) => {
                     if !message.trim().is_empty() {
@@ -3448,6 +3538,74 @@ fn preserve_local_overlay_items(source: &ThreadSnapshot, target: &mut ThreadSnap
             target.local_overlay_items.push(item);
         }
     }
+}
+
+fn preserve_live_tool_items(source: &ThreadSnapshot, target: &mut ThreadSnapshot) {
+    let incoming_ids: HashSet<&str> = target.items.iter().map(|item| item.id.as_str()).collect();
+    let missing = source
+        .items
+        .iter()
+        .enumerate()
+        .filter(|item| {
+            item.1.source_turn_id.is_none()
+                && is_tool_item(&item.1.content)
+                && !incoming_ids.contains(item.1.id.as_str())
+        })
+        .map(|(index, item)| (index, item.clone()))
+        .collect::<Vec<_>>();
+    for (source_index, item) in missing {
+        let next_anchor = source.items[source_index + 1..]
+            .iter()
+            .find_map(replay_anchor_key);
+        let insertion_index = next_anchor
+            .as_ref()
+            .and_then(|anchor| {
+                target
+                    .items
+                    .iter()
+                    .position(|candidate| replay_anchor_key(candidate).as_ref() == Some(anchor))
+            })
+            .or_else(|| {
+                target.items.iter().rposition(|candidate| {
+                    matches!(
+                        candidate.content,
+                        HydratedConversationItemContent::Assistant(ref data)
+                            if data.phase == Some(crate::types::AppMessagePhase::FinalAnswer)
+                    )
+                })
+            })
+            .unwrap_or(target.items.len());
+        target.items.insert(insertion_index, item);
+    }
+}
+
+fn replay_anchor_key(item: &HydratedConversationItem) -> Option<String> {
+    match &item.content {
+        HydratedConversationItemContent::User(data) => Some(format!(
+            "user:{}:{}",
+            data.text,
+            serde_json::to_string(&data.image_data_uris).unwrap_or_default()
+        )),
+        HydratedConversationItemContent::Assistant(data) => {
+            Some(format!("assistant:{}:{:?}", data.text, data.phase))
+        }
+        _ => None,
+    }
+}
+
+fn is_tool_item(content: &HydratedConversationItemContent) -> bool {
+    matches!(
+        content,
+        HydratedConversationItemContent::CommandExecution(_)
+            | HydratedConversationItemContent::FileChange(_)
+            | HydratedConversationItemContent::McpToolCall(_)
+            | HydratedConversationItemContent::DynamicToolCall(_)
+            | HydratedConversationItemContent::MultiAgentAction(_)
+            | HydratedConversationItemContent::WebSearch(_)
+            | HydratedConversationItemContent::ImageView(_)
+            | HydratedConversationItemContent::Widget(_)
+            | HydratedConversationItemContent::ImageGeneration(_)
+    )
 }
 
 fn duplicate_local_overlay_item_ids(thread: &ThreadSnapshot) -> Vec<String> {
@@ -3723,6 +3881,306 @@ mod tests {
         }
     }
 
+
+    // ── Derived-state cache invalidation ──────────────────────────────
+    //
+    // These cover the memoization introduced for the agent-directory
+    // version, the per-thread conversation-activity walk, and the
+    // per-thread item-fingerprint cache. Each one trades a recomputation
+    // for a staleness risk, so the invalidation paths are pinned here.
+
+    fn assistant_item_named(id: &str, text: &str) -> HydratedConversationItem {
+        HydratedConversationItem {
+            id: id.to_string(),
+            content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                text: text.to_string(),
+                agent_nickname: None,
+                agent_role: None,
+                phase: None,
+            }),
+            source_turn_id: Some("turn-1".to_string()),
+            source_turn_index: Some(0),
+            timestamp: None,
+            is_from_user_turn_boundary: false,
+        }
+    }
+
+    /// The memoized agent-directory version must be dropped whenever the
+    /// snapshot is written, so a directory-visible change is never masked
+    /// by a stale memo.
+    #[test]
+    fn agent_directory_version_memo_is_invalidated_by_snapshot_writes() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+
+        reducer.upsert_thread_snapshot(ThreadSnapshot::from_info(
+            "srv",
+            make_thread_info("thread-1"),
+        ));
+        let first = {
+            let snapshot = reducer.snapshot.read().expect("snapshot");
+            reducer.agent_directory_version(&snapshot)
+        };
+        // Repeat reads with no intervening write are served from the memo
+        // and must agree.
+        let repeated = {
+            let snapshot = reducer.snapshot.read().expect("snapshot");
+            reducer.agent_directory_version(&snapshot)
+        };
+        assert_eq!(first, repeated);
+
+        // A directory-visible mutation (agent status) must move the version.
+        reducer.mutate_thread(&key, |thread| {
+            thread.info.agent_status = Some("running".to_string());
+        });
+        let after_status = {
+            let snapshot = reducer.snapshot.read().expect("snapshot");
+            reducer.agent_directory_version(&snapshot)
+        };
+        assert_ne!(first, after_status);
+
+        // Adding a second thread must move it again.
+        reducer.upsert_thread_snapshot(ThreadSnapshot::from_info(
+            "srv",
+            make_thread_info("thread-2"),
+        ));
+        let after_insert = {
+            let snapshot = reducer.snapshot.read().expect("snapshot");
+            reducer.agent_directory_version(&snapshot)
+        };
+        assert_ne!(after_status, after_insert);
+
+        // And removing it must return to the previous value: the version is
+        // a pure function of the directory contents.
+        reducer.remove_thread(&ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-2".to_string(),
+        });
+        let after_remove = {
+            let snapshot = reducer.snapshot.read().expect("snapshot");
+            reducer.agent_directory_version(&snapshot)
+        };
+        assert_eq!(after_status, after_remove);
+    }
+
+    /// The memoized conversation-activity walk must follow item mutations.
+    #[test]
+    fn conversation_activity_cache_follows_item_mutations() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+        reducer.upsert_thread_snapshot(ThreadSnapshot::from_info(
+            "srv",
+            make_thread_info("thread-1"),
+        ));
+
+        let summary = |reducer: &AppStoreReducer| -> AppSessionSummary {
+            let snapshot = reducer.snapshot.read().expect("snapshot");
+            let thread = snapshot.threads.get(&key).expect("thread");
+            app_session_summary(thread, None)
+        };
+
+        let empty = summary(&reducer);
+        assert_eq!(empty.last_response_preview, None);
+        assert_eq!(empty.stats, None);
+        // A second read hits the cache and must agree with the first.
+        assert_eq!(summary(&reducer), empty);
+
+        // Push.
+        reducer.mutate_thread(&key, |thread| {
+            thread.items.push(assistant_item_named("a-1", "first"));
+        });
+        let after_push = summary(&reducer);
+        assert_eq!(after_push.last_response_preview.as_deref(), Some("first"));
+        assert_eq!(
+            after_push
+                .stats
+                .as_ref()
+                .map(|stats| stats.assistant_message_count),
+            Some(1)
+        );
+
+        // In-place edit through the id accessor.
+        reducer.mutate_thread(&key, |thread| {
+            let item = thread.items.get_mut_by_id("a-1").expect("item a-1");
+            item.content =
+                HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                    text: "edited".to_string(),
+                    agent_nickname: None,
+                    agent_role: None,
+                    phase: None,
+                });
+        });
+        assert_eq!(
+            summary(&reducer).last_response_preview.as_deref(),
+            Some("edited")
+        );
+
+        // Wholesale replacement of the list.
+        reducer.mutate_thread(&key, |thread| {
+            thread.items = vec![assistant_item_named("a-2", "replaced")].into();
+        });
+        assert_eq!(
+            summary(&reducer).last_response_preview.as_deref(),
+            Some("replaced")
+        );
+
+        // Retain that empties the list.
+        reducer.mutate_thread(&key, |thread| {
+            thread.items.retain(|_| false);
+        });
+        let emptied = summary(&reducer);
+        assert_eq!(emptied.last_response_preview, None);
+        assert_eq!(emptied.stats, None);
+    }
+
+    /// The overlay-merged activity cache is keyed on *both* lists.
+    #[test]
+    fn conversation_activity_cache_follows_overlay_mutations() {
+        let mut snapshot = AppSnapshot::default();
+        let mut thread = ThreadSnapshot::from_info("srv", make_thread_info("thread-1"));
+        thread.items.push(assistant_item_named("a-1", "hello"));
+        let key = thread.key.clone();
+        snapshot.threads.insert(key.clone(), thread);
+
+        let stats = |snapshot: &AppSnapshot| -> crate::store::boundary::AppConversationStats {
+            crate::store::boundary::app_thread_snapshot_from_state(
+                snapshot,
+                snapshot.threads.get(&key).expect("thread"),
+            )
+            .expect("projection")
+            .stats
+            .expect("stats")
+        };
+
+        let before = stats(&snapshot);
+        assert_eq!(before.user_message_count, 0);
+        assert_eq!(stats(&snapshot), before);
+
+        snapshot
+            .threads
+            .get_mut(&key)
+            .expect("thread")
+            .local_overlay_items
+            .push(HydratedConversationItem {
+                id: "local-user-message:1".to_string(),
+                content: HydratedConversationItemContent::User(HydratedUserMessageData {
+                    text: "hi".to_string(),
+                    image_data_uris: Vec::new(),
+                }),
+                source_turn_id: Some("turn-2".to_string()),
+                source_turn_index: None,
+                timestamp: None,
+                is_from_user_turn_boundary: true,
+            });
+
+        assert_eq!(stats(&snapshot).user_message_count, 1);
+    }
+
+    /// Clearing one thread's item-fingerprint cache must not clear another
+    /// thread's — the map is nested per thread precisely so that a thread
+    /// upsert stays O(items in that thread).
+    #[test]
+    fn thread_item_fingerprint_cache_clears_only_the_named_thread() {
+        let reducer = AppStoreReducer::new();
+        for id in ["thread-1", "thread-2"] {
+            reducer.upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info(id)));
+        }
+        let key_one = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+        let key_two = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-2".to_string(),
+        };
+
+        let mut receiver = reducer.subscribe();
+        reducer.emit_thread_item_changed(&key_one, assistant_item_named("shared", "text"));
+        reducer.emit_thread_item_changed(&key_two, assistant_item_named("shared", "text"));
+        assert_eq!(
+            drain_updates(&mut receiver)
+                .iter()
+                .filter(|update| matches!(update, AppStoreUpdateRecord::ThreadItemChanged { .. }))
+                .count(),
+            2
+        );
+
+        // Identical re-emits are deduped for both threads.
+        reducer.emit_thread_item_changed(&key_one, assistant_item_named("shared", "text"));
+        reducer.emit_thread_item_changed(&key_two, assistant_item_named("shared", "text"));
+        assert_eq!(
+            drain_updates(&mut receiver)
+                .iter()
+                .filter(|update| matches!(update, AppStoreUpdateRecord::ThreadItemChanged { .. }))
+                .count(),
+            0
+        );
+
+        // Upserting thread-1 clears only thread-1's fingerprints.
+        reducer.clear_thread_update_caches(&key_one);
+        drain_updates(&mut receiver);
+        reducer.emit_thread_item_changed(&key_one, assistant_item_named("shared", "text"));
+        reducer.emit_thread_item_changed(&key_two, assistant_item_named("shared", "text"));
+        let emitted = drain_updates(&mut receiver)
+            .into_iter()
+            .filter_map(|update| match update {
+                AppStoreUpdateRecord::ThreadItemChanged { key, .. } => Some(key),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(emitted, vec![key_one]);
+    }
+
+    /// The bounded item fingerprint must still discriminate the changes the
+    /// dedup cache exists to catch, including ones buried behind a large
+    /// captured command output.
+    #[test]
+    fn item_fingerprint_detects_changes_behind_large_output() {
+        let base = |output: &str, status: AppOperationStatus| HydratedConversationItem {
+            id: "cmd-1".to_string(),
+            content: HydratedConversationItemContent::CommandExecution(
+                HydratedCommandExecutionData {
+                    command: "make test".to_string(),
+                    output: Some(output.to_string()),
+                    status,
+                    exit_code: None,
+                    duration_ms: None,
+                    process_id: None,
+                    actions: Vec::new(),
+                    cwd: "/tmp".to_string(),
+                },
+            ),
+            source_turn_id: Some("turn-1".to_string()),
+            source_turn_index: Some(0),
+            timestamp: None,
+            is_from_user_turn_boundary: false,
+        };
+
+        let big = "x".repeat(200_000);
+        let running = base(&big, AppOperationStatus::InProgress);
+        assert_eq!(item_fingerprint(&running), item_fingerprint(&running.clone()));
+
+        // Status change after a huge output body: same length, different
+        // value — this is what the retained tail window is for.
+        let completed = base(&big, AppOperationStatus::Completed);
+        assert_ne!(item_fingerprint(&running), item_fingerprint(&completed));
+
+        // Appended output.
+        let grown = base(&format!("{big}more"), AppOperationStatus::InProgress);
+        assert_ne!(item_fingerprint(&running), item_fingerprint(&grown));
+
+        // Change inside the head window.
+        let mut renamed = running.clone();
+        renamed.id = "cmd-2".to_string();
+        assert_ne!(item_fingerprint(&running), item_fingerprint(&renamed));
+    }
+
     fn drain_updates(
         receiver: &mut tokio::sync::broadcast::Receiver<AppStoreUpdateRecord>,
     ) -> Vec<AppStoreUpdateRecord> {
@@ -3951,6 +4409,50 @@ mod tests {
     }
 
     #[test]
+    fn sync_thread_list_preserves_recently_created_thread_not_in_incoming_page() {
+        let reducer = AppStoreReducer::new();
+        let fresh_key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "fresh".to_string(),
+        };
+        let mut info = make_thread_info("fresh");
+        info.created_at = Some((now_ms() / 1000) as i64);
+        reducer.upsert_thread_snapshot(ThreadSnapshot::from_info("srv", info));
+
+        // The incoming page does not include the just-created thread (e.g. a
+        // brand-new OpenCode session is not yet returned by GET /session).
+        reducer.sync_thread_list("srv", &[make_thread_info("other")]);
+
+        let snapshot = reducer.snapshot();
+        assert!(snapshot.threads.contains_key(&fresh_key));
+        assert!(snapshot.threads.contains_key(&ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "other".to_string(),
+        }));
+    }
+
+    #[test]
+    fn sync_thread_list_evicts_old_inactive_thread_not_in_incoming_page() {
+        let reducer = AppStoreReducer::new();
+        let stale_key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "stale".to_string(),
+        };
+        let mut info = make_thread_info("stale");
+        info.created_at = Some((now_ms() / 1000) as i64 - 3600);
+        reducer.upsert_thread_snapshot(ThreadSnapshot::from_info("srv", info));
+
+        reducer.sync_thread_list("srv", &[make_thread_info("other")]);
+
+        let snapshot = reducer.snapshot();
+        assert!(!snapshot.threads.contains_key(&stale_key));
+        assert!(snapshot.threads.contains_key(&ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "other".to_string(),
+        }));
+    }
+
+    #[test]
     fn sync_thread_list_emits_incremental_updates_without_full_resync() {
         let reducer = AppStoreReducer::new();
         let existing_key = ThreadKey {
@@ -4003,8 +4505,8 @@ mod tests {
 
         let page_one = make_thread_info("page-one");
         let page_two = make_thread_info("page-two");
-        reducer.upsert_thread_list_page("srv", &[page_one.clone()]);
-        reducer.upsert_thread_list_page("srv", &[page_two.clone()]);
+        reducer.upsert_thread_list_page("srv", std::slice::from_ref(&page_one));
+        reducer.upsert_thread_list_page("srv", std::slice::from_ref(&page_two));
         reducer.finalize_thread_list_sync(
             "srv",
             &HashSet::from([page_one.id.clone(), page_two.id.clone()]),
@@ -5250,6 +5752,67 @@ mod tests {
     }
 
     #[test]
+    fn upsert_thread_snapshot_preserves_live_tool_omitted_from_replay() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        let item = |id: &str, content: HydratedConversationItemContent| {
+            HydratedConversationItem {
+                id: id.to_string(),
+                content,
+                source_turn_id: None,
+                source_turn_index: None,
+                timestamp: None,
+                is_from_user_turn_boundary: false,
+            }
+        };
+        let mut live = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        live.items.push(item(
+            "tool",
+            HydratedConversationItemContent::CommandExecution(HydratedCommandExecutionData {
+                command: "create image".to_string(),
+                cwd: "/tmp".to_string(),
+                status: AppOperationStatus::Completed,
+                output: Some("done".to_string()),
+                exit_code: Some(0),
+                duration_ms: Some(1),
+                process_id: None,
+                actions: Vec::new(),
+            }),
+        ));
+        reducer.upsert_thread_snapshot(live);
+
+        let mut replay = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        replay.items.push(item(
+            "final",
+            HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                text: "![image](/tmp/image.png)".to_string(),
+                agent_nickname: None,
+                agent_role: None,
+                phase: Some(crate::types::AppMessagePhase::FinalAnswer),
+            }),
+        ));
+        reducer.upsert_thread_snapshot(replay);
+
+        let thread = reducer
+            .snapshot()
+            .threads
+            .get(&key)
+            .cloned()
+            .expect("thread exists");
+        assert_eq!(
+            thread
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tool", "final"]
+        );
+    }
+
+    #[test]
     fn upsert_thread_snapshot_binds_pending_local_user_overlay_to_incoming_active_turn() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
@@ -5705,7 +6268,7 @@ mod tests {
                 timestamp: None,
                 is_from_user_turn_boundary: false,
             },
-        ];
+        ].into();
         reducer.upsert_thread_snapshot(existing);
 
         let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
@@ -5736,7 +6299,7 @@ mod tests {
                 timestamp: None,
                 is_from_user_turn_boundary: false,
             },
-        ];
+        ].into();
 
         let mut receiver = reducer.subscribe();
         assert!(drain_updates(&mut receiver).is_empty());
@@ -5772,7 +6335,7 @@ mod tests {
             source_turn_index: Some(1),
             timestamp: None,
             is_from_user_turn_boundary: false,
-        }];
+        }].into();
         reducer.upsert_thread_snapshot(existing);
 
         let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
@@ -5788,7 +6351,7 @@ mod tests {
             source_turn_index: Some(1),
             timestamp: None,
             is_from_user_turn_boundary: false,
-        }];
+        }].into();
 
         let mut receiver = reducer.subscribe();
         assert!(drain_updates(&mut receiver).is_empty());
@@ -6055,9 +6618,7 @@ fn classify_item_mutation(
     item: &HydratedConversationItem,
 ) -> Option<ItemMutationUpdate> {
     let Some(existing) = existing else {
-        return Some(ItemMutationUpdate::Upsert(HydratedConversationItem::from(
-            item.clone(),
-        )));
+        return Some(ItemMutationUpdate::Upsert(item.clone()));
     };
 
     match (&existing.content, &item.content) {
@@ -6074,9 +6635,7 @@ fn classify_item_mutation(
                 || existing_data.cwd != projected_data.cwd
                 || existing_data.actions != projected_data.actions
             {
-                return Some(ItemMutationUpdate::Upsert(HydratedConversationItem::from(
-                    item.clone(),
-                )));
+                return Some(ItemMutationUpdate::Upsert(item.clone()));
             }
 
             let output_delta =
@@ -6088,15 +6647,11 @@ fn classify_item_mutation(
             if output_delta.is_empty() && !status_changed {
                 None
             } else {
-                Some(ItemMutationUpdate::Upsert(HydratedConversationItem::from(
-                    item.clone(),
-                )))
+                Some(ItemMutationUpdate::Upsert(item.clone()))
             }
         }
         _ if existing.content == item.content => None,
-        _ => Some(ItemMutationUpdate::Upsert(HydratedConversationItem::from(
-            item.clone(),
-        ))),
+        _ => Some(ItemMutationUpdate::Upsert(item.clone())),
     }
 }
 

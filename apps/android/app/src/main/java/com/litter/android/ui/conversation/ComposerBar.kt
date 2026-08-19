@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -110,6 +111,8 @@ import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.common.hasFixedFullAccess
+import com.litter.android.ui.common.matchesModelSelection
+import com.litter.android.ui.common.modelPickerDisplayName
 import com.litter.android.ui.scaled
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
@@ -444,11 +447,26 @@ fun ComposerBar(
             val launchState = appModel.launchState.snapshot.value
             val pendingModel = launchState.selectedModel.trim().ifEmpty { null }
             val thread = appModel.snapshot.value?.threads?.find { it.key == threadKey }
+            val selectedModel = appModel.snapshot.value?.servers
+                ?.firstOrNull { it.serverId == threadKey.serverId }
+                ?.availableModels
+                ?.firstOrNull {
+                    it.matchesModelSelection(pendingModel.orEmpty(), launchState.selectedAgentRuntimeKind)
+                }
             val effort = if (thread?.ampReasoningEffortLocked == true) {
                 null
             } else {
-                launchState.reasoningEffort.trim().ifEmpty { null }
-                    ?.let(::reasoningEffortFromServerValue)
+                val pending = launchState.reasoningEffort.trim()
+                val requested = reasoningEffortFromServerValue(pending)
+                val supported = selectedModel?.supportedReasoningEfforts.orEmpty()
+                    .map { it.reasoningEffort }
+                when {
+                    pending.isEmpty() -> null
+                    selectedModel == null -> requested
+                    supported.isEmpty() -> null
+                    requested != null && supported.contains(requested) -> requested
+                    else -> selectedModel.defaultReasoningEffort
+                }
             }
             val tier = if (HeaderOverrides.pendingFastMode) ServiceTier.FAST else null
             val attachmentToSend = attachedImage
@@ -481,6 +499,20 @@ fun ComposerBar(
         }
     }
     val canSend = text.isNotBlank() || attachedImage != null || attachedFiles.isNotEmpty()
+    val composerThread = appSnapshot?.threads?.firstOrNull { it.key == threadKey }
+    val composerServer = appSnapshot?.servers?.firstOrNull { it.serverId == threadKey.serverId }
+    val launchSelection by appModel.launchState.snapshot.collectAsState()
+    val composerModelSelection = launchSelection.selectedModel.trim().ifBlank {
+        (composerThread?.model ?: composerThread?.info?.model ?: "").trim()
+    }
+    val composerRuntime = launchSelection.selectedAgentRuntimeKind ?: composerThread?.agentRuntimeKind
+    val composerModelLabel = composerServer?.availableModels
+        ?.firstOrNull { it.matchesModelSelection(composerModelSelection, composerRuntime) }
+        ?.modelPickerDisplayName()
+        ?: composerModelSelection.ifBlank { "litter" }
+    val composerReasoningLabel = launchSelection.reasoningEffort.trim().ifBlank {
+        composerThread?.reasoningEffort?.trim().orEmpty()
+    }
 
     Column(
         modifier = Modifier
@@ -859,12 +891,14 @@ fun ComposerBar(
             )
         }
 
-        // Input row
-        Row(
+        // ChatGPT-style composer: writing surface first, then one compact row
+        // for attachments, model/mode selection, voice, and send/stop.
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .background(LitterTheme.codeBackground, RoundedCornerShape(26.dp))
+                .padding(horizontal = 6.dp, vertical = 4.dp),
         ) {
             if (!isRecording && !isTranscribing && !isThinking) {
                 IconButton(
@@ -882,10 +916,9 @@ fun ComposerBar(
             // Text field
             Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 36.dp, max = 120.dp)
-                    .background(LitterTheme.codeBackground, RoundedCornerShape(18.dp))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp, max = 120.dp)
+                    .padding(start = 8.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(modifier = Modifier.weight(1f)) {
@@ -902,7 +935,7 @@ fun ComposerBar(
                         textStyle = TextStyle(
                             color = LitterTheme.textPrimary,
                             fontSize = LitterTextStyle.body.scaled,
-                            fontFamily = LitterTheme.monoFont,
+                            fontFamily = LitterTheme.bodyFont,
                         ),
                         cursorBrush = SolidColor(LitterTheme.accent),
                         // Always reserve trailing space for the expand icon so
@@ -1015,14 +1048,96 @@ fun ComposerBar(
                                 tint = LitterTheme.accentStrong,
                             )
                         }
+                        append("  ⌄")
+                    },
+                    color = LitterTheme.textPrimary,
+                    fontSize = LitterTextStyle.caption.scaled,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .widthIn(max = 176.dp)
+                        .clickable { onToggleModelSelector?.invoke() }
+                        .background(LitterTheme.surface.copy(alpha = 0.78f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+
+                if (showCollaborationModeChip) {
+                    Spacer(Modifier.width(6.dp))
+                    CollaborationModeChip(
+                        mode = collaborationMode,
+                        onClick = { onOpenCollaborationModePicker?.invoke() },
+                    )
+                }
+
+                Spacer(Modifier.weight(1f))
+                when {
+                    isRecording -> IconButton(
+                        onClick = {
+                            scope.launch {
+                                val auth = runCatching {
+                                    appModel.client.authStatus(
+                                        threadKey.serverId,
+                                        AuthStatusRequest(includeToken = true, refreshToken = false),
+                                    )
+                                }.getOrNull()
+                                val transcript = transcriptionManager.stopAndTranscribe(
+                                    authMethod = auth?.authMethod,
+                                    authToken = auth?.authToken,
+                                )
+                                transcript?.let {
+                                    textFieldValue = insertComposerTranscript(textFieldValue, it)
+                                }
+                            }
+                        },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = "Stop recording", tint = LitterTheme.accentStrong)
                     }
 
-                    isTranscribing -> {
-                        Spacer(Modifier.width(8.dp))
-                        LinearProgressIndicator(
-                            modifier = Modifier.width(24.dp),
-                            color = LitterTheme.accent,
-                            trackColor = Color.Transparent,
+                    isTranscribing -> LinearProgressIndicator(
+                        modifier = Modifier.width(32.dp),
+                        color = LitterTheme.accent,
+                        trackColor = Color.Transparent,
+                    )
+
+                    canSend -> IconButton(
+                        onClick = sendCurrent,
+                        enabled = !isTranscribing,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(LitterTheme.accent),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = Color.Black,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+
+                    isThinking -> IconButton(
+                        onClick = {
+                            val turnId = activeTurnId ?: return@IconButton
+                            scope.launch {
+                                runCatching {
+                                    appModel.client.interruptTurn(
+                                        threadKey.serverId,
+                                        AppInterruptTurnRequest(threadId = threadKey.threadId, turnId = turnId),
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(LitterTheme.textPrimary, CircleShape),
+                    ) {
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = "Cancel response",
+                            tint = LitterTheme.surface,
+                            modifier = Modifier.size(15.dp),
                         )
                     }
 
@@ -1039,25 +1154,19 @@ fun ComposerBar(
                         val voiceInputLevel = voiceSession?.inputLevel ?: 0f
 
                         if (realtimeAvailable && text.isEmpty() && attachedImage == null && attachedFiles.isEmpty()) {
-                            Spacer(Modifier.width(8.dp))
                             com.litter.android.ui.voice.InlineVoiceButton(
                                 phase = voicePhase,
                                 inputLevel = voiceInputLevel,
                                 isAvailable = true,
                                 onStart = {
-                                    scope.launch {
-                                        voiceController.startVoiceOnThread(appModel, threadKey)
-                                    }
+                                    scope.launch { voiceController.startVoiceOnThread(appModel, threadKey) }
                                 },
                                 onStop = {
-                                    scope.launch {
-                                        voiceController.stopActiveVoiceSession(appModel)
-                                    }
+                                    scope.launch { voiceController.stopActiveVoiceSession(appModel) }
                                 },
-                                modifier = Modifier.size(32.dp),
+                                modifier = Modifier.size(40.dp),
                             )
                         } else {
-                            Spacer(Modifier.width(8.dp))
                             IconButton(
                                 onClick = {
                                     if (transcriptionManager.hasMicPermission(context)) {
@@ -1066,7 +1175,7 @@ fun ComposerBar(
                                         micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                     }
                                 },
-                                modifier = Modifier.size(32.dp),
+                                modifier = Modifier.size(40.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Mic,

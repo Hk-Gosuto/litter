@@ -2,7 +2,10 @@ package com.litter.android
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -44,11 +47,19 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_NOTIFICATION_SERVER_ID = "litter.notification.serverId"
         const val EXTRA_NOTIFICATION_THREAD_ID = "litter.notification.threadId"
         const val EXTRA_OPEN_PET_SETTINGS = "litter.openPetSettings"
+        const val NOTIFICATION_PERMISSION_REQUESTED_KEY = "notification_permission_requested"
     }
 
     private var appModel: AppModel? = null
     private val lifecycleController = AppLifecycleController()
     private var openPetSettingsRequest by mutableStateOf(0)
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            LLog.i(
+                "MainActivity",
+                if (granted) "Notification permission granted" else "Notification permission not granted",
+            )
+        }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLanguagePreferences.wrap(newBase))
@@ -217,6 +228,7 @@ class MainActivity : ComponentActivity() {
             LLog.i("MainActivity", "Firebase is not configured; skipping FCM token fetch: ${e.message}")
             return
         }
+        requestNotificationPermissionIfNeeded()
 
         messaging.token
             .addOnSuccessListener { token ->
@@ -232,4 +244,29 @@ class MainActivity : ComponentActivity() {
                 LLog.e("MainActivity", "Failed to fetch FCM token", error)
             }
     }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        val preferences = getSharedPreferences("litter_push", MODE_PRIVATE)
+        if (!shouldRequestNotificationPermission(
+                sdkInt = Build.VERSION.SDK_INT,
+                isGranted = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+                wasAlreadyRequested = preferences.getBoolean(NOTIFICATION_PERMISSION_REQUESTED_KEY, false),
+            )
+        ) {
+            return
+        }
+
+        // Persist before launching so a system-dialog dismissal cannot produce a
+        // permission prompt on every future app launch.
+        preferences.edit().putBoolean(NOTIFICATION_PERMISSION_REQUESTED_KEY, true).apply()
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
 }
+
+internal fun shouldRequestNotificationPermission(
+    sdkInt: Int,
+    isGranted: Boolean,
+    wasAlreadyRequested: Boolean,
+): Boolean =
+    sdkInt >= Build.VERSION_CODES.TIRAMISU && !isGranted && !wasAlreadyRequested

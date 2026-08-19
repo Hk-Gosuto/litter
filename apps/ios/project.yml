@@ -23,8 +23,8 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     SWIFT_STRICT_CONCURRENCY: targeted
-    MARKETING_VERSION: "2.0.0"
-    CURRENT_PROJECT_VERSION: "200000254"
+    MARKETING_VERSION: "2.1.0"
+    CURRENT_PROJECT_VERSION: "210000001"
     SWIFT_OBJC_BRIDGING_HEADER: Sources/Litter/Bridge/codex_bridge_objc.h
     OTHER_LDFLAGS: "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client"
     HEADER_SEARCH_PATHS: "$(inherited) $(PROJECT_DIR)/GeneratedRust/Headers"
@@ -81,8 +81,8 @@ targets:
       - path: Sources/Litter/Resources/Fonts
       - path: Sources/Litter/Resources/Themes
       - path: Sources/Litter/Resources/TipJarProducts.storekit
-      - path: Sources/Litter/Resources/home_cat.png
-      - path: Sources/Litter/Resources/home_cat_entrance.png
+      - path: Sources/Litter/Resources/home_cat.webp
+      - path: Sources/Litter/Resources/home_cat_entrance.webp
       - path: Sources/Litter/Resources/cat_transmission_01.png
       - path: Sources/Litter/Resources/cat_transmission_02.png
       - path: Sources/Litter/Resources/cat_transmission_03.png
@@ -191,15 +191,14 @@ targets:
           - Views/LiveActivityPreview.swift
           - Views/LockScreenCardView.swift
           - Views/RealtimeVoiceScreen.swift
-          - Views/VoiceCallView.swift
           - "**/*.h"
       - path: Sources/Litter/Bridge/UniFFICodexClient.generated.swift
     resources:
       - path: Sources/Litter/Resources/Fonts
       - path: Sources/Litter/Resources/Themes
       - path: Sources/Litter/Resources/TipJarProducts.storekit
-      - path: Sources/Litter/Resources/home_cat.png
-      - path: Sources/Litter/Resources/home_cat_entrance.png
+      - path: Sources/Litter/Resources/home_cat.webp
+      - path: Sources/Litter/Resources/home_cat_entrance.webp
       - path: Sources/Litter/Resources/cat_transmission_01.png
       - path: Sources/Litter/Resources/cat_transmission_02.png
       - path: Sources/Litter/Resources/cat_transmission_03.png

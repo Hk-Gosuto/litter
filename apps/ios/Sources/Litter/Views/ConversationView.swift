@@ -57,8 +57,12 @@ struct ConversationView: View {
     let followScrollToken: Int
     let pinnedContextItems: [ConversationItem]
     let composer: ConversationComposerSnapshot
+    var supportsTurnPagination: Bool
+    var resolveTargetLabel: (String) -> String?
+    var resolveThreadKey: (String) -> ThreadKey?
+    var resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
     @Binding var composerInputText: String
-    @Binding var composerAttachedImage: UIImage?
+    @Binding var composerAttachedImages: [UIImage]
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
     var onOpenConversation: ((ThreadKey) -> Void)? = nil
@@ -68,7 +72,7 @@ struct ConversationView: View {
     var onMinigameDismiss: (() -> Void)? = nil
     var onMinigameRetry: (() -> Void)? = nil
     @AppStorage("workDir") private var workDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "/"
-    @AppStorage("conversationTextSizeStep") private var conversationTextSizeStep = ConversationTextSize.large.rawValue
+    @AppStorage("conversationTextSizeStep") private var conversationTextSizeStep = ConversationTextSize.medium.rawValue
     @AppStorage("fastMode") private var fastMode = false
     @State private var messageActionError: String?
     @State private var hasLoggedFirstRender = false
@@ -100,14 +104,22 @@ struct ConversationView: View {
             return nil
         }
         let trimmed = appState.reasoningEffort.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard !trimmed.isEmpty else { return nil }
+        guard let selectedModel = pendingSelectedModel else { return trimmed }
+        let supported = selectedModel.supportedReasoningEfforts.map {
+            $0.reasoningEffort.wireValue
+        }
+        guard !supported.isEmpty else { return nil }
+        return supported.contains(trimmed)
+            ? trimmed
+            : selectedModel.defaultReasoningEffort.wireValue
     }
 
-    private var supportsTurnPagination: Bool {
-        appModel.snapshot?
-            .serverSnapshot(for: activeThreadKey.serverId)?
-            .capabilities
-            .supportsTurnPagination ?? false
+    private var pendingSelectedModel: ModelInfo? {
+        guard let model = pendingModelOverride else { return nil }
+        return composer.availableModels.first {
+            modelMatchesSelection($0, model, runtime: pendingAgentRuntimeKindOverride)
+        }
     }
 
     var body: some View {
@@ -124,7 +136,9 @@ struct ConversationView: View {
             olderTurnsCursor: thread.olderTurnsCursor,
             initialTurnsLoaded: thread.initialTurnsLoaded || !supportsTurnPagination,
             textSizeStep: $conversationTextSizeStep,
-            resolveTargetLabel: resolveTargetLabel,
+            resolveTargetLabel: { resolveTargetLabel($0) },
+            resolveThreadKey: { resolveThreadKey($0) },
+            resolveLiveStatus: { resolveLiveStatus($0) },
             onWidgetPrompt: sendWidgetPrompt,
             onEditUserItem: editMessage,
             onForkFromUserItem: forkFromMessage,
@@ -144,6 +158,11 @@ struct ConversationView: View {
             }
         }
         .activeThreadKey(activeThreadKey)
+        // Injected alongside the thread key so `ResolvedChatImageView` can read
+        // the cwd from the environment. It previously called
+        // `appModel.threadSnapshot(for:)` in its own body path, which registered
+        // one snapshot observation edge *per inline image* in the transcript.
+        .activeThreadCwd(thread.info.cwd)
         .background { ChatWallpaperBackground(threadKey: activeThreadKey) }
         .overlay(alignment: .top) {
             if thread.isSubagent {
@@ -169,7 +188,7 @@ struct ConversationView: View {
                     pinnedContextItems: pinnedContextItems,
                     composer: composer,
                     composerInputText: $composerInputText,
-                    composerAttachedImage: $composerAttachedImage,
+                    composerAttachedImages: $composerAttachedImages,
                     onSend: sendMessage,
                     onFileSearch: searchComposerFiles,
                     bottomInset: bottomInset,
@@ -224,7 +243,7 @@ struct ConversationView: View {
 
     private func sendMessage(
         _ text: String,
-        attachmentImage: UIImage?,
+        attachmentImages: [UIImage],
         fileAttachments: [ComposerFileAttachment],
         skillMentions: [SkillMentionSelection],
         pluginMentions: [PluginMentionSelection]
@@ -240,7 +259,7 @@ struct ConversationView: View {
                 )
                 let payload = try makeComposerPayload(
                     text: text,
-                    attachmentImage: attachmentImage,
+                    attachmentImages: attachmentImages,
                     fileAttachments: fileAttachments,
                     skillMentions: skillMentions,
                     pluginMentions: pluginMentions
@@ -276,7 +295,7 @@ struct ConversationView: View {
             do {
                 let payload = try makeComposerPayload(
                     text: text,
-                    attachmentImage: nil,
+                    attachmentImages: [],
                     fileAttachments: [],
                     skillMentions: [],
                     pluginMentions: []
@@ -286,10 +305,6 @@ struct ConversationView: View {
                 messageActionError = error.localizedDescription
             }
         }
-    }
-
-    private func resolveTargetLabel(_ target: String) -> String? {
-        appModel.snapshot?.resolvedAgentTargetLabel(for: target, serverId: activeThreadKey.serverId)
     }
 
     /// Resolve the user-message position in the currently-loaded transcript.
@@ -384,12 +399,12 @@ struct ConversationView: View {
 
     private func makeComposerPayload(
         text: String,
-        attachmentImage: UIImage?,
+        attachmentImages: [UIImage],
         fileAttachments: [ComposerFileAttachment],
         skillMentions: [SkillMentionSelection],
         pluginMentions: [PluginMentionSelection]
     ) throws -> AppComposerPayload {
-        let preparedAttachment = attachmentImage.flatMap(ConversationAttachmentSupport.prepareImage)
+        let preparedAttachments = attachmentImages.compactMap(ConversationAttachmentSupport.prepareImage)
         var additionalInputs = skillMentions.map { mention in
             AppUserInput.skill(name: mention.name, path: AbsolutePath(value: mention.path))
         }
@@ -398,8 +413,8 @@ struct ConversationView: View {
                 AppUserInput.mention(name: mention.name, path: mention.path)
             )
         }
-        if let preparedAttachment {
-            additionalInputs.append(preparedAttachment.userInput)
+        for prepared in preparedAttachments {
+            additionalInputs.append(prepared.userInput)
         }
         return AppComposerPayload(
             text: text,
@@ -447,8 +462,8 @@ private struct ConversationBottomChrome: View {
     let pinnedContextItems: [ConversationItem]
     let composer: ConversationComposerSnapshot
     @Binding var composerInputText: String
-    @Binding var composerAttachedImage: UIImage?
-    let onSend: (String, UIImage?, [ComposerFileAttachment], [SkillMentionSelection], [PluginMentionSelection]) -> Void
+    @Binding var composerAttachedImages: [UIImage]
+    let onSend: (String, [UIImage], [ComposerFileAttachment], [SkillMentionSelection], [PluginMentionSelection]) -> Void
     let onFileSearch: (String) async throws -> [FileSearchResult]
     var bottomInset: CGFloat = 0
     let onOpenConversation: ((ThreadKey) -> Void)?
@@ -473,7 +488,7 @@ private struct ConversationBottomChrome: View {
                 onOpenConversation: onOpenConversation,
                 onResumeSessions: onResumeSessions,
                 inputText: $composerInputText,
-                attachedImage: $composerAttachedImage
+                attachedImages: $composerAttachedImages
             )
             .background(.clear, ignoresSafeAreaEdges: .bottom)
         }
@@ -610,6 +625,8 @@ private struct ConversationMessageList: View {
     let initialTurnsLoaded: Bool
     @Binding var textSizeStep: Int
     let resolveTargetLabel: (String) -> String?
+    let resolveThreadKey: (String) -> ThreadKey?
+    let resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
     let onWidgetPrompt: (String) -> Void
     let onEditUserItem: (ConversationItem) -> Void
     let onForkFromUserItem: (ConversationItem) -> Void
@@ -656,16 +673,6 @@ private struct ConversationMessageList: View {
         return transcriptTurns
     }
 
-    private var lastTurnIsUserOnly: Bool {
-        guard let lastTurn = sourceTurns.last else { return false }
-        return lastTurn.items.allSatisfy { $0.isUserItem }
-    }
-
-    private var isStreamingLastTurn: Bool {
-        if case .thinking = threadStatus { return true }
-        return sourceTurns.last?.isLive == true
-    }
-
     private var messageActionsDisabled: Bool {
         if case .thinking = threadStatus { return true }
         return false
@@ -694,13 +701,20 @@ private struct ConversationMessageList: View {
     }
 
     private var mergedRenderableTurns: [TranscriptTurn] {
+        // `renderedTurns` is already kept in sync by `applyTranscriptTurns`
+        // / `syncTranscriptTurns` whenever the transcript changes. Computing
+        // the build key here would be an O(n) hash across the entire
+        // transcript on every body evaluation (including every scroll frame),
+        // defeating the purpose of the cache. Fall back to source-derived
+        // merge only when the cache is empty (e.g. first render before
+        // `.onAppear` fires `syncTranscriptTurns`).
+        if !renderedTurns.isEmpty { return renderedTurns }
         let turns = sourceTurns
-        let buildKey = makeRenderedTurnsBuildKey(for: turns)
-        if renderedTurnsBuildKey == buildKey { return renderedTurns }
         return TranscriptTurn.mergeConsecutiveExplorationTurnsForRendering(turns)
     }
 
     var body: some View {
+        let _ = PerfTracker.event("ConversationMessageList.body")
         let turns = mergedRenderableTurns
         ScrollViewReader { proxy in
             GeometryReader { viewport in
@@ -743,6 +757,8 @@ private struct ConversationMessageList: View {
                                         requestFollowScrollAfterLayout(proxy)
                                     },
                                     resolveTargetLabel: resolveTargetLabel,
+                                    resolveThreadKey: resolveThreadKey,
+                                    resolveLiveStatus: resolveLiveStatus,
                                     onWidgetPrompt: onWidgetPrompt,
                                     onEditUserItem: onEditUserItem,
                                     onForkFromUserItem: onForkFromUserItem,
@@ -755,7 +771,11 @@ private struct ConversationMessageList: View {
                         .frame(maxWidth: LitterPlatform.isRegularSurface(horizontalSizeClass: horizontalSizeClass) ? 760 : .infinity)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.horizontal, 16)
-                        .padding(.top, topInset + 56)
+                        // Navigation owns the safe-area header. This keeps
+                        // the first message below it without wasting the
+                        // extra blank line that made an open chat feel
+                        // disconnected from its content.
+                        .padding(.top, topInset + 40)
                         .animation(.spring(response: 0.22, dampingFraction: 0.9), value: textSizeStep)
 
                         if isWaitingForData {
@@ -944,10 +964,13 @@ private struct ConversationMessageList: View {
         let threadScopeID = activeThreadScopeID
         guard initialBottomScrollThreadScopeID != threadScopeID else { return }
         initialBottomScrollThreadScopeID = threadScopeID
-        DispatchQueue.main.async {
+        // Wait for the hydrated markdown's first layout before anchoring the
+        // restored session at its newest reply. A second pass catches rich
+        // blocks whose measured height arrives on the following frame.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
             guard activeThreadScopeID == threadScopeID else { return }
             scrollToBottom(proxy)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 guard activeThreadScopeID == threadScopeID else { return }
                 scrollToBottom(proxy)
             }
@@ -1179,6 +1202,8 @@ private struct ConversationTurnRow: View, Equatable {
     let onStreamingSnapshotRendered: (() -> Void)?
     let onLiveContentLayoutChanged: (() -> Void)?
     let resolveTargetLabel: (String) -> String?
+    let resolveThreadKey: (String) -> ThreadKey?
+    let resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
     let onWidgetPrompt: (String) -> Void
     let onEditUserItem: (ConversationItem) -> Void
     let onForkFromUserItem: (ConversationItem) -> Void
@@ -1216,6 +1241,8 @@ private struct ConversationTurnRow: View, Equatable {
                 onStreamingSnapshotRendered: onStreamingSnapshotRendered,
                 onLiveContentLayoutChanged: onLiveContentLayoutChanged,
                 resolveTargetLabel: resolveTargetLabel,
+                resolveThreadKey: resolveThreadKey,
+                resolveLiveStatus: resolveLiveStatus,
                 onWidgetPrompt: onWidgetPrompt,
                 onEditUserItem: onEditUserItem,
                 onForkFromUserItem: onForkFromUserItem,
@@ -1233,15 +1260,18 @@ private struct ConversationTurnRow: View, Equatable {
     }
 
     private var collapsedCard: some View {
-        Button(action: onToggleExpansion) {
-            previewTextBlock
+        // `turn.preview` is derived from the turn's items on access, so bind it
+        // once here instead of letting each sub-builder re-derive it.
+        let preview = turn.preview
+        return Button(action: onToggleExpansion) {
+            previewTextBlock(preview)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.top, 10)
                 .padding(.bottom, collapsedFooterReservedInset)
                 .modifier(GlassRectModifier(cornerRadius: 16, tint: LitterTheme.surface.opacity(0.34)))
                 .overlay(alignment: .bottomLeading) {
-                    footerRow
+                    footerRow(preview)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 10)
                 }
@@ -1249,12 +1279,12 @@ private struct ConversationTurnRow: View, Equatable {
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilitySummary)
+        .accessibilityLabel(accessibilitySummary(preview))
     }
 
-    private var previewTextBlock: some View {
+    private func previewTextBlock(_ preview: TranscriptTurn.Preview) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: turn.preview.primaryText)
+            Text(verbatim: preview.primaryText)
                 .litterFont(.body, weight: .semibold)
                 .foregroundColor(LitterTheme.textPrimary)
                 .lineLimit(1)
@@ -1264,7 +1294,7 @@ private struct ConversationTurnRow: View, Equatable {
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(verbatim: responsePreviewText)
+            Text(verbatim: responsePreviewText(preview))
                 .litterFont(.body)
                 .foregroundColor(LitterTheme.textSecondary.opacity(0.82))
                 .lineLimit(2)
@@ -1281,11 +1311,12 @@ private struct ConversationTurnRow: View, Equatable {
         .frame(maxWidth: .infinity, minHeight: collapsedPreviewHeight, maxHeight: collapsedPreviewHeight, alignment: .topLeading)
     }
 
-    private var footerRow: some View {
-        HStack(alignment: .center, spacing: 10) {
-            if !footerMetadataItems.isEmpty {
+    private func footerRow(_ preview: TranscriptTurn.Preview) -> some View {
+        let metadataItems = footerMetadataItems(preview)
+        return HStack(alignment: .center, spacing: 10) {
+            if !metadataItems.isEmpty {
                 HStack(spacing: 10) {
-                    ForEach(footerMetadataItems, id: \.id) { item in
+                    ForEach(metadataItems, id: \.id) { item in
                         CollapsedTurnMetaItem(systemImage: item.systemImage, text: item.text)
                     }
                 }
@@ -1321,41 +1352,43 @@ private struct ConversationTurnRow: View, Equatable {
     private var collapsedResponseHeight: CGFloat { (collapsedPreviewLineHeight * 2) + 2 }
     private var collapsedPreviewLineHeight: CGFloat { UIFont.preferredFont(forTextStyle: .body).lineHeight * textScale }
 
-    private var footerMetadataItems: [CollapsedTurnMeta] {
+    private func footerMetadataItems(_ preview: TranscriptTurn.Preview) -> [CollapsedTurnMeta] {
         var items: [CollapsedTurnMeta] = []
-        if let durationText = turn.preview.durationText {
+        if let durationText = preview.durationText {
             items.append(CollapsedTurnMeta(id: "duration", systemImage: "clock", text: durationText))
         }
-        if turn.preview.toolCallCount > 0 {
-            items.append(CollapsedTurnMeta(id: "tools", systemImage: "chevron.left.forwardslash.chevron.right", text: "\(turn.preview.toolCallCount)"))
+        if preview.toolCallCount > 0 {
+            items.append(CollapsedTurnMeta(id: "tools", systemImage: "chevron.left.forwardslash.chevron.right", text: "\(preview.toolCallCount)"))
         }
-        if turn.preview.eventCount > 0 {
-            items.append(CollapsedTurnMeta(id: "events", systemImage: "sparkles", text: "\(turn.preview.eventCount)"))
+        if preview.eventCount > 0 {
+            items.append(CollapsedTurnMeta(id: "events", systemImage: "sparkles", text: "\(preview.eventCount)"))
         }
-        if turn.preview.widgetCount > 0 {
-            items.append(CollapsedTurnMeta(id: "widgets", systemImage: "rectangle.3.group", text: "\(turn.preview.widgetCount)"))
+        if preview.widgetCount > 0 {
+            items.append(CollapsedTurnMeta(id: "widgets", systemImage: "rectangle.3.group", text: "\(preview.widgetCount)"))
         }
-        if turn.preview.imageCount > 0 {
-            items.append(CollapsedTurnMeta(id: "images", systemImage: "photo", text: "\(turn.preview.imageCount)"))
+        if preview.imageCount > 0 {
+            items.append(CollapsedTurnMeta(id: "images", systemImage: "photo", text: "\(preview.imageCount)"))
         }
         return items
     }
 
-    private var secondaryPreviewText: String? {
-        guard let secondaryText = turn.preview.secondaryText, secondaryText != turn.preview.primaryText else { return nil }
+    private func secondaryPreviewText(_ preview: TranscriptTurn.Preview) -> String? {
+        guard let secondaryText = preview.secondaryText, secondaryText != preview.primaryText else { return nil }
         return secondaryText
     }
 
-    private var responsePreviewText: String { secondaryPreviewText ?? turn.preview.primaryText }
+    private func responsePreviewText(_ preview: TranscriptTurn.Preview) -> String {
+        secondaryPreviewText(preview) ?? preview.primaryText
+    }
 
-    private var accessibilitySummary: String {
-        var parts = [turn.preview.primaryText]
-        if let secondaryPreviewText { parts.append(secondaryPreviewText) }
-        if let durationText = turn.preview.durationText { parts.append("Duration \(durationText)") }
-        if turn.preview.toolCallCount > 0 { parts.append("\(turn.preview.toolCallCount) tool \(turn.preview.toolCallCount == 1 ? "call" : "calls")") }
-        if turn.preview.widgetCount > 0 { parts.append("\(turn.preview.widgetCount) \(turn.preview.widgetCount == 1 ? "widget" : "widgets")") }
-        if turn.preview.eventCount > 0 { parts.append("\(turn.preview.eventCount) \(turn.preview.eventCount == 1 ? "event" : "events")") }
-        if turn.preview.imageCount > 0 { parts.append("\(turn.preview.imageCount) \(turn.preview.imageCount == 1 ? "image" : "images")") }
+    private func accessibilitySummary(_ preview: TranscriptTurn.Preview) -> String {
+        var parts = [preview.primaryText]
+        if let secondary = secondaryPreviewText(preview) { parts.append(secondary) }
+        if let durationText = preview.durationText { parts.append("Duration \(durationText)") }
+        if preview.toolCallCount > 0 { parts.append("\(preview.toolCallCount) tool \(preview.toolCallCount == 1 ? "call" : "calls")") }
+        if preview.widgetCount > 0 { parts.append("\(preview.widgetCount) \(preview.widgetCount == 1 ? "widget" : "widgets")") }
+        if preview.eventCount > 0 { parts.append("\(preview.eventCount) \(preview.eventCount == 1 ? "event" : "events")") }
+        if preview.imageCount > 0 { parts.append("\(preview.imageCount) \(preview.imageCount == 1 ? "image" : "images")") }
         return parts.joined(separator: ". ")
     }
 }
@@ -1416,7 +1449,7 @@ private struct ConversationInputBar: View {
     @AppStorage("workDir") private var workDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "/"
     @AppStorage("fastMode") private var fastMode = false
 
-    let onSend: (String, UIImage?, [ComposerFileAttachment], [SkillMentionSelection], [PluginMentionSelection]) -> Void
+    let onSend: (String, [UIImage], [ComposerFileAttachment], [SkillMentionSelection], [PluginMentionSelection]) -> Void
     let onFileSearch: (String) async throws -> [FileSearchResult]
     var bottomInset: CGFloat = 0
     let showModeChip: Bool
@@ -1425,13 +1458,13 @@ private struct ConversationInputBar: View {
     let onResumeSessions: ((String) -> Void)?
 
     @Binding var inputText: String
-    @Binding var attachedImage: UIImage?
+    @Binding var attachedImages: [UIImage]
     @State private var attachedFiles: [ComposerFileAttachment] = []
     @State private var showAttachMenu = false
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFileImporter = false
-    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var showSlashPopup = false
     @State private var activeSlashToken: ComposerSlashQueryContext?
     @State private var slashSuggestions: [ComposerSlashCommand] = []
@@ -1468,7 +1501,11 @@ private struct ConversationInputBar: View {
     @State private var hasLoggedFirstFocus = false
     @State private var hasLoggedKeyboardShown = false
     @State private var isComposerFocused = false
-    @State private var composerSelectionRange = NSRange(location: 0, length: 0)
+    /// Reference-type box, not `@State`: the text view's coordinator writes the
+    /// selection on every keystroke, and nothing renders from it. Routing it
+    /// through SwiftUI state cost two extra full composer-subtree body passes
+    /// per character.
+    @State private var composerSelection = ComposerSelectionBox()
 
     private var pendingUserInputRequest: PendingUserInputRequest? {
         guard let request = snapshot.pendingUserInputRequest else { return nil }
@@ -1476,9 +1513,7 @@ private struct ConversationInputBar: View {
     }
 
     private var hasFixedFullAccess: Bool {
-        guard let runtime = appModel.snapshot?.threads
-            .first(where: { $0.key == snapshot.threadKey })?.agentRuntimeKind else { return false }
-        return String.hasFixedFullAccess(runtime)
+        snapshot.hasFixedFullAccess
     }
 
     private var pendingModelOverride: String? {
@@ -1531,8 +1566,8 @@ private struct ConversationInputBar: View {
             showPhotoPicker: $showPhotoPicker,
             showCamera: $showCamera,
             showFileImporter: $showFileImporter,
-            selectedPhoto: $selectedPhoto,
-            attachedImage: $attachedImage,
+            selectedPhotos: $selectedPhotos,
+            attachedImages: $attachedImages,
             showModelSelector: $showModelSelector,
             showPermissionsSheet: $showPermissionsSheet,
             showExperimentalSheet: $showExperimentalSheet,
@@ -1543,7 +1578,7 @@ private struct ConversationInputBar: View {
             slashErrorMessage: $slashErrorMessage,
             showMicPermissionAlert: $showMicPermissionAlert,
             onOpenSettings: openAppSettings,
-            onLoadSelectedPhoto: loadSelectedPhoto,
+            onLoadSelectedPhotos: loadSelectedPhotos,
             onLoadSelectedFile: { url in
                 guard let picked = ConversationAttachmentSupport.loadPickedFile(at: url) else { return }
                 applyPickedFile(picked)
@@ -1568,8 +1603,8 @@ private struct ConversationInputBar: View {
         .onChange(of: snapshot.composerPrefillRequest?.id) { _, _ in
             guard let prefill = snapshot.composerPrefillRequest else { return }
             inputText = prefill.text
-            composerSelectionRange = NSRange(location: (prefill.text as NSString).length, length: 0)
-            attachedImage = nil
+            composerSelection.range = NSRange(location: (prefill.text as NSString).length, length: 0)
+            attachedImages = []
             attachedFiles = []
             hideComposerPopups()
             appModel.clearComposerPrefill(id: prefill.id)
@@ -1603,7 +1638,7 @@ private struct ConversationInputBar: View {
     private var composerSurface: some View {
         VStack(spacing: 0) {
             ConversationComposerContentView(
-                attachedImage: attachedImage,
+                attachedImages: attachedImages,
                 attachedFiles: attachedFiles,
                 collaborationMode: snapshot.collaborationMode,
                 activePlanProgress: snapshot.activePlanProgress,
@@ -1618,9 +1653,12 @@ private struct ConversationInputBar: View {
                 contextPercent: contextPercent(),
                 isTurnActive: isTurnActive,
                 showModeChip: showModeChip,
+                modelLabel: composerModelLabel,
+                reasoningLabel: composerReasoningLabel,
                 voiceManager: voiceManager,
                 showAttachMenu: $showAttachMenu,
                 onClearAttachment: clearAttachment,
+                onRemoveImage: removeAttachedImage,
                 onRemoveFileAttachment: removeFileAttachment,
                 onRespondToPendingUserInput: respondToPendingUserInput,
                 onDismissPendingUserInput: dismissPendingUserInput,
@@ -1629,15 +1667,16 @@ private struct ConversationInputBar: View {
                 onSteerQueuedFollowUp: steerQueuedFollowUp,
                 onDeleteQueuedFollowUp: deleteQueuedFollowUp,
                 onRemovePluginMention: removePluginMention,
-                onPasteImage: { image in attachedImage = image },
+                onPasteImage: appendAttachedImage,
                 onOpenModePicker: onOpenModePicker,
+                onOpenModelPicker: { showModelSelector = true },
                 onSendText: handleSend,
                 onStopRecording: stopVoiceRecording,
                 onStartRecording: startVoiceRecording,
                 onInterrupt: interruptActiveTurn,
                 inputText: $inputText,
                 isComposerFocused: $isComposerFocused,
-                composerSelectionRange: $composerSelectionRange
+                composerSelectionRange: composerSelection.binding
             )
             .overlay(alignment: .bottom) {
                 ConversationComposerPopupOverlayView(
@@ -1657,10 +1696,11 @@ private struct ConversationInputBar: View {
             return true
         }
         .dropDestination(for: Data.self) { items, _ in
-            guard let image = items.lazy.compactMap({ UIImage(data: $0) }).first else {
-                return false
+            let images = items.compactMap { UIImage(data: $0) }
+            guard !images.isEmpty else { return false }
+            for image in images {
+                appendAttachedImage(image)
             }
-            attachedImage = image
             return true
         }
     }
@@ -1677,8 +1717,42 @@ private struct ConversationInputBar: View {
         return min(max(percent, 0), 100)
     }
 
+    private var composerModelLabel: String {
+        let pending = appState.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selection = pending.isEmpty ? snapshot.threadModel : pending
+        let runtime = pending.isEmpty
+            ? appModel.threadSnapshot(for: snapshot.threadKey)?.agentRuntimeKind
+            : appState.selectedAgentRuntimeKind
+        if let model = snapshot.availableModels.first(where: {
+            modelMatchesSelection($0, selection, runtime: runtime)
+        }) {
+            return modelPickerDisplayName(model)
+        }
+        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "litter" : trimmed
+    }
+
+    private var composerReasoningLabel: String? {
+        let pending = appState.reasoningEffort.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pending.isEmpty { return pending }
+        let threadValue = snapshot.threadReasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return threadValue.isEmpty ? nil : threadValue
+    }
+
     private func clearAttachment() {
-        attachedImage = nil
+        attachedImages = []
+    }
+
+    private func removeAttachedImage(at index: Int) {
+        guard attachedImages.indices.contains(index) else { return }
+        attachedImages.remove(at: index)
+    }
+
+    /// Appends up to `ComposerAttachmentLimits.maxImages`; extra images are
+    /// dropped rather than replacing what is already attached.
+    private func appendAttachedImage(_ image: UIImage) {
+        guard attachedImages.count < ComposerAttachmentLimits.maxImages else { return }
+        attachedImages.append(image)
     }
 
     private func removeFileAttachment(_ file: ComposerFileAttachment) {
@@ -1688,7 +1762,7 @@ private struct ConversationInputBar: View {
     private func applyPickedFile(_ picked: PickedComposerFile) {
         switch picked {
         case .image(let image):
-            attachedImage = image
+            appendAttachedImage(image)
         case .file(let file):
             if !attachedFiles.contains(file) {
                 attachedFiles.append(file)
@@ -1742,17 +1816,17 @@ private struct ConversationInputBar: View {
 
     private func handleSend() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let image = attachedImage
+        let images = attachedImages
         let files = attachedFiles
-        guard !text.isEmpty || image != nil || !files.isEmpty else { return }
+        guard !text.isEmpty || !images.isEmpty || !files.isEmpty else { return }
         if let request = snapshot.pendingUserInputRequest {
             appState.dismissPendingUserInput(id: request.id)
         }
-        if image == nil,
+        if images.isEmpty,
            files.isEmpty,
            let invocation = parseSlashCommandInvocation(text) {
             inputText = ""
-            attachedImage = nil
+            attachedImages = []
             attachedFiles = []
             hideComposerPopups()
             isComposerFocused = false
@@ -1760,14 +1834,14 @@ private struct ConversationInputBar: View {
             return
         }
         inputText = ""
-        attachedImage = nil
+        attachedImages = []
         attachedFiles = []
         hideComposerPopups()
         isComposerFocused = false
         let skillMentions = collectSkillMentionsForSubmission(text)
         let pluginMentions = collectPluginMentionsForSubmission(text)
         pluginMentionSelections = []
-        onSend(text, image, files, skillMentions, pluginMentions)
+        onSend(text, images, files, skillMentions, pluginMentions)
     }
 
     private func dismissPendingUserInput() {
@@ -1824,14 +1898,14 @@ private struct ConversationInputBar: View {
 
         let nsText = inputText as NSString
         let textLength = nsText.length
-        let location = min(max(composerSelectionRange.location, 0), textLength)
-        let length = min(max(composerSelectionRange.length, 0), textLength - location)
+        let location = min(max(composerSelection.range.location, 0), textLength)
+        let length = min(max(composerSelection.range.length, 0), textLength - location)
         let range = NSRange(location: location, length: length)
         let replacement = composerInsertionText(insertion, in: nsText, replacing: range)
         let updated = nsText.replacingCharacters(in: range, with: replacement)
         inputText = updated
         let cursor = (updated as NSString).length - ((nsText.length - range.location - range.length))
-        composerSelectionRange = NSRange(location: cursor, length: 0)
+        composerSelection.range = NSRange(location: cursor, length: 0)
     }
 
     private func interruptActiveTurn() {
@@ -1867,12 +1941,15 @@ private struct ConversationInputBar: View {
         UIApplication.shared.open(url)
     }
 
-    private func loadSelectedPhoto(_ item: PhotosPickerItem) async {
-        if let data = try? await item.loadTransferable(type: Data.self),
-           let image = UIImage(data: data) {
-            attachedImage = image
+    private func loadSelectedPhotos(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            if attachedImages.count >= ComposerAttachmentLimits.maxImages { break }
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let image = UIImage(data: data) {
+                attachedImages.append(image)
+            }
         }
-        selectedPhoto = nil
+        selectedPhotos = []
     }
 
     private func dismissPlanImplementationPrompt() {
@@ -1984,7 +2061,8 @@ private struct ConversationInputBar: View {
             nextText.contains("$")
 
         guard needsPopupEvaluation else {
-            hideComposerPopups()
+            // The common typing path has no active popup state. Avoid walking
+            // and cancelling every suggestion subsystem on each keystroke.
             return
         }
 
@@ -2104,7 +2182,7 @@ private struct ConversationInputBar: View {
         activeSlashToken = nil
         slashSuggestions = []
         inputText = ""
-        attachedImage = nil
+        attachedImages = []
         attachedFiles = []
         isComposerFocused = false
         executeSlashCommand(command, args: nil)

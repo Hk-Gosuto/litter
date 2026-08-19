@@ -140,7 +140,7 @@ fn append_missing_amp_mode_models(models: &mut Vec<types::ModelInfo>) {
         let mode_name = mode.id.clone();
         let prefixed_mode = format!("amp/{mode_name}");
         let exists = models.iter().any(|existing| {
-            if existing.agent_runtime_kind != "amp".to_string() {
+            if existing.agent_runtime_kind != "amp" {
                 return false;
             }
             let id = existing.id.trim().to_ascii_lowercase();
@@ -181,11 +181,10 @@ fn normalize_model_info_for_runtime(
         model_info.supported_reasoning_efforts = supported_reasoning_efforts;
         model_info.default_reasoning_effort = default_reasoning_effort;
         model_info.is_default = mode == "smart";
-    } else if has_qualified_catalog {
-        if let Some(provider_id) = derive_model_provider_id(&model_info.id) {
+    } else if has_qualified_catalog
+        && let Some(provider_id) = derive_model_provider_id(&model_info.id) {
             model_info.provider_id = Some(provider_id.to_string());
         }
-    }
     if is_pi
         && !model_info
             .supported_reasoning_efforts
@@ -750,14 +749,14 @@ impl AppClient {
             let mut codex_visited = false;
             let mut tasks = Vec::new();
             for runtime_kind in runtime_kinds {
-                if runtime_kind == "codex".to_string() {
+                if runtime_kind == "codex" {
                     if codex_visited {
                         continue;
                     }
                     codex_visited = true;
                 }
 
-                let client = std::sync::Arc::clone(&c);
+                let client = std::sync::Arc::clone(c);
                 let server_id = server_id.clone();
                 let initial_params = params.clone();
                 tasks.push(async move {
@@ -1047,7 +1046,7 @@ impl AppClient {
             let runtime_count = runtime_kinds.len();
             let params: upstream::ModelListParams = params.into();
             let tasks = runtime_kinds.into_iter().map(|runtime_kind| {
-                let client = Arc::clone(&c);
+                let client = Arc::clone(c);
                 let server_id = server_id.clone();
                 let mut request_params = params.clone();
                 async move {
@@ -1281,7 +1280,22 @@ impl AppClient {
         path: String,
     ) -> Result<types::ResolvedImageViewResult, ClientError> {
         blocking_async!(self.rt, self.inner, |c| {
-            resolve_image_view_bytes(c.as_ref(), &server_id, &path).await
+            resolve_image_view_bytes(c.as_ref(), &server_id, &path, None).await
+        })
+    }
+
+    /// Resolve an image path relative to a thread working directory when the
+    /// message referenced `./foo.png`, `art/foo.svg`, or another relative
+    /// path. The original `resolve_image_view` remains available for
+    /// absolute/tool-provided paths.
+    pub async fn resolve_image_view_at(
+        &self,
+        server_id: String,
+        path: String,
+        cwd: Option<String>,
+    ) -> Result<types::ResolvedImageViewResult, ClientError> {
+        blocking_async!(self.rt, self.inner, |c| {
+            resolve_image_view_bytes(c.as_ref(), &server_id, &path, cwd.as_deref()).await
         })
     }
 
@@ -1392,14 +1406,12 @@ impl AppClient {
                 Some("/tmp"),
             )
             .await
-            {
-                if resp.exit_code == 0 {
+                && resp.exit_code == 0 {
                     let home = resp.stdout.trim().to_string();
                     if !home.is_empty() {
                         return Ok(home);
                     }
                 }
-            }
             // Fallback: Windows
             if let Ok(resp) = exec_command_simple(
                 c.as_ref(),
@@ -1408,69 +1420,13 @@ impl AppClient {
                 None,
             )
             .await
-            {
-                if resp.exit_code == 0 {
+                && resp.exit_code == 0 {
                     let home = resp.stdout.trim().to_string();
                     if !home.is_empty() && home != "%USERPROFILE%" {
                         return Ok(home);
                     }
                 }
-            }
             Ok("/".to_string())
-        })
-    }
-
-    /// Fetch ambient suggestions for a (server_id, project_root) pair.
-    ///
-    /// Returns `None` if the suggestions file does not exist on the remote.
-    /// Results are cached in memory for 60 seconds per (server_id, project_root).
-    pub async fn ambient_suggestions(
-        &self,
-        server_id: String,
-        project_root: String,
-    ) -> Result<Option<crate::ambient_suggestions::AmbientSuggestionsSnapshot>, ClientError> {
-        blocking_async!(self.rt, self.inner, |c| {
-            use crate::ambient_suggestions::{
-                WireSnapshot, ambient_bucket, build_snapshot_from_wire, cache_insert, cache_lookup,
-            };
-
-            if let Some(cached) = cache_lookup(&c.ambient_cache, &server_id, &project_root) {
-                return Ok(Some(cached));
-            }
-
-            let bucket = ambient_bucket(&project_root);
-            // TODO windows: no Windows fallback in this pass
-            let cmd = format!(
-                "cat \"$HOME/.codex/ambient-suggestions/{bucket}/ambient-suggestions.json\" 2>/dev/null"
-            );
-            let resp = exec_command_simple(
-                c.as_ref(),
-                &server_id,
-                &["/usr/bin/env", "sh", "-lc", &cmd],
-                Some(&project_root),
-            )
-            .await?;
-
-            if resp.exit_code != 0 {
-                return Ok(None);
-            }
-            let stdout = resp.stdout.trim().to_string();
-            if stdout.is_empty() {
-                return Ok(None);
-            }
-
-            let wire: WireSnapshot = serde_json::from_str(&stdout).map_err(|e| {
-                ClientError::Serialization(format!("ambient-suggestions parse error: {e}"))
-            })?;
-            let snapshot = build_snapshot_from_wire(wire)?;
-
-            cache_insert(
-                &c.ambient_cache,
-                &server_id,
-                &project_root,
-                snapshot.clone(),
-            );
-            Ok(Some(snapshot))
         })
     }
 
@@ -1905,6 +1861,7 @@ async fn resolve_image_view_bytes(
     client: &MobileClient,
     server_id: &str,
     raw_path: &str,
+    cwd: Option<&str>,
 ) -> Result<types::ResolvedImageViewResult, ClientError> {
     let source = ImageViewSource::parse(raw_path)
         .ok_or_else(|| ClientError::InvalidParams("image_view path is empty".to_string()))?;
@@ -1915,8 +1872,17 @@ async fn resolve_image_view_bytes(
             bytes,
         }),
         ImageViewSource::FilePath(path) => {
-            if let Ok(bytes) = std::fs::read(&path) {
-                return Ok(types::ResolvedImageViewResult { path, bytes });
+            let local_path = if std::path::Path::new(&path).is_relative() {
+                cwd.map(|base| std::path::Path::new(base).join(&path))
+                    .unwrap_or_else(|| std::path::PathBuf::from(&path))
+            } else {
+                std::path::PathBuf::from(&path)
+            };
+            if let Ok(bytes) = std::fs::read(&local_path) {
+                return Ok(types::ResolvedImageViewResult {
+                    path: local_path.to_string_lossy().into_owned(),
+                    bytes,
+                });
             }
 
             if server_id.trim().is_empty() {
@@ -1925,9 +1891,13 @@ async fn resolve_image_view_bytes(
                 ));
             }
 
-            let response =
-                exec_command_simple_owned(client, server_id, image_read_command(&path), None)
-                    .await?;
+            let response = exec_command_simple_owned(
+                client,
+                server_id,
+                image_read_command(&path),
+                cwd.map(str::to_owned),
+            )
+            .await?;
 
             if response.exit_code != 0 {
                 let stderr = response.stderr.trim();
@@ -2211,6 +2181,10 @@ fn normalized_image_path(raw: &str) -> Option<String> {
         || raw.starts_with("\\\\")
         || is_windows_path(raw)
     {
+        return Some(raw.to_string());
+    }
+
+    if !raw.contains("://") && !raw.starts_with("data:") {
         return Some(raw.to_string());
     }
 
@@ -3082,7 +3056,6 @@ mod tests {
             agent_runtimes: Vec::new(),
             connection_progress: None,
             transport: ServerTransportDiagnostics::default(),
-            codex_version: None,
             supports_turn_pagination: true,
         }
     }
@@ -3169,7 +3142,7 @@ mod tests {
 
         let amp_ids = models
             .iter()
-            .filter(|model| model.agent_runtime_kind == "amp".to_string())
+            .filter(|model| model.agent_runtime_kind == "amp")
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(amp_ids, vec!["smart", "rush", "deep"]);
@@ -3192,7 +3165,7 @@ mod tests {
         let smart_count = models
             .iter()
             .filter(|model| {
-                model.agent_runtime_kind == "amp".to_string()
+                model.agent_runtime_kind == "amp"
                     && (model.id == "smart" || model.id == "amp/smart")
             })
             .count();
@@ -3273,15 +3246,15 @@ mod tests {
         );
 
         assert!(models.iter().any(|model| {
-            model.agent_runtime_kind == "claude".to_string() && model.id == "opus"
+            model.agent_runtime_kind == "claude" && model.id == "opus"
         }));
         assert!(!models.iter().any(|model| {
-            model.agent_runtime_kind == "codex".to_string() && model.id == "gpt-5.5"
+            model.agent_runtime_kind == "codex" && model.id == "gpt-5.5"
         }));
         assert_eq!(
             models
                 .iter()
-                .filter(|model| model.agent_runtime_kind == "amp".to_string() && model.id == "smart")
+                .filter(|model| model.agent_runtime_kind == "amp" && model.id == "smart")
                 .count(),
             1
         );

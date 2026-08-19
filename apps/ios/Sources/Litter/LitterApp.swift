@@ -7,10 +7,6 @@ import os
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     private var pendingPushToken: Data?
     private var pendingNotificationThreadKey: ThreadKey?
-    private var splashWindow: UIWindow?
-    private var minTimeElapsed = false
-    private var contentReady = false
-    private var splashDismissed = false
 
     weak var appRuntime: AppRuntimeController? {
         didSet {
@@ -79,7 +75,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                 identifier: "litter.task.complete",
                 actions: [],
                 intentIdentifiers: [],
-                options: [.allowAnnouncement]
+                options: []
             ),
             UNNotificationCategory(
                 identifier: WatchApprovalNotification.categoryIdentifier,
@@ -103,7 +99,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         DispatchQueue.main.async {
             CloudKVSBridge.shared.start()
         }
-        showSplashWindow()
         scheduleKeyboardWarmup()
         // Start pushing state to the paired Apple Watch, gated behind the
         // experimental feature flag. Flip the `appleWatch` feature in
@@ -114,65 +109,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             }
         }
         return true
-    }
-
-    // MARK: - Splash window (sits above keyboard)
-
-    private func showSplashWindow() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
-                self.showSplashWindow()
-                return
-            }
-            let window = UIWindow(windowScene: scene)
-            // Keyboard window is typically at level ~10000. Go above it.
-            window.windowLevel = UIWindow.Level(rawValue: 10000002)
-            let hosting = UIHostingController(rootView:
-                AnimatedSplashView(appReady: true) {}
-            )
-            hosting.view.backgroundColor = .clear
-            window.rootViewController = hosting
-            window.makeKeyAndVisible()
-            self.splashWindow = window
-
-            // Minimum display time
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                self.minTimeElapsed = true
-                self.tryDismissSplash()
-            }
-            // Hard max
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                self.forceDismissSplash()
-            }
-        }
-    }
-
-    /// Called by ContentView when the main UI has appeared.
-    func signalContentReady() {
-        contentReady = true
-        tryDismissSplash()
-    }
-
-    private func tryDismissSplash() {
-        guard !splashDismissed, minTimeElapsed, contentReady else { return }
-        dismissSplash()
-    }
-
-    private func forceDismissSplash() {
-        guard !splashDismissed else { return }
-        dismissSplash()
-    }
-
-    private func dismissSplash() {
-        splashDismissed = true
-        guard let window = splashWindow else { return }
-        UIView.animate(withDuration: 0.35, animations: {
-            window.alpha = 0
-        }, completion: { _ in
-            window.isHidden = true
-            window.rootViewController = nil
-            self.splashWindow = nil
-        })
     }
 
     // MARK: - Keyboard warmup
@@ -187,7 +123,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // Load the real system keyboard while the splash window covers it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let window = scene.windows.first(where: { $0 !== self.splashWindow }) else {
+                  let window = scene.windows.first else {
                 self.scheduleKeyboardWarmup()
                 return
             }
@@ -459,11 +395,12 @@ struct ContentView: View {
     @State private var stableSafeAreaInsets = StableSafeAreaInsets()
     @State private var conversationWarmup = ConversationWarmupCoordinator()
     @State private var petOverlay = PetOverlayController.shared
+    @State private var overlayProjection = OverlayProjectionModel()
     @State private var composerBottomInset: CGFloat = 0
-    @State private var splashDismissed = false
+    @State private var lastObservedActiveThread: ThreadKey?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage("conversationTextSizeStep") private var textSizeStep = ConversationTextSize.large.rawValue
+    @AppStorage("conversationTextSizeStep") private var textSizeStep = ConversationTextSize.medium.rawValue
 
     private var textScale: CGFloat {
         ConversationTextSize.clamped(rawValue: textSizeStep).scale
@@ -504,6 +441,7 @@ struct ContentView: View {
             }
             .ignoresSafeArea(.container)
             .task {
+                overlayProjection.bind(appModel: appModel, petOverlay: petOverlay)
                 if composerBottomInset <= 0, geometry.safeAreaInsets.bottom > 0 {
                     composerBottomInset = geometry.safeAreaInsets.bottom
                 }
@@ -531,18 +469,11 @@ struct ContentView: View {
         #endif
         .onAppear {
             themeManager.syncSystemColorScheme(colorScheme)
-            let forceDiscoveryForUITest =
-                ProcessInfo.processInfo.environment["CODEXIOS_UI_TEST_FORCE_DISCOVERY"] == "1"
-            if forceDiscoveryForUITest {
-                appState.showServerPicker = true
-            }
         }
         .onChange(of: colorScheme) { _, nextColorScheme in
             // iOS toggles `colorScheme` while capturing light+dark
             // app-switcher snapshots on background. Reacting to that
-            // bumps `themeManager.themeVersion`, which the navigation
-            // root uses as `.id(...)` and would tear down every
-            // in-flight @State (composer text, focus, scroll) every
+            // recolors views through the @Observable ThemeStore every
             // time the user switches apps. Only react when the scene
             // is actually active — i.e., a real user theme toggle.
             guard scenePhase == .active else { return }
@@ -557,14 +488,19 @@ struct ContentView: View {
                 themeManager.syncSystemColorScheme(colorScheme)
             }
         }
-        .onChange(of: appModel.snapshot?.activeThread) { _, _ in
-            appState.selectedModel = ""
-            appState.selectedAgentRuntimeKind = nil
-            appState.reasoningEffort = ""
-            appState.showModelSelector = false
-        }
-        .onChange(of: appModel.snapshot) { _, nextSnapshot in
-            appRuntime.handleSnapshot(nextSnapshot)
+        .onChange(of: appModel.snapshotRevision) { _, _ in
+            // Active-thread changes reset the composer selection. Reading
+            // snapshot inside the closure (not in body) avoids a per-token
+            // observation edge on the whole snapshot.
+            let activeThread = appModel.snapshot?.activeThread
+            if activeThread != lastObservedActiveThread {
+                lastObservedActiveThread = activeThread
+                appState.selectedModel = ""
+                appState.selectedAgentRuntimeKind = nil
+                appState.reasoningEffort = ""
+                appState.showModelSelector = false
+            }
+            appRuntime.handleSnapshotRevisionChange()
         }
         .sheet(isPresented: $bindableAppState.showServerPicker) {
             NavigationStack {
@@ -601,13 +537,8 @@ struct ContentView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: [.top, .bottom])
-        .id(themeManager.themeVersion)
         .onAppear {
             Task { await conversationWarmup.prewarmIfNeeded() }
-            if !splashDismissed {
-                splashDismissed = true
-                (UIApplication.shared.delegate as? AppDelegate)?.signalContentReady()
-            }
         }
     }
 
@@ -616,16 +547,14 @@ struct ContentView: View {
         if petOverlay.visible, let pet = petOverlay.selectedPet {
             PetOverlayView(
                 pet: pet,
-                state: petOverlay.avatarState(snapshot: appModel.snapshot),
-                message: petOverlay.avatarMessage(snapshot: appModel.snapshot),
+                state: overlayProjection.petAvatarState,
+                message: overlayProjection.petAvatarMessage,
                 reduceMotion: UIAccessibility.isReduceMotionEnabled
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
 
-        if let approval = appModel.snapshot?.pendingApprovals.first(where: {
-            $0.kind != .mcpElicitation
-        }) {
+        if let approval = overlayProjection.pendingApproval {
             ApprovalPromptView(approval: approval) { decision in
                 Task {
                     try? await appModel.store.respondToApproval(
@@ -772,22 +701,10 @@ private struct HomeNavigationView: View {
         #endif
     }
 
+    /// Debounced projection from HomeDashboardModel — no `appModel.snapshot`
+    /// read in body, so this no longer re-evaluates per streaming token.
     private var pinnedThreadHydrationSignature: String {
-        let pins = homeDashboardModel.pinnedKeys
-            .map { "\($0.serverId)/\($0.threadId)" }
-            .joined(separator: "|")
-        let pinnedSet = Set(homeDashboardModel.pinnedKeys)
-        let servers = appModel.snapshot?.servers
-            .map { "\($0.serverId)=\(String(describing: $0.transportState)):\($0.port)" }
-            .joined(separator: "|") ?? ""
-        let sessions = appModel.snapshot?.sessionSummaries
-            .compactMap { summary -> String? in
-                guard pinnedSet.contains(PinnedThreadKey(threadKey: summary.key)) else { return nil }
-                return "\(homeHydrationId(summary.key)):\(summary.isResumed)"
-            }
-            .joined(separator: "|")
-            ?? ""
-        return "\(pins)|\(servers)|\(sessions)"
+        homeDashboardModel.pinnedThreadHydrationSignature
     }
 
     @ViewBuilder
@@ -865,6 +782,7 @@ private struct HomeNavigationView: View {
                     ConversationDestinationScreen(
                         threadKey: threadKey,
                         bottomInset: bottomInset,
+                        onBack: { popCurrentRoute() },
                         onResumeSessions: { showSessions(for: $0) },
                         onOpenConversation: { replaceTopConversation(with: $0) },
                         onInfo: { navigationPath.append(.conversationInfo(threadKey)) }
@@ -874,6 +792,7 @@ private struct HomeNavigationView: View {
                         project: homeDashboardModel.selectedProject,
                         connectedServers: homeDashboardModel.connectedServers,
                         selectedServerId: homeDashboardModel.selectedServerId,
+                        serverSnapshotsById: homeDashboardModel.serverSnapshotsById,
                         onSelectServer: { serverId in
                             homeDashboardModel.selectedServerId = serverId
                         },
@@ -997,7 +916,7 @@ private struct HomeNavigationView: View {
             hydratePinnedThreadsIfNeeded()
             seedInitialConversationIfNeeded(activeKey: appModel.snapshot?.activeThread)
         }
-        .onChange(of: appModel.snapshot?.activeThread) { _, newKey in
+        .onChange(of: homeDashboardModel.activeThread) { _, newKey in
             seedInitialConversationIfNeeded(activeKey: newKey)
         }
         .onChange(of: navigationPath.count) { _, _ in
@@ -1058,6 +977,8 @@ private struct HomeNavigationView: View {
                             directoryPickerSheet = sheet
                         }
                     ),
+                    localServerIds: homeDashboardModel.localServerIds,
+                    browseableServerIds: homeDashboardModel.browseableServerIds,
                     onServerChanged: { nextServerId in
                         guard var sheet = directoryPickerSheet else { return }
                         sheet.selectedServerId = nextServerId
@@ -1078,6 +999,7 @@ private struct HomeNavigationView: View {
             ProjectPickerSheet(
                 projects: homeDashboardModel.projects,
                 serverNamesById: Dictionary(uniqueKeysWithValues: homeDashboardModel.connectedServers.map { ($0.id, $0.displayName) }),
+                localServerIds: Set(homeDashboardModel.connectedServers.filter(\.isLocal).map(\.id)),
                 onSelect: { project in
                     homeDashboardModel.selectedServerId = project.serverId
                     homeDashboardModel.selectedProject = project
@@ -1232,13 +1154,6 @@ private struct HomeNavigationView: View {
     private func normalizedNonEmpty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private func openServerSessions(_ server: HomeDashboardServer) {
-        appState.sessionsSelectedServerFilterId = server.id
-        appState.sessionsShowOnlyForks = false
-        hasSeededInitialConversationRoute = true
-        navigationPath.append(.sessions(serverId: server.id, title: server.displayName))
     }
 
     private func openSessionAtIndex(_ summary: AppSessionSummary) async {
@@ -1447,6 +1362,7 @@ private struct HomeNavigationView: View {
             project: homeDashboardModel.selectedProject,
             connectedServers: homeDashboardModel.connectedServers,
             selectedServerId: homeDashboardModel.selectedServerId,
+            serverSnapshotsById: homeDashboardModel.serverSnapshotsById,
             onSelectServer: { serverId in
                 homeDashboardModel.selectedServerId = serverId
             },
@@ -1510,6 +1426,9 @@ private struct HomeNavigationView: View {
             selectedServerId: homeDashboardModel.selectedServerId,
             selectedProject: homeDashboardModel.selectedProject,
             openingRecentSessionKey: openingRecentSessionKey,
+            visibleHydrationSignature: homeDashboardModel.visibleHydrationSignature,
+            visibleActivitySignature: homeDashboardModel.visibleActivitySignature,
+            serverSnapshotsById: homeDashboardModel.serverSnapshotsById,
             onOpenRecentSession: openRecentSession,
             onSelectServer: handleSelectServer,
             onAddServer: { appState.showServerPicker = true },
@@ -1553,6 +1472,9 @@ private struct HomeNavigationView: View {
             selectedServerId: homeDashboardModel.selectedServerId,
             selectedProject: homeDashboardModel.selectedProject,
             openingRecentSessionKey: openingRecentSessionKey,
+            visibleHydrationSignature: homeDashboardModel.visibleHydrationSignature,
+            visibleActivitySignature: homeDashboardModel.visibleActivitySignature,
+            serverSnapshotsById: homeDashboardModel.serverSnapshotsById,
             onOpenRecentSession: openRecentSession,
             onSelectServer: handleSelectServer,
             onAddServer: { appState.showServerPicker = true },
@@ -1979,6 +1901,7 @@ private struct ConversationDestinationScreen: View {
     @State private var screenModel = ConversationScreenModel()
     let threadKey: ThreadKey
     let bottomInset: CGFloat
+    let onBack: () -> Void
     let onResumeSessions: (String) -> Void
     let onOpenConversation: (ThreadKey) -> Void
     var onInfo: (() -> Void)?
@@ -1989,18 +1912,6 @@ private struct ConversationDestinationScreen: View {
 
     private var resolvedThreadKey: ThreadKey {
         conversationThread?.key ?? threadKey
-    }
-
-    private var pendingUserInputsForThread: [PendingUserInputRequest] {
-        guard let snapshot = appModel.snapshot else { return [] }
-        let key = resolvedThreadKey
-        return snapshot.pendingUserInputs.filter {
-            $0.isRelevant(to: key)
-        }
-    }
-
-    private var relevantServerSnapshot: AppServerSnapshot? {
-        appModel.snapshot?.serverSnapshot(for: resolvedThreadKey.serverId)
     }
 
     private func bindScreenModel(for thread: AppThreadSnapshot) {
@@ -2026,9 +1937,13 @@ private struct ConversationDestinationScreen: View {
                     followScrollToken: screenModel.followScrollToken,
                     pinnedContextItems: screenModel.pinnedContextItems,
                     composer: screenModel.composer,
+                    supportsTurnPagination: screenModel.composer.supportsTurnPagination,
+                    resolveTargetLabel: screenModel.resolveTargetLabel,
+                    resolveThreadKey: screenModel.resolveThreadKey,
+                    resolveLiveStatus: screenModel.resolveLiveStatus,
                     composerInputText: $bindableScreenModel.composerInputText,
-                    composerAttachedImage: $bindableScreenModel.composerAttachedImage,
-                    topInset: 0,
+                    composerAttachedImages: $bindableScreenModel.composerAttachedImages,
+                    topInset: 12,
                     bottomInset: bottomInset,
                     onOpenConversation: onOpenConversation,
                     onResumeSessions: onResumeSessions,
@@ -2043,16 +1958,13 @@ private struct ConversationDestinationScreen: View {
                 .onAppear {
                     bindScreenModel(for: conversationThread)
                 }
-                .onChange(of: conversationThread) { _, updatedThread in
-                    bindScreenModel(for: updatedThread)
-                }
+                // Single coalesced bind signal. `snapshotRevision` bumps at
+                // ~8 fps (Fix B) instead of per token, and the other
+                // signals (conversationThread, pendingUserInputs,
+                // relevantServerSnapshot) all change in lockstep with it.
+                // Collapsing five onChanges into one eliminates the
+                // redundant triple-per-token re-binds.
                 .onChange(of: appModel.snapshotRevision) { _, _ in
-                    bindScreenModel(for: conversationThread)
-                }
-                .onChange(of: pendingUserInputsForThread) { _, _ in
-                    bindScreenModel(for: conversationThread)
-                }
-                .onChange(of: relevantServerSnapshot) { _, _ in
                     bindScreenModel(for: conversationThread)
                 }
                 .onChange(of: appModel.composerPrefillRequest) { _, _ in
@@ -2072,28 +1984,45 @@ private struct ConversationDestinationScreen: View {
                 .background(LitterTheme.backgroundGradient.ignoresSafeArea())
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if let conversationThread {
-                ToolbarItem(placement: .principal) {
-                    HeaderView(thread: conversationThread)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    ConversationToolbarControls(
-                        thread: conversationThread,
-                        control: .reload
-                    )
-                }
-                if onInfo != nil {
-                    ToolbarItem(placement: .topBarTrailing) {
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .top) {
+            GlassMorphContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button(action: onBack) {
+                        Image(systemName: "chevron.left")
+                            .font(LitterFont.styled(size: 17, weight: .semibold))
+                            .foregroundColor(LitterTheme.textPrimary)
+                            .frame(width: 40, height: 40)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(GlassCircleModifier())
+                    .accessibilityLabel("Back")
+
+                    Spacer(minLength: 0)
+
+                    if let conversationThread {
+                        // `server:` is passed explicitly so the toolbar controls
+                        // never read `appModel.snapshot` in their own bodies.
                         ConversationToolbarControls(
                             thread: conversationThread,
-                            control: .info,
-                            onInfo: onInfo
+                            control: .reload,
+                            server: screenModel.serverSnapshot
                         )
+                        if onInfo != nil {
+                            ConversationToolbarControls(
+                                thread: conversationThread,
+                                control: .info,
+                                onInfo: onInfo,
+                                server: screenModel.serverSnapshot
+                            )
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .bottom)
@@ -2145,8 +2074,12 @@ private struct ReplayDestinationScreen: View {
                     followScrollToken: screenModel.followScrollToken,
                     pinnedContextItems: screenModel.pinnedContextItems,
                     composer: screenModel.composer,
+                    supportsTurnPagination: screenModel.composer.supportsTurnPagination,
+                    resolveTargetLabel: screenModel.resolveTargetLabel,
+                    resolveThreadKey: screenModel.resolveThreadKey,
+                    resolveLiveStatus: screenModel.resolveLiveStatus,
                     composerInputText: $bindableScreenModel.composerInputText,
-                    composerAttachedImage: $bindableScreenModel.composerAttachedImage,
+                    composerAttachedImages: $bindableScreenModel.composerAttachedImages,
                     topInset: 0,
                     bottomInset: bottomInset,
                     onOpenConversation: nil,
@@ -2325,19 +2258,5 @@ private struct ApprovalPromptView: View {
             .padding(.horizontal, 16)
         }
         .transition(.opacity)
-    }
-}
-
-struct LaunchView: View {
-    var body: some View {
-        ZStack {
-            LitterTheme.backgroundGradient.ignoresSafeArea()
-            VStack(spacing: 24) {
-                BrandLogo(size: 132)
-                Text("AI coding agent on iOS")
-                    .litterFont(.body)
-                    .foregroundColor(LitterTheme.textMuted)
-            }
-        }
     }
 }

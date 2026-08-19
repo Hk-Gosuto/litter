@@ -3,7 +3,7 @@ import SwiftUI
 struct AppearanceSettingsView: View {
     @Environment(ThemeManager.self) private var themeManager
     @State private var activeThemePicker: ThemePickerKind?
-    @AppStorage("conversationTextSizeStep") private var textSizeStep = ConversationTextSize.large.rawValue
+    @AppStorage("conversationTextSizeStep") private var textSizeStep = ConversationTextSize.medium.rawValue
 
     var body: some View {
         ZStack {
@@ -138,7 +138,6 @@ struct AppearanceSettingsView: View {
             }
             .padding(.vertical, 6)
             .environment(\.textScale, ConversationTextSize.clamped(rawValue: textSizeStep).scale)
-            .id(themeManager.themeVersion)
             .listRowBackground(LitterTheme.backgroundGradient)
             .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
         } header: {

@@ -220,8 +220,9 @@ mod mobile_client_tests {
             reasoning_effort: Some("high".to_string()),
             effective_approval_policy: None,
             effective_sandbox_policy: None,
-            items: Vec::new(),
-            local_overlay_items: Vec::new(),
+            items: Default::default(),
+            local_overlay_items: Default::default(),
+            activity_cache: Default::default(),
             queued_follow_ups: vec![AppQueuedFollowUpPreview {
                 id: "queued-1".to_string(),
                 kind: AppQueuedFollowUpKind::Message,
@@ -301,8 +302,9 @@ mod mobile_client_tests {
             reasoning_effort: None,
             effective_approval_policy: Some(crate::types::AppAskForApproval::Never),
             effective_sandbox_policy: Some(crate::types::AppSandboxPolicy::DangerFullAccess),
-            items: Vec::new(),
-            local_overlay_items: Vec::new(),
+            items: Default::default(),
+            local_overlay_items: Default::default(),
+            activity_cache: Default::default(),
             queued_follow_ups: Vec::new(),
             queued_follow_up_drafts: Vec::new(),
             active_turn_id: None,
@@ -692,6 +694,38 @@ mod mobile_client_tests {
         client.note_thread_runtime(key.clone(), "codex".to_string());
 
         assert_eq!(client.runtime_for_thread(&key), "claude".to_string());
+    }
+
+    #[test]
+    fn turn_interrupt_routes_to_owning_runtime_not_codex() {
+        let client = MobileClient::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-opencode".to_string(),
+        };
+        client
+            .app_store
+            .upsert_thread_snapshot(ThreadSnapshot::from_info(
+                &key.server_id,
+                make_thread_info(&key.thread_id),
+            ));
+        client.note_thread_runtime(key.clone(), "opencode".to_string());
+
+        let request = upstream::ClientRequest::TurnInterrupt {
+            request_id: upstream::RequestId::Integer(crate::next_request_id()),
+            params: upstream::TurnInterruptParams {
+                thread_id: key.thread_id.clone(),
+                turn_id: "turn-1".to_string(),
+            },
+        };
+        // Regression for 0xSero/litter#283: turn/interrupt must be routed to
+        // the runtime that owns the thread, not the default "codex" channel
+        // (which yields `server error -32600: thread not found` on
+        // multi-runtime hosts).
+        assert_eq!(
+            client.runtime_for_request(&key.server_id, &request),
+            "opencode".to_string()
+        );
     }
 
     #[test]

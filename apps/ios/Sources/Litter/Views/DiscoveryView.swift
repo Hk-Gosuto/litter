@@ -1,12 +1,9 @@
 import SwiftUI
-import Network
 
 struct DiscoveryView: View {
     var onServerSelected: ((DiscoveredServer) -> Void)?
     @Environment(AppModel.self) private var appModel
-    @State private var discovery: NetworkDiscovery
     @State private var sshServer: DiscoveredServer?
-    @State private var connectionChoiceServer: DiscoveredServer?
     @State private var pendingSSHServer: DiscoveredServer?
     @State private var sshAgentContext: SSHBridgeAgentContext?
     @State private var showManualEntry = false
@@ -22,57 +19,25 @@ struct DiscoveryView: View {
     @State private var manualWakeMAC = ""
     @State private var autoSSHStarted = false
     @State private var connectingServer: DiscoveredServer?
-    @State private var wakingServer: DiscoveredServer?
     @State private var pendingAutoNavigateServerId: String?
     @State private var pendingAutoNavigateServer: DiscoveredServer?
     @State private var connectError: String?
-    @State private var renameTarget: DiscoveredServer?
-    @State private var renameText = ""
     @Environment(AppState.self) private var appState
-    private let autoStartDiscovery: Bool
-    private let initialServers: [DiscoveredServer]
+    private let autoStartSimulatorSSH: Bool
     private let slingshotBaseURL = "https://chatgpt.com/backend-api"
 
     init(
         onServerSelected: ((DiscoveredServer) -> Void)? = nil,
-        discovery: NetworkDiscovery? = nil,
-        autoStartDiscovery: Bool = true,
-        initialServers: [DiscoveredServer] = []
+        autoStartSimulatorSSH: Bool = true
     ) {
         self.onServerSelected = onServerSelected
-        _discovery = State(initialValue: discovery ?? NetworkDiscovery())
-        self.autoStartDiscovery = autoStartDiscovery
-        self.initialServers = initialServers
-    }
-
-    private var localServers: [DiscoveredServer] {
-        discovery.servers.filter { $0.source == .local }
-    }
-
-    private var networkServers: [DiscoveredServer] {
-        discovery.servers.filter { $0.source != .local }
-    }
-
-    private func applyInitialServersIfNeeded() {
-        guard !initialServers.isEmpty, discovery.servers.isEmpty else { return }
-        discovery.servers = initialServers
-        discovery.isScanning = false
-    }
-
-    private func refreshDiscovery() {
-        guard autoStartDiscovery else {
-            applyInitialServersIfNeeded()
-            return
-        }
-        discovery.startScanning()
+        self.autoStartSimulatorSSH = autoStartSimulatorSSH
     }
 
     private func handleAppear() {
-        guard autoStartDiscovery else { return }
+        guard autoStartSimulatorSSH else { return }
         maybeStartSimulatorAutoSSH()
     }
-
-    private func handleDisappear() {}
 
     var body: some View {
         ZStack {
@@ -87,7 +52,6 @@ struct DiscoveryView: View {
             }
         }
         .onAppear { handleAppear() }
-        .onDisappear { handleDisappear() }
         .sheet(item: $sshServer) { server in
             SSHLoginSheet(server: server) { target in
                 sshServer = nil
@@ -175,15 +139,14 @@ struct DiscoveryView: View {
             self.pendingSSHServer = nil
             self.sshServer = pendingSSHServer
         }
-        .onChange(of: appModel.snapshot) { _, _ in
+        .onChange(of: appModel.snapshotRevision) { _, _ in
             guard let pendingAutoNavigateServerId else { return }
             guard let serverSnapshot = appModel.snapshot?.serverSnapshot(for: pendingAutoNavigateServerId) else {
                 return
             }
             if serverSnapshot.health == .connected {
                 self.pendingAutoNavigateServerId = nil
-                if let server = pendingAutoNavigateServer
-                    ?? discovery.servers.first(where: { $0.id == pendingAutoNavigateServerId }) {
+                if let server = pendingAutoNavigateServer {
                     self.pendingAutoNavigateServer = nil
                     navigateAfterConnect(server)
                 }
@@ -199,54 +162,6 @@ struct DiscoveryView: View {
         }, message: {
             Text(connectError ?? "Unable to connect.")
         })
-        .alert("Rename Server", isPresented: Binding(
-            get: { renameTarget != nil },
-            set: { if !$0 { renameTarget = nil } }
-        )) {
-            TextField("Name", text: $renameText)
-            Button("Cancel", role: .cancel) { renameTarget = nil }
-            Button("Save") {
-                if let server = renameTarget {
-                    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let newName = trimmed.isEmpty ? server.hostname : trimmed
-                    SavedServerStore.upsert(DiscoveredServer(
-                        id: server.id,
-                        name: newName,
-                        hostname: server.hostname,
-                        port: server.port,
-                        codexPorts: server.codexPorts,
-                        sshPort: server.sshPort,
-                        source: server.source,
-                        hasCodexServer: server.hasCodexServer,
-                        wakeMAC: server.wakeMAC,
-                        preferredConnectionMode: server.preferredConnectionMode,
-                        preferredCodexPort: server.preferredCodexPort,
-                        os: server.os,
-                        sshBanner: server.sshBanner
-                    ))
-                    if let idx = discovery.servers.firstIndex(where: { $0.id == server.id }) {
-                        discovery.servers[idx] = DiscoveredServer(
-                            id: server.id,
-                            name: newName,
-                            hostname: server.hostname,
-                            port: server.port,
-                            codexPorts: server.codexPorts,
-                            sshPort: server.sshPort,
-                            source: server.source,
-                            hasCodexServer: server.hasCodexServer,
-                            wakeMAC: server.wakeMAC,
-                            preferredConnectionMode: server.preferredConnectionMode,
-                            preferredCodexPort: server.preferredCodexPort,
-                            os: server.os,
-                            sshBanner: server.sshBanner
-                        )
-                    }
-                }
-                renameTarget = nil
-            }
-        } message: {
-            Text("Enter a new name for this server.")
-        }
     }
 
     // MARK: - Chooser
@@ -613,15 +528,7 @@ struct DiscoveryView: View {
             .cornerRadius(4)
     }
 
-    private func connectedSnapshot(for server: DiscoveredServer) -> AppServerSnapshot? {
-        appModel.snapshot?.servers.first(where: { $0.serverId == server.id && !$0.isLocal })
-    }
-
     // MARK: - Actions
-
-    private func handleTap(_ server: DiscoveredServer) {
-        Task { await handleTapAsync(server) }
-    }
 
     private func navigateAfterConnect(_ server: DiscoveredServer) {
         guard let snapshot = appModel.snapshot?.servers.first(where: { $0.serverId == server.id }) else {
@@ -1757,10 +1664,7 @@ private enum ManualConnectionMode: String, CaseIterable, Identifiable {
         includeBackground: false
     ) {
         NavigationStack {
-            DiscoveryView(
-                autoStartDiscovery: false,
-                initialServers: LitterPreviewData.sampleDiscoveryServers
-            )
+            DiscoveryView(autoStartSimulatorSSH: false)
         }
     }
 }

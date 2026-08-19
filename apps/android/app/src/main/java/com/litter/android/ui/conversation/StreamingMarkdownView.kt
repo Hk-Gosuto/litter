@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +40,8 @@ import uniffi.codex_mobile_client.AppMessageRenderBlock
 fun StreamingMarkdownView(
     text: String,
     itemId: String,
+    serverId: String = "",
+    cwd: String? = null,
     onRendered: (() -> Unit)? = null,
     bodySize: Float = LitterTextStyle.body,
 ) {
@@ -68,6 +69,8 @@ fun StreamingMarkdownView(
             StreamingRenderBlocks(
                 blocks = streamState.stableBlocks,
                 bodySize = bodySize,
+                serverId = serverId,
+                cwd = cwd,
             )
         }
 
@@ -78,6 +81,8 @@ fun StreamingMarkdownView(
             StreamingRenderBlocks(
                 blocks = streamState.frontierBlocks,
                 bodySize = bodySize,
+                serverId = serverId,
+                cwd = cwd,
             )
         }
     }
@@ -87,6 +92,8 @@ fun StreamingMarkdownView(
 private fun StreamingRenderBlocks(
     blocks: List<AppMessageRenderBlock>,
     bodySize: Float,
+    serverId: String,
+    cwd: String?,
 ) {
     blocks.forEach { block ->
         when (block) {

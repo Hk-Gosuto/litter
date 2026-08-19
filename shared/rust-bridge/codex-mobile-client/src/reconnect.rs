@@ -231,11 +231,10 @@ fn resolved_preferred_codex_port(server: &SavedServerRecord) -> Option<u16> {
         return None;
     }
     let ports = available_direct_codex_ports(server);
-    if let Some(pref) = server.preferred_codex_port {
-        if ports.contains(&pref) {
+    if let Some(pref) = server.preferred_codex_port
+        && ports.contains(&pref) {
             return Some(pref);
         }
-    }
     None
 }
 
@@ -297,8 +296,8 @@ pub(crate) fn compute_reconnect_plan_with_slingshot(
     }
 
     // 2. Stable Alleycat pairing wins before legacy tunnel/direct transports.
-    if multi_clanker_and_quic_enabled {
-        if let (Some(node_id), Some(token), Some(agent_name)) = (
+    if multi_clanker_and_quic_enabled
+        && let (Some(node_id), Some(token), Some(agent_name)) = (
             server.alleycat_node_id.as_ref(),
             server.alleycat_token.as_ref(),
             server.alleycat_agent_name.as_ref(),
@@ -321,7 +320,6 @@ pub(crate) fn compute_reconnect_plan_with_slingshot(
                 wire,
             });
         }
-    }
 
     // 3. SSH bridge records need to reconnect as the multiplexed in-process
     // bridge group. Falling through to the legacy SSH plan would only
@@ -393,8 +391,8 @@ pub(crate) fn compute_reconnect_plan_with_slingshot(
     }
 
     // 7. No explicit mode, but credential available → SSH (legacy fallback)
-    if mode.is_none() {
-        if let Some(cred) = credential {
+    if mode.is_none()
+        && let Some(cred) = credential {
             return Some(ReconnectPlan::Ssh {
                 server_id: server.id.clone(),
                 display_name: server.name.clone(),
@@ -403,7 +401,6 @@ pub(crate) fn compute_reconnect_plan_with_slingshot(
                 credential: cred.clone(),
             });
         }
-    }
 
     // 8. Local source → Local
     if server.source == "local" {
@@ -792,18 +789,23 @@ fn is_ssh_bridge_record(server: &SavedServerRecord) -> bool {
             .is_some_and(|url| url.starts_with("ssh-bridge://"))
 }
 
+/// Normalize the comma-separated runtime list persisted on a saved
+/// SSH-bridge server.
+///
+/// This used to be a five-arm `match`, which meant any runtime outside
+/// that literal list was silently dropped on reconnect — a saved server
+/// could never come back with an agent the list had not been updated
+/// for. It now normalizes through the built-in catalog (so aliases like
+/// `claude-code` / `pi.dev` resolve) and keeps every kind litter can
+/// actually bootstrap over SSH. Pairing-only kinds are still dropped:
+/// the SSH path genuinely cannot start them.
 fn parse_ssh_bridge_runtime_kinds(value: Option<&str>) -> Vec<AgentRuntimeKind> {
     value
         .unwrap_or_default()
         .split(',')
-        .filter_map(|part| match part.trim().to_ascii_lowercase().as_str() {
-            "codex" => Some("codex".to_string()),
-            "claude" => Some("claude".to_string()),
-            "local-studio" | "local_studio" => Some("local-studio".to_string()),
-            "pi" => Some("pi".to_string()),
-            "opencode" | "open-code" | "open_code" => Some("opencode".to_string()),
-            _ => None,
-        })
+        .filter_map(|part| crate::store::agent_catalog::entry(part))
+        .filter(|entry| entry.reach.supports_ssh_bridge())
+        .map(|entry| entry.name.to_string())
         .fold(Vec::new(), |mut acc, kind| {
             if !acc.contains(&kind) {
                 acc.push(kind);
@@ -832,13 +834,10 @@ async fn resolve_ssh_bridge_runtime_kinds(
     };
 
     let candidates = if requested.is_empty() {
-        vec![
-            "claude".to_string(),
-            "pi".to_string(),
-            "opencode".to_string(),
-            "codex".to_string(),
-            "local-studio".to_string(),
-        ]
+        crate::store::agent_catalog::SSH_BRIDGE_RECONNECT_ORDER
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect::<Vec<_>>()
     } else {
         requested.to_vec()
     };
@@ -1330,5 +1329,67 @@ mod tests {
         let plan = compute_reconnect_plan(&s, Some(&cred), false, false);
 
         assert!(matches!(plan, Some(ReconnectPlan::Ssh { .. })));
+    }
+
+    // -- parse_ssh_bridge_runtime_kinds --
+
+    #[test]
+    fn saved_runtime_kinds_keep_every_ssh_bridgeable_agent() {
+        assert_eq!(
+            parse_ssh_bridge_runtime_kinds(Some("claude,pi,opencode,codex,local-studio")),
+            vec![
+                "claude".to_string(),
+                "pi".to_string(),
+                "opencode".to_string(),
+                "codex".to_string(),
+                "local-studio".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn saved_runtime_kinds_normalize_aliases_and_whitespace() {
+        assert_eq!(
+            parse_ssh_bridge_runtime_kinds(Some(
+                " Claude-Code , pi.dev ,open_code, local_studio "
+            )),
+            vec![
+                "claude".to_string(),
+                "pi".to_string(),
+                "opencode".to_string(),
+                "local-studio".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn saved_runtime_kinds_dedupe_across_spellings() {
+        assert_eq!(
+            parse_ssh_bridge_runtime_kinds(Some("claude,claude-code,CLAUDE")),
+            vec!["claude".to_string()]
+        );
+    }
+
+    /// Litter cannot start these over SSH, so a saved record that names
+    /// them must not resurrect a runtime the reconnect will fail on.
+    #[test]
+    fn saved_runtime_kinds_drop_pairing_only_agents() {
+        assert_eq!(
+            parse_ssh_bridge_runtime_kinds(Some("droid,devin,amp,hermes,grok,shell,mystery")),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            parse_ssh_bridge_runtime_kinds(Some("droid,claude")),
+            vec!["claude".to_string()]
+        );
+    }
+
+    #[test]
+    fn saved_runtime_kinds_tolerate_empty_input() {
+        assert_eq!(parse_ssh_bridge_runtime_kinds(None), Vec::<String>::new());
+        assert_eq!(
+            parse_ssh_bridge_runtime_kinds(Some("  , ,")),
+            Vec::<String>::new()
+        );
     }
 }

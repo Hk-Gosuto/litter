@@ -35,15 +35,56 @@ final class LitterUITests: XCTestCase {
         let app = conversationDisplayHarnessApp()
         app.launch()
 
+        XCTAssertTrue(app.buttons["conversation.modelPickerButton"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Attach"].exists)
+        XCTAssertTrue(app.buttons["Default"].exists)
         let composer = app.textViews["conversation.composerTextView"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        XCTAssertTrue(composer.exists)
         composer.tap()
         composer.typeText("SIMULATOR_INPUT_OK")
         XCTAssertEqual(composer.value as? String, "SIMULATOR_INPUT_OK")
+        XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 2))
     }
 
     @MainActor
-    func testConversationDisplayCollapsedModeKeepsRowsAndRetainsRecentDetails() throws {
+    func testConversationComposerKeepsDictationVisibleWithLongModelName() throws {
+        let app = conversationDisplayHarnessApp()
+        app.launchEnvironment["CODEXIOS_UI_TEST_MODEL_LABEL"] = "HomeLab DeepSeek V4 Flash 0731 Experimental"
+        app.launch()
+
+        let dictate = app.buttons["conversation.dictateButton"]
+        XCTAssertTrue(dictate.waitForExistence(timeout: 10))
+        XCTAssertTrue(dictate.isHittable)
+    }
+
+    @MainActor
+    func testConversationComposerPreservesRapidKeyboardInput() throws {
+        let app = conversationDisplayHarnessApp()
+        app.launch()
+
+        let composer = app.textViews["conversation.composerTextView"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        let prompt = "Rapid typing keeps every character in the correct order."
+        composer.typeText(prompt)
+        XCTAssertEqual(composer.value as? String, prompt)
+    }
+
+    @MainActor
+    func testConversationLaunchPerformance() throws {
+        let app = conversationDisplayHarnessApp()
+        measure(metrics: [XCTApplicationLaunchMetric()]) {
+            app.launch()
+            XCTAssertTrue(
+                app.staticTexts["Conversation Display Test"].waitForExistence(timeout: 5),
+                "Conversation surface did not become interactive after launch"
+            )
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testConversationDisplayCollapsedModeKeepsCompletedDetailsCollapsed() throws {
         let app = conversationDisplayHarnessApp(reasoning: "collapsed", commands: "collapsed", tools: "collapsed")
         app.launch()
 
@@ -55,7 +96,7 @@ final class LitterUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["uiTest.fixtureTool"].exists)
         XCTAssertFalse(app.staticTexts["UITEST_REASONING_DETAIL"].exists)
         XCTAssertFalse(app.staticTexts["UITEST_COMMAND_OUTPUT"].exists)
-        XCTAssertTrue(app.staticTexts["UITEST_TOOL_DETAIL"].exists)
+        XCTAssertFalse(app.staticTexts["UITEST_TOOL_DETAIL"].exists)
         XCTAssertTrue(app.staticTexts["UITEST_LIVE_COMMAND_OUTPUT"].exists)
     }
 

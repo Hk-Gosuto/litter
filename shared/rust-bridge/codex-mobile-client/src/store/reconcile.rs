@@ -56,7 +56,15 @@ impl MobileClient {
                     wire_method,
                     response,
                 )?;
-                self.apply_thread_read_response(server_id, response)
+                let params = downcast_public_rpc_params::<upstream::ThreadReadParams>(
+                    wire_method,
+                    params.map(|value| value as &dyn Any),
+                )?;
+                self.apply_thread_read_response_for_request(
+                    server_id,
+                    response,
+                    params.include_turns,
+                )
                     .map(|_| ())
                     .map_err(RpcError::Deserialization)
             }
@@ -232,7 +240,7 @@ impl MobileClient {
                 .clone()
                 .map(Into::into)
                 .map(crate::reasoning_effort_string),
-            Some(response.approval_policy.clone().into()),
+            Some(response.approval_policy.into()),
             Some(response.sandbox.clone().into()),
         )
         .map_err(|e| e.to_string())?;
@@ -253,12 +261,30 @@ impl MobileClient {
         server_id: &str,
         response: &upstream::ThreadReadResponse,
     ) -> Result<ThreadKey, String> {
+        self.apply_thread_read_response_for_request(server_id, response, true)
+    }
+
+    fn apply_thread_read_response_for_request(
+        &self,
+        server_id: &str,
+        response: &upstream::ThreadReadResponse,
+        include_turns: bool,
+    ) -> Result<ThreadKey, String> {
+        let mut upstream_thread = response.thread.clone();
+        if !include_turns {
+            // Treat the request contract as authoritative. Some compatibility
+            // bridges have returned a full archive even for metadata-only
+            // reads; accepting it bypasses bounded thread/turns/list hydration
+            // and can replace a five-turn page with hundreds of UI items.
+            upstream_thread.turns.clear();
+        }
+        let upstream_turns = upstream_thread.turns.clone();
         let mut snapshot = crate::thread_snapshot_from_upstream_thread_with_overrides(
             server_id,
-            response.thread.clone(),
+            upstream_thread,
             None,
             None,
-            response.approval_policy.clone().map(Into::into),
+            response.approval_policy.map(Into::into),
             response.sandbox.clone().map(Into::into),
         )
         .map_err(|e| e.to_string())?;
@@ -270,15 +296,15 @@ impl MobileClient {
         // `load_thread_turns_page` stored. A legacy (or authoritative)
         // response with embedded turns clears the cursor because the
         // embedded list is the full history.
-        apply_pagination_merge(existing.as_ref(), &mut snapshot, &response.thread.turns);
+        apply_pagination_merge(existing.as_ref(), &mut snapshot, &upstream_turns);
         // thread/read is authoritative for `initial_turns_loaded`: if the
         // server returned no turns AND no prior state exists, treat the
         // thread as having no history rather than a pending page load, so
         // the iOS spinner doesn't stick (task #10 invariant).
-        if existing.is_none() && response.thread.turns.is_empty() {
+        if include_turns && existing.is_none() && upstream_turns.is_empty() {
             snapshot.initial_turns_loaded = true;
         }
-        crate::reconcile_active_turn(existing.as_ref(), &mut snapshot, &response.thread.turns);
+        crate::reconcile_active_turn(existing.as_ref(), &mut snapshot, &upstream_turns);
         self.app_store.upsert_thread_snapshot(snapshot);
         Ok(key)
     }
@@ -297,7 +323,7 @@ impl MobileClient {
                 .clone()
                 .map(Into::into)
                 .map(crate::reasoning_effort_string),
-            Some(response.approval_policy.clone().into()),
+            Some(response.approval_policy.into()),
             Some(response.sandbox.clone().into()),
         )
         .map_err(|e| e.to_string())?;
@@ -323,7 +349,7 @@ impl MobileClient {
                 .clone()
                 .map(Into::into)
                 .map(crate::reasoning_effort_string),
-            Some(response.approval_policy.clone().into()),
+            Some(response.approval_policy.into()),
             Some(response.sandbox.clone().into()),
         )
         .map_err(|e| e.to_string())?;
@@ -517,13 +543,11 @@ fn replace_existing_items_by_id(
 ) -> HashSet<String> {
     let mut replaced = HashSet::new();
     for item in incoming {
-        if let Some(existing) = thread
-            .items
-            .iter_mut()
-            .find(|existing| existing.id == item.id)
-        {
+        // O(1) id lookup rather than a linear scan of the whole thread per
+        // incoming item.
+        if let Some(index) = thread.items.index_of(&item.id) {
             replaced.insert(item.id.clone());
-            *existing = item;
+            thread.items.replace_at(index, item);
         }
     }
     replaced
@@ -600,8 +624,8 @@ fn merge_paged_turns(
                         | HydratedConversationItemContent::Reasoning(_)
                 )
         });
-        if let Some(id) = group_turn_id.as_deref() {
-            if existing_turn_ids.contains(id) {
+        if let Some(id) = group_turn_id.as_deref()
+            && existing_turn_ids.contains(id) {
                 // A reconnect repair page is authoritative for completed turn
                 // text. Drop stale streaming assistant/reasoning placeholders
                 // absent from the replay, while preserving the historical
@@ -619,7 +643,6 @@ fn merge_paged_turns(
                 }
                 continue;
             }
-        }
         if thread.active_turn_id.is_none()
             && group_replays_existing_user
             && group_has_persisted_text
@@ -637,13 +660,13 @@ fn merge_paged_turns(
             // when it carries a turn id, and avoid duplicate user / assistant /
             // reasoning bubbles after reconnect repair pages.
             if let Some(key) = logical_replay_item_key(&item)
-                && let Some(existing) = thread.items.iter_mut().find(|existing| {
+                && let Some(index) = thread.items.iter().position(|existing| {
                     existing.source_turn_id.is_none()
                         && logical_replay_item_key(existing).as_deref() == Some(&key)
                 })
             {
-                if item.source_turn_id.is_some() && existing.source_turn_id.is_none() {
-                    *existing = item;
+                if item.source_turn_id.is_some() {
+                    thread.items.replace_at(index, item);
                 }
                 continue;
             }
@@ -657,7 +680,7 @@ fn merge_paged_turns(
     if matches!(direction, AppTurnsSortDirection::Descending) {
         let mut merged = new_items;
         merged.extend(thread.items.iter().cloned());
-        thread.items = merged;
+        thread.items = merged.into();
         thread.older_turns_cursor = page.next_cursor.clone();
     } else {
         thread.items.extend(new_items);
@@ -1046,7 +1069,7 @@ mod tests {
     #[test]
     fn merge_paged_turns_prepends_older_page() {
         let mut thread = test_thread_snapshot();
-        thread.items = vec![item_with_turn("turn-3", "i3")];
+        thread.items = vec![item_with_turn("turn-3", "i3")].into();
         thread.initial_turns_loaded = true;
         thread.older_turns_cursor = Some("cursor-first".to_string());
         let page = AppListThreadTurnsResponse {
@@ -1078,7 +1101,7 @@ mod tests {
     #[test]
     fn merge_paged_turns_dedupes_existing_turn_id() {
         let mut thread = test_thread_snapshot();
-        thread.items = vec![item_with_turn("turn-3", "i3")];
+        thread.items = vec![item_with_turn("turn-3", "i3")].into();
         thread.initial_turns_loaded = true;
         let page = AppListThreadTurnsResponse {
             turns: vec![
@@ -1106,7 +1129,7 @@ mod tests {
         let mut thread = test_thread_snapshot();
         let mut live_item = item_with_turn("turn-live", "stable-user-id");
         live_item.source_turn_id = None;
-        thread.items = vec![live_item];
+        thread.items = vec![live_item].into();
         let page = AppListThreadTurnsResponse {
             turns: vec![item_with_turn("turn-1", "stable-user-id")],
             next_cursor: None,
@@ -1124,7 +1147,7 @@ mod tests {
         let mut live_item = item_with_turn("turn-live", "live-user-id");
         live_item.source_turn_id = None;
         let replay_item = item_with_turn("turn-1", "persisted-user-id");
-        thread.items = vec![live_item];
+        thread.items = vec![live_item].into();
         let page = AppListThreadTurnsResponse {
             turns: vec![replay_item],
             next_cursor: None,
@@ -1144,7 +1167,7 @@ mod tests {
         thread.items = vec![
             live_user,
             assistant_item(None, "live-assistant-id", "partial"),
-        ];
+        ].into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1168,7 +1191,7 @@ mod tests {
             assistant_item(Some("turn-0"), "older-assistant-id", "older final"),
             live_user,
             assistant_item(None, "live-assistant-id", "partial"),
-        ];
+        ].into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1198,7 +1221,7 @@ mod tests {
         thread.items = vec![
             live_user,
             assistant_item(Some("active-turn"), "active-assistant-id", "partial"),
-        ];
+        ].into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1223,7 +1246,7 @@ mod tests {
             item_with_turn("turn-1", "persisted-user-id"),
             assistant_item(Some("turn-1"), "persisted-assistant-id", "final"),
             assistant_item(Some("turn-1"), "late-stream-assistant-id", "late duplicate"),
-        ];
+        ].into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1240,11 +1263,11 @@ mod tests {
     #[test]
     fn apply_pagination_merge_preserves_existing_on_empty_turns() {
         let mut existing = test_thread_snapshot();
-        existing.items = vec![item_with_turn("turn-1", "i1")];
+        existing.items = vec![item_with_turn("turn-1", "i1")].into();
         existing.initial_turns_loaded = true;
         existing.older_turns_cursor = Some("cursor-1".to_string());
         let mut target = test_thread_snapshot();
-        target.items = Vec::new();
+        target.items = Vec::new().into();
         apply_pagination_merge(Some(&existing), &mut target, &[]);
         assert_eq!(target.items.len(), 1);
         assert!(target.initial_turns_loaded);
@@ -1254,12 +1277,12 @@ mod tests {
     #[test]
     fn apply_pagination_merge_legacy_nonempty_is_authoritative() {
         let mut existing = test_thread_snapshot();
-        existing.items = vec![item_with_turn("stale", "s1")];
+        existing.items = vec![item_with_turn("stale", "s1")].into();
         existing.initial_turns_loaded = true;
         existing.older_turns_cursor = Some("cursor-1".to_string());
         let mut target = test_thread_snapshot();
         // target already populated from upstream thread with hydrated items.
-        target.items = vec![item_with_turn("turn-1", "i1")];
+        target.items = vec![item_with_turn("turn-1", "i1")].into();
         let upstream_turn = upstream::Turn {
             id: "turn-1".to_string(),
             status: upstream::TurnStatus::Completed,
@@ -1483,7 +1506,7 @@ mod tests {
             updated_at: None,
         };
         let mut primed = ThreadSnapshot::from_info("srv", info);
-        primed.items = vec![item_with_turn("turn-5", "i5")];
+        primed.items = vec![item_with_turn("turn-5", "i5")].into();
         primed.older_turns_cursor = Some("older-cursor".to_string());
         primed.initial_turns_loaded = true;
         client.app_store.upsert_thread_snapshot(primed);
@@ -1514,5 +1537,87 @@ mod tests {
             1,
             "existing paged items must be preserved when embedded turns are empty"
         );
+    }
+
+    #[tokio::test]
+    async fn metadata_only_thread_read_ignores_bridge_embedded_history() {
+        let client = MobileClient::new();
+        client.app_store.upsert_server(
+            &ServerConfig {
+                server_id: "srv".to_string(),
+                display_name: "Server".to_string(),
+                host: "localhost".to_string(),
+                port: 8390,
+                websocket_url: None,
+                is_local: true,
+                tls: false,
+            },
+            ServerHealthSnapshot::Connected,
+        );
+
+        let info = crate::types::ThreadInfo {
+            id: "thread-1".to_string(),
+            title: None,
+            model: None,
+            status: crate::types::ThreadSummaryStatus::Idle,
+            preview: None,
+            cwd: None,
+            path: None,
+            model_provider: None,
+            agent_nickname: None,
+            agent_role: None,
+            parent_thread_id: None,
+            forked_from_id: None,
+            agent_status: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let mut primed = ThreadSnapshot::from_info("srv", info);
+        primed.items = vec![item_with_turn("paged-turn", "paged-item")].into();
+        primed.older_turns_cursor = Some("older-cursor".to_string());
+        primed.initial_turns_loaded = true;
+        client.app_store.upsert_thread_snapshot(primed);
+
+        let mut violating_thread = test_upstream_thread("thread-1");
+        violating_thread.turns = vec![upstream::Turn {
+            id: "unbounded-turn".to_string(),
+            status: upstream::TurnStatus::Completed,
+            items: vec![upstream::ThreadItem::UserMessage {
+                id: "unbounded-item".to_string(),
+                content: vec![upstream::UserInput::Text {
+                    text: "bridge returned history despite includeTurns=false".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            }],
+            items_view: upstream::TurnItemsView::Full,
+            error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+        }];
+        let response = upstream::ThreadReadResponse {
+            thread: violating_thread,
+            approval_policy: None,
+            sandbox: None,
+        };
+        let params = upstream::ThreadReadParams {
+            thread_id: "thread-1".to_string(),
+            include_turns: false,
+        };
+
+        client
+            .reconcile_public_rpc("thread/read", "srv", Some(&params), &response)
+            .await
+            .expect("metadata-only thread/read reconciliation");
+
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+        let snapshot = client.app_store.thread_snapshot(&key).expect("snapshot");
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.items[0].id, "paged-item");
+        assert_eq!(snapshot.older_turns_cursor.as_deref(), Some("older-cursor"));
+        assert!(snapshot.initial_turns_loaded);
     }
 }

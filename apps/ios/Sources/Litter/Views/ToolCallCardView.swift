@@ -334,7 +334,6 @@ struct ToolCallCardView: View {
                 ScrollView(.horizontal, showsIndicators: true) {
                     SyntaxHighlightedDiffText(
                         diff: visibleText(content, id: id),
-                        titleHint: label.isEmpty ? nil : label,
                         fontSize: terminalFontSize
                     )
                     .padding(.horizontal, 10)
@@ -546,27 +545,19 @@ private enum ToolCallImageDescriptor: Equatable {
     case inlineData(Data)
     case filePath(String)
 
-    var cacheKey: String {
+    var resolvedSource: ResolvedChatImageSource {
         switch self {
         case .inlineData(let data):
-            return "inline-\(data.hashValue)"
+            return .data(data)
         case .filePath(let path):
-            return "path-\(path)"
+            return .path(path)
         }
     }
 }
 
 private struct ToolCallImagePreview: View {
-    @Environment(AppModel.self) private var appModel
-
     let descriptor: ToolCallImageDescriptor
     let serverId: String?
-
-    @State private var renderedImage: UIImage?
-    @State private var isLoading = false
-    @State private var loadError: String?
-
-    private static let imageCache = NSCache<NSString, UIImage>()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

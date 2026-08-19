@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import com.sigkitten.litter.android.R
 import androidx.compose.foundation.ExperimentalFoundationApi
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import coil.compose.AsyncImage
@@ -41,7 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Error
@@ -58,7 +57,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
@@ -72,7 +70,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -91,7 +88,6 @@ import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalTextScale
 import com.litter.android.ui.scaled
-import com.litter.android.state.AppModel
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -102,9 +98,7 @@ import uniffi.codex_mobile_client.HydratedConversationItem
 import uniffi.codex_mobile_client.HydratedConversationItemContent
 import uniffi.codex_mobile_client.HydratedPlanStepStatus
 import kotlin.math.roundToInt
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 
 private const val ToolCallTextPreviewLimit = 2_000
 private const val UserMessageTextPreviewLimit = 1_000
@@ -118,6 +112,7 @@ fun ConversationTimelineItem(
     item: HydratedConversationItem,
     serverId: String,
     threadId: String,
+    threadCwd: String? = null,
     agentDirectoryVersion: ULong,
     latestCommandExecutionItemId: String? = null,
     isLiveTurn: Boolean = false,
@@ -150,6 +145,7 @@ fun ConversationTimelineItem(
             itemId = item.id,
             data = content.v1,
             serverId = serverId,
+            threadCwd = threadCwd,
             agentDirectoryVersion = agentDirectoryVersion,
             isStreamingMessage = isStreamingMessage,
             onStreamingSnapshotRendered = onStreamingSnapshotRendered,
@@ -391,6 +387,7 @@ private fun AssistantMessageRow(
     itemId: String,
     data: uniffi.codex_mobile_client.HydratedAssistantMessageData,
     serverId: String,
+    threadCwd: String?,
     agentDirectoryVersion: ULong,
     isStreamingMessage: Boolean,
     onStreamingSnapshotRendered: (() -> Unit)?,
@@ -473,12 +470,16 @@ private fun AssistantMessageRow(
             StreamingMarkdownView(
                 text = renderedText,
                 itemId = itemId,
+                serverId = serverId,
+                cwd = threadCwd,
                 onRendered = onStreamingSnapshotRendered,
             )
         } else {
             AssistantRenderBlocks(
                 blocks = renderBlocks,
                 fallbackText = renderedText,
+                serverId = serverId,
+                cwd = threadCwd,
             )
         }
     }
@@ -488,13 +489,14 @@ private fun AssistantMessageRow(
 private fun AssistantRenderBlocks(
     blocks: List<AppMessageRenderBlock>,
     fallbackText: String,
+    serverId: String,
+    cwd: String?,
 ) {
     if (blocks.isEmpty()) {
         MarkdownText(text = fallbackText)
         return
     }
 
-    val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         blocks.forEachIndexed { index, block ->
             when (block) {
@@ -1299,27 +1301,11 @@ private fun RevisedPromptSection(prompt: String) {
     }
 }
 
-private sealed interface ToolImageLoadState {
-    data object Loading : ToolImageLoadState
-    data class Loaded(val bitmap: android.graphics.Bitmap) : ToolImageLoadState
-    data class Failed(val message: String) : ToolImageLoadState
-}
-
 @Composable
 private fun ImageResultSection(
     path: String,
     serverId: String,
 ) {
-    val appModel = LocalAppModel.current
-    val loadState by produceState<ToolImageLoadState>(
-        initialValue = ToolImageLoadState.Loading,
-        path,
-        serverId,
-    ) {
-        value = ToolImageLoadState.Loading
-        value = loadToolImage(appModel, path, serverId)
-    }
-
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SectionLabel("Image")
         Box(
@@ -1329,60 +1315,12 @@ private fun ImageResultSection(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
-            when (val state = loadState) {
-                ToolImageLoadState.Loading -> {
-                    CircularProgressIndicator(
-                        color = LitterTheme.accent,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.padding(vertical = 24.dp),
-                    )
-                }
-
-                is ToolImageLoadState.Loaded -> {
-                    Image(
-                        bitmap = state.bitmap.asImageBitmap(),
-                        contentDescription = workspaceTitle(path),
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 320.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                    )
-                }
-
-                is ToolImageLoadState.Failed -> {
-                    Text(
-                        text = state.message,
-                        color = LitterTheme.danger,
-                        fontSize = LitterTextStyle.caption.scaled,
-                        modifier = Modifier.padding(vertical = 20.dp),
-                    )
-                }
-            }
+            ResolvedChatImage(
+                path = path,
+                serverId = serverId,
+                cwd = null,
+            )
         }
-    }
-}
-
-private suspend fun loadToolImage(
-    appModel: AppModel,
-    path: String,
-    serverId: String,
-): ToolImageLoadState {
-    return try {
-        val resolved = withContext(Dispatchers.IO) {
-            appModel.client.resolveImageView(serverId, path)
-        }
-        val bitmap = BitmapFactory.decodeByteArray(resolved.bytes, 0, resolved.bytes.size)
-        if (bitmap != null) {
-            ToolImageLoadState.Loaded(bitmap)
-        } else {
-            ToolImageLoadState.Failed("Could not decode the image.")
-        }
-    } catch (error: Exception) {
-        val message = error.message?.trim().orEmpty()
-        ToolImageLoadState.Failed(
-            if (message.isNotEmpty()) message else "Image unavailable",
-        )
     }
 }
 
@@ -2549,7 +2487,7 @@ private fun RichDynamicToolResult(
                     SessionServerCard(
                         icon = {
                             Icon(
-                                Icons.Default.Chat,
+                                Icons.AutoMirrored.Filled.Chat,
                                 contentDescription = null,
                                 tint = LitterTheme.accent,
                                 modifier = Modifier.size(18.dp),
