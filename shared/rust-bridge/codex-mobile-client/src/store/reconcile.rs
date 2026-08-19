@@ -279,17 +279,25 @@ impl MobileClient {
             upstream_thread.turns.clear();
         }
         let upstream_turns = upstream_thread.turns.clone();
+        let key = ThreadKey {
+            server_id: server_id.to_string(),
+            thread_id: upstream_thread.id.clone(),
+        };
+        let existing = self.app_store.thread_snapshot(&key);
+        let (approval_policy, sandbox_policy) = crate::merge_thread_read_policies(
+            existing.as_ref(),
+            response.approval_policy.map(Into::into),
+            response.sandbox.clone().map(Into::into),
+        );
         let mut snapshot = crate::thread_snapshot_from_upstream_thread_with_overrides(
             server_id,
             upstream_thread,
             None,
             None,
-            response.approval_policy.map(Into::into),
-            response.sandbox.clone().map(Into::into),
+            approval_policy,
+            sandbox_policy,
         )
         .map_err(|e| e.to_string())?;
-        let key = snapshot.key.clone();
-        let existing = self.app_store.thread_snapshot(&key);
         // Share the preserve-on-empty merge with resume/fork. A paginated
         // v0.125+ server returns `thread.turns: []` on thread/read — we
         // must keep any items + `older_turns_cursor` the prior
@@ -1584,6 +1592,7 @@ mod tests {
             status: upstream::TurnStatus::Completed,
             items: vec![upstream::ThreadItem::UserMessage {
                 id: "unbounded-item".to_string(),
+                client_id: None,
                 content: vec![upstream::UserInput::Text {
                     text: "bridge returned history despite includeTurns=false".to_string(),
                     text_elements: Vec::new(),

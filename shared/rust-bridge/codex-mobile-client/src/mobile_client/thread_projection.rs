@@ -33,6 +33,24 @@ pub fn thread_snapshot_from_upstream_thread_with_overrides(
     ))
 }
 
+pub fn merge_thread_read_policies(
+    existing: Option<&ThreadSnapshot>,
+    approval_policy: Option<crate::types::AppAskForApproval>,
+    sandbox_policy: Option<crate::types::AppSandboxPolicy>,
+) -> (
+    Option<crate::types::AppAskForApproval>,
+    Option<crate::types::AppSandboxPolicy>,
+) {
+    (
+        approval_policy.or_else(|| {
+            existing.and_then(|snapshot| snapshot.effective_approval_policy.clone())
+        }),
+        sandbox_policy.or_else(|| {
+            existing.and_then(|snapshot| snapshot.effective_sandbox_policy.clone())
+        }),
+    )
+}
+
 pub fn copy_thread_runtime_fields(source: &ThreadSnapshot, target: &mut ThreadSnapshot) {
     target.collaboration_mode = source.collaboration_mode;
     if target.model.is_none() {
@@ -603,13 +621,18 @@ pub(super) fn upsert_thread_snapshot_from_app_server_read_response(
             thread_id: thread_id.to_string(),
         })
         .cloned();
+    let (approval_policy, sandbox_policy) = merge_thread_read_policies(
+        existing.as_ref(),
+        response.approval_policy.map(Into::into),
+        response.sandbox.map(Into::into),
+    );
     let mut snapshot = thread_snapshot_from_upstream_thread_with_overrides(
         server_id,
         response.thread,
         None,
         None,
-        response.approval_policy.map(Into::into),
-        response.sandbox.map(Into::into),
+        approval_policy,
+        sandbox_policy,
     )
     .map_err(RpcError::Deserialization)?;
     if let Some(existing) = existing.as_ref() {

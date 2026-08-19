@@ -46,8 +46,8 @@ use self::dynamic_tools::*;
 use self::store_listener::*;
 use self::thread_projection::*;
 pub use self::thread_projection::{
-    copy_thread_runtime_fields, reasoning_effort_from_string, reasoning_effort_string,
-    reconcile_active_turn, thread_info_from_upstream_thread,
+    copy_thread_runtime_fields, merge_thread_read_policies, reasoning_effort_from_string,
+    reasoning_effort_string, reconcile_active_turn, thread_info_from_upstream_thread,
     thread_snapshot_from_upstream_thread_with_overrides,
 };
 /// Top-level entry point for platform code (iOS / Android).
@@ -2543,41 +2543,6 @@ impl MobileClient {
     }
 
     // ── Threads ───────────────────────────────────────────────────────
-
-    /// List threads from a specific server.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) async fn list_threads(&self, server_id: &str) -> Result<Vec<ThreadInfo>, RpcError> {
-        self.get_session(server_id)?;
-        let response = self
-            .server_thread_list(
-                server_id,
-                upstream::ThreadListParams {
-                    limit: None,
-                    cursor: None,
-                    sort_key: None,
-                    sort_direction: None,
-                    model_providers: None,
-                    source_kinds: None,
-                    archived: None,
-                    is_pinned: None,
-                    cwd: None,
-                    search_term: None,
-                    use_state_db_only: false,
-                    parent_thread_id: None,
-                    ancestor_thread_id: None,
-                },
-            )
-            .await
-            .map_err(map_rpc_client_error)?;
-        let threads = response
-            .data
-            .into_iter()
-            .filter_map(thread_info_from_upstream_thread)
-            .collect::<Vec<_>>();
-        self.app_store.sync_thread_list(server_id, &threads);
-        Ok(threads)
-    }
 
     pub async fn sync_server_account(&self, server_id: &str) -> Result<(), RpcError> {
         self.get_session(server_id)?;

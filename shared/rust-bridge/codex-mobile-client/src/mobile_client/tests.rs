@@ -328,6 +328,57 @@ mod mobile_client_tests {
     }
 
     #[test]
+    fn merge_thread_read_policies_keeps_existing_when_response_is_null() {
+        let existing = ThreadSnapshot {
+            key: ThreadKey {
+                server_id: "srv".to_string(),
+                thread_id: "thread-1".to_string(),
+            },
+            info: make_thread_info("thread-1"),
+            agent_runtime_kind: "codex".to_string(),
+            collaboration_mode: AppModeKind::Default,
+            model: None,
+            reasoning_effort: None,
+            effective_approval_policy: Some(crate::types::AppAskForApproval::Never),
+            effective_sandbox_policy: Some(crate::types::AppSandboxPolicy::DangerFullAccess),
+            items: Default::default(),
+            local_overlay_items: Default::default(),
+            activity_cache: Default::default(),
+            queued_follow_ups: Vec::new(),
+            queued_follow_up_drafts: Vec::new(),
+            active_turn_id: None,
+            context_tokens_used: None,
+            model_context_window: None,
+            rate_limits: None,
+            realtime_session_id: None,
+            goal: None,
+            active_plan_progress: None,
+            pending_plan_implementation_turn_id: None,
+            older_turns_cursor: None,
+            initial_turns_loaded: false,
+            is_resumed: false,
+        };
+
+        let (approval, sandbox) = merge_thread_read_policies(Some(&existing), None, None);
+        assert_eq!(approval, Some(crate::types::AppAskForApproval::Never));
+        assert_eq!(
+            sandbox,
+            Some(crate::types::AppSandboxPolicy::DangerFullAccess)
+        );
+
+        let (approval, sandbox) = merge_thread_read_policies(
+            Some(&existing),
+            Some(crate::types::AppAskForApproval::OnRequest),
+            None,
+        );
+        assert_eq!(approval, Some(crate::types::AppAskForApproval::OnRequest));
+        assert_eq!(
+            sandbox,
+            Some(crate::types::AppSandboxPolicy::DangerFullAccess)
+        );
+    }
+
+    #[test]
     fn thread_start_runtime_uses_selected_model_runtime() {
         let client = MobileClient::new();
         client

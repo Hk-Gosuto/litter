@@ -20,9 +20,15 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use ish_embed_host::IshInstance;
+use ish_embed_host::PtySize;
+use ish_embed_host::SpawnOpts;
+use ish_embed_host::WriteStatus;
 
 use crate::ish_types::IshBootstrapError;
 
@@ -140,13 +146,14 @@ pub fn default_cwd() -> &'static str {
 /// and an empty byte vector — matching the IshBridge.m error semantics so the
 /// exec-hook path can surface the failure without a nil pointer panic.
 pub fn run(cmd: &str, cwd: Option<&str>, timeout_ms: Option<u64>) -> (i32, Vec<u8>) {
-    run_streaming(cmd, cwd, timeout_ms, |_| {})
+    run_streaming(cmd, cwd, timeout_ms, None, |_| {})
 }
 
 pub fn run_streaming<F>(
     cmd: &str,
     cwd: Option<&str>,
     timeout_ms: Option<u64>,
+    cancel: Option<&codex_core::exec::IosExecCancel>,
     mut on_output: F,
 ) -> (i32, Vec<u8>)
 where
@@ -166,10 +173,236 @@ where
         _ => cmd.to_string(),
     };
 
-    let argv = ["/bin/sh".to_string(), "-c".to_string(), wrapped];
+    let argv = vec!["/bin/sh".to_string(), "-c".to_string(), wrapped];
     let env = runtime_env();
     let cwd_path = PathBuf::from("/");
-    instance.run_oneshot_streaming(&argv, &cwd_path, &env, timeout_ms, &mut on_output)
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            return (ISH_E_THREAD, format!("runtime: {err}\n").into_bytes());
+        }
+    };
+    rt.block_on(run_oneshot_cancellable(
+        instance,
+        argv,
+        cwd_path,
+        env,
+        timeout_ms,
+        cancel,
+        &mut on_output,
+    ))
+}
+
+fn terminate_session_offthread(session: Arc<ish_embed_host::IshSession>) {
+    let _ = std::thread::Builder::new()
+        .name("ish-interrupt".into())
+        .spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                let _ = rt.block_on(session.terminate());
+            }
+        });
+}
+
+pub fn spawn_live(
+    command: &[String],
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    tty: bool,
+) -> std::result::Result<Arc<dyn codex_core::exec::IosLiveExecProcess>, String> {
+    let instance = INSTANCE
+        .get()
+        .ok_or_else(|| "iSH has not been bootstrapped".to_string())?;
+    let cmd = crate::mobile_exec_command::mobile_system_command(command);
+    let wrapped = match cwd.to_str() {
+        Some(c) if !c.is_empty() => format!("cd {} && {}", shell_quote(c), cmd),
+        _ => cmd,
+    };
+    let mut session_env = runtime_env();
+    session_env.extend(env.iter().map(|(key, value)| (key.clone(), value.clone())));
+    let opts = SpawnOpts {
+        argv: vec!["/bin/sh".to_string(), "-c".to_string(), wrapped],
+        envp: Some(session_env.into_iter().collect()),
+        cwd: Some(PathBuf::from("/")),
+        tty,
+        size: tty.then_some(PtySize { cols: 80, rows: 24 }),
+        pipe_stdin: !tty,
+        arg0: None,
+    };
+    let session = instance
+        .spawn(opts)
+        .map_err(|err| format!("spawn live iSH process: {err}"))?;
+    Ok(Arc::new(IshLiveProcess { session }))
+}
+
+struct IshLiveProcess {
+    session: Arc<ish_embed_host::IshSession>,
+}
+
+impl codex_core::exec::IosLiveExecProcess for IshLiveProcess {
+    fn read(
+        &self,
+        after_seq: Option<u64>,
+        max_bytes: Option<usize>,
+        wait_ms: Option<u64>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = std::result::Result<codex_core::exec::IosLiveRead, String>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            let read = self
+                .session
+                .read(after_seq, max_bytes, wait_ms)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(codex_core::exec::IosLiveRead {
+                chunks: read
+                    .chunks
+                    .into_iter()
+                    .map(|chunk| (chunk.seq, chunk.bytes.to_vec()))
+                    .collect(),
+                next_seq: read.next_seq,
+                exited: read.exited,
+                exit_code: read.exit_code,
+                closed: read.closed,
+                failure: None,
+            })
+        })
+    }
+
+    fn write(
+        &self,
+        data: Vec<u8>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = std::result::Result<codex_core::exec::IosLiveWriteStatus, String>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            match self.session.write(&data).await {
+                Ok(WriteStatus::Accepted) => Ok(codex_core::exec::IosLiveWriteStatus::Accepted),
+                Ok(WriteStatus::Starting) => Ok(codex_core::exec::IosLiveWriteStatus::Starting),
+                Ok(WriteStatus::StdinClosed) => {
+                    Ok(codex_core::exec::IosLiveWriteStatus::StdinClosed)
+                }
+                Ok(WriteStatus::UnknownSession) => {
+                    Ok(codex_core::exec::IosLiveWriteStatus::UnknownSession)
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        })
+    }
+
+    fn signal(
+        &self,
+        signum: i32,
+    ) -> Pin<Box<dyn Future<Output = std::result::Result<(), String>> + Send + '_>> {
+        Box::pin(async move { self.session.signal(signum).await.map_err(|err| err.to_string()) })
+    }
+
+    fn terminate(&self) -> Pin<Box<dyn Future<Output = std::result::Result<(), String>> + Send + '_>> {
+        Box::pin(async move { self.session.terminate().await.map_err(|err| err.to_string()) })
+    }
+}
+
+async fn run_oneshot_cancellable<F>(
+    instance: &IshInstance,
+    argv: Vec<String>,
+    cwd: PathBuf,
+    env: HashMap<String, String>,
+    timeout_ms: Option<u64>,
+    cancel: Option<&codex_core::exec::IosExecCancel>,
+    on_output: &mut F,
+) -> (i32, Vec<u8>)
+where
+    F: FnMut(&[u8]),
+{
+    if cancel.is_some_and(codex_core::exec::IosExecCancel::is_cancelled) {
+        return (1, b"command cancelled\n".to_vec());
+    }
+    let opts = SpawnOpts {
+        argv,
+        envp: Some(env.into_iter().collect()),
+        cwd: Some(cwd),
+        tty: false,
+        size: None,
+        pipe_stdin: false,
+        arg0: None,
+    };
+    let session = match instance.spawn(opts) {
+        Ok(session) => session,
+        Err(err) => return (ISH_E_EXECVE, format!("spawn: {err}\n").into_bytes()),
+    };
+    if let Some(cancel) = cancel {
+        let interrupt = Arc::clone(&session);
+        cancel.set_on_cancel(move || terminate_session_offthread(Arc::clone(&interrupt)));
+        if cancel.is_cancelled() {
+            cancel.clear_on_cancel();
+            let _ = session.terminate().await;
+            return (1, b"command cancelled\n".to_vec());
+        }
+    }
+    let result = drain_oneshot(&session, timeout_ms, on_output, cancel).await;
+    if let Some(cancel) = cancel {
+        cancel.clear_on_cancel();
+    }
+    result
+}
+
+async fn drain_oneshot<F>(
+    session: &ish_embed_host::IshSession,
+    timeout_ms: Option<u64>,
+    on_output: &mut F,
+    cancel: Option<&codex_core::exec::IosExecCancel>,
+) -> (i32, Vec<u8>)
+where
+    F: FnMut(&[u8]),
+{
+    use tokio::time::Instant;
+
+    let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
+    let mut output = Vec::new();
+    let mut next_seq: u64 = 0;
+    loop {
+        if cancel.is_some_and(codex_core::exec::IosExecCancel::is_cancelled) {
+            let _ = session.terminate().await;
+            return (1, output);
+        }
+        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        if remaining == Some(Duration::ZERO) {
+            let _ = session.terminate().await;
+            return (ISH_E_TIMEOUT, output);
+        }
+        let wait_ms = remaining.map(|duration| duration.as_millis() as u64).unwrap_or(60_000);
+        let read = match session
+            .read(Some(next_seq), Some(64 * 1024), Some(wait_ms))
+            .await
+        {
+            Ok(read) => read,
+            Err(err) => {
+                output.extend_from_slice(format!("read error: {err}\n").as_bytes());
+                return (ISH_E_IO, output);
+            }
+        };
+        for chunk in &read.chunks {
+            output.extend_from_slice(&chunk.bytes);
+            on_output(&chunk.bytes);
+            next_seq = chunk.seq;
+        }
+        if read.closed {
+            return (read.exit_code.unwrap_or(-1), output);
+        }
+    }
 }
 
 // ── post-init setup helpers ──────────────────────────────────────────────
