@@ -83,6 +83,7 @@
     <string name="directory_picker_recent_options">Recent directory options</string>
     <string name="widget_description">Shows active Codex turn progress</string>
     <string name="widget_label">Codex Turn</string>
+    <string name="widget_loading_label">Loading</string>
 
     <!-- Common actions and accessibility -->
     <string name="common_ok">OK</string>

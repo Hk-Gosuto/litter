@@ -83,6 +83,7 @@
     <string name="directory_picker_recent_options">最近使用的目录选项</string>
     <string name="widget_description">显示正在进行的 Codex 任务进度</string>
     <string name="widget_label">Codex 任务</string>
+    <string name="widget_loading_label">正在加载</string>
 
     <!-- 通用操作和无障碍说明 -->
     <string name="common_ok">确定</string>

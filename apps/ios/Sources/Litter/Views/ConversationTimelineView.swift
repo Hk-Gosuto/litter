@@ -42,6 +42,7 @@ struct ConversationTurnTimeline: View {
                     streamingAssistantItemId: streamingItemId
                 )
                     .id(row.id)
+                    .modifier(RowEntranceModifier(isAssistantRow: row.isAssistantRow))
                     .onGeometryChange(for: CGFloat.self) { geometry in
                         geometry.size.height
                     } action: { oldHeight, newHeight in
@@ -154,19 +155,9 @@ private enum ConversationTimelineRowDescriptor: Identifiable, Equatable {
         }
     }
 
-    func preferredExpandedCommandRow(
-        latestCommandExecutionItemId: String?,
-        commandDisplayMode: ConversationDetailDisplayMode
-    ) -> Bool {
-        guard commandDisplayMode == .collapsed else {
-            return commandDisplayMode == .expanded
-        }
-        guard case .item(let item) = self,
-              case .commandExecution(let data) = item.content,
-              !data.isPureExploration else {
-            return false
-        }
-        return item.id == latestCommandExecutionItemId
+    var isAssistantRow: Bool {
+        guard case .item(let item) = self else { return false }
+        return item.isAssistantItem
     }
 
     func isVisible(
@@ -318,6 +309,121 @@ private enum ConversationTimelineRowDescriptor: Identifiable, Equatable {
     }
 }
 
+/// Memoizes `build` → `mergeConsecutiveExplorationRows` → `filter`.
+///
+/// Those three chained passes each allocated a fresh array and ran on every
+/// body evaluation of every turn timeline — including body evaluations driven
+/// by layout, viewport, or display-mode churn rather than by item changes.
+/// The key is a digest over item identity + `renderDigest`, so a cache hit is
+/// exact: any content change produces a different key.
+@MainActor
+private final class ConversationTimelineRowCache {
+    static let shared = ConversationTimelineRowCache()
+
+    private struct Key: Hashable {
+        let itemsDigest: Int
+        let itemCount: Int
+        let reasoningDisplayMode: ConversationDetailDisplayMode
+        let commandDisplayMode: ConversationDetailDisplayMode
+        let toolDisplayMode: ConversationDetailDisplayMode
+    }
+
+    private let maxEntries = 32
+    private let trimTarget = 24
+
+    private var entries: [Key: [ConversationTimelineRowDescriptor]] = [:]
+    private var accessStamps: [Key: UInt64] = [:]
+    private var accessCounter: UInt64 = 0
+
+    fileprivate func rows(
+        for items: [ConversationItem],
+        reasoningDisplayMode: ConversationDetailDisplayMode,
+        commandDisplayMode: ConversationDetailDisplayMode,
+        toolDisplayMode: ConversationDetailDisplayMode
+    ) -> [ConversationTimelineRowDescriptor] {
+        let key = Key(
+            itemsDigest: Self.digest(of: items),
+            itemCount: items.count,
+            reasoningDisplayMode: reasoningDisplayMode,
+            commandDisplayMode: commandDisplayMode,
+            toolDisplayMode: toolDisplayMode
+        )
+
+        if let cached = entries[key] {
+            touch(key)
+            return cached
+        }
+
+        let rows = ConversationTimelineRowDescriptor.mergeConsecutiveExplorationRows(
+            ConversationTimelineRowDescriptor.build(from: items)
+        )
+        .filter {
+            $0.isVisible(
+                reasoningDisplayMode: reasoningDisplayMode,
+                commandDisplayMode: commandDisplayMode,
+                toolDisplayMode: toolDisplayMode
+            )
+        }
+
+        entries[key] = rows
+        touch(key)
+        trimIfNeeded()
+        return rows
+    }
+
+    func reset() {
+        entries.removeAll(keepingCapacity: false)
+        accessStamps.removeAll(keepingCapacity: false)
+        accessCounter = 0
+    }
+
+    private static func digest(of items: [ConversationItem]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(items.count)
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.renderDigest)
+        }
+        return hasher.finalize()
+    }
+
+    private func touch(_ key: Key) {
+        accessCounter &+= 1
+        accessStamps[key] = accessCounter
+    }
+
+    private func trimIfNeeded() {
+        guard entries.count > maxEntries else { return }
+        let removeCount = entries.count - trimTarget
+        guard removeCount > 0 else { return }
+        for (key, _) in accessStamps.sorted(by: { $0.value < $1.value }).prefix(removeCount) {
+            entries.removeValue(forKey: key)
+            accessStamps.removeValue(forKey: key)
+        }
+    }
+}
+
+private struct RowEntranceModifier: ViewModifier {
+    let isAssistantRow: Bool
+
+    func body(content: Content) -> some View {
+        if isAssistantRow {
+            // The streaming markdown renderer scopes its own
+            // `transaction { $0.animation = nil }` internally so that token
+            // reveals don't replay on every snapshot. Leaving the row itself
+            // unscoped lets sibling layout changes (e.g. a tool card collapse)
+            // animate this row's position.
+            content
+        } else {
+            content
+                .transition(.asymmetric(
+                    insertion: .rowEntranceReveal,
+                    removal: .opacity
+                ))
+        }
+    }
+}
+
 struct RowEntranceEffect: ViewModifier, Animatable {
     var progress: CGFloat
     var yOffset: CGFloat
@@ -351,6 +457,13 @@ struct RowEntranceEffect: ViewModifier, Animatable {
 }
 
 extension AnyTransition {
+    static var rowEntranceReveal: AnyTransition {
+        .modifier(
+            active: RowEntranceEffect(progress: 0, yOffset: 10, minScale: 0.965, maxBlur: 2.5),
+            identity: RowEntranceEffect(progress: 1, yOffset: 0, minScale: 1, maxBlur: 0)
+        )
+    }
+
     static var sectionReveal: AnyTransition {
         .modifier(
             active: RowEntranceEffect(progress: 0, yOffset: 6, minScale: 0.985, maxBlur: 1.2),
@@ -634,7 +747,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
 
         return ToolCallCardModel(
             kind: .fileChange,
-            title: AppLanguage.localizedString("File Change"),
+            title: "File Change",
             summary: summary.plainText,
             attributedSummary: summary.attributedText,
             status: data.status.toolCallStatus,
@@ -704,13 +817,13 @@ private struct ConversationTimelineItemRow: View, Equatable {
     private func fileChangeVerb(for kind: String) -> String {
         switch kind.lowercased() {
         case "add":
-            return AppLanguage.localizedString("Added")
+            return "Added"
         case "delete":
-            return AppLanguage.localizedString("Deleted")
+            return "Deleted"
         case "update":
-            return AppLanguage.localizedString("Edited")
+            return "Edited"
         default:
-            return AppLanguage.localizedString("Changed")
+            return "Changed"
         }
     }
 
@@ -741,7 +854,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
 
         return ToolCallCardModel(
             kind: .mcpToolCall,
-            title: AppLanguage.localizedString("MCP Tool Call"),
+            title: "MCP Tool Call",
             summary: summary,
             status: data.status.toolCallStatus,
             duration: formatDuration(data.durationMs),
@@ -772,7 +885,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
         if let contentSummary = data.contentSummary, !contentSummary.isEmpty {
             sections.append(.text(label: "Result", content: contentSummary))
         }
-        let title = data.display?.title ?? AppLanguage.localizedString("Dynamic Tool Call")
+        let title = data.display?.title ?? "Dynamic Tool Call"
         let summary = data.display?.summary
             ?? data.namespace.map { "\($0).\(data.tool)" }
             ?? data.tool
@@ -797,7 +910,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
         }
         return ToolCallCardModel(
             kind: .webSearch,
-            title: AppLanguage.localizedString("Web Search"),
+            title: "Web Search",
             summary: data.query.isEmpty ? "Web search" : "Web search for \(data.query)",
             status: data.isInProgress ? .inProgress : .completed,
             duration: nil,
@@ -810,7 +923,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
         let displayName = workspaceTitle(for: trimmedPath)
         return ToolCallCardModel(
             kind: .imageView,
-            title: AppLanguage.localizedString("Image View"),
+            title: "Image View",
             summary: displayName.isEmpty ? "Image" : displayName,
             status: .completed,
             duration: nil,
@@ -941,7 +1054,7 @@ private struct ConversationExplorationGroupRow: View, Equatable {
     }
 
     private var summaryText: String {
-        let prefix = AppLanguage.localizedString(isActive ? "Exploring" : "Explored")
+        let prefix = isActive ? "Exploring" : "Explored"
         return explorationSummaryText(prefix: prefix)
     }
 
@@ -1064,15 +1177,10 @@ private struct ConversationExplorationGroupRow: View, Equatable {
             return action.path.map { "Read \(workspaceTitle(for: $0))\(suffix)" } ?? fallback
         case .search:
             if let query = action.query, let path = action.path {
-                        return AppLanguage.localizedString(
-                            "Searched for %@ in %@%@",
-                            query,
-                            workspaceTitle(for: path),
-                            suffix
-                        )
+                return "Searched for \(query) in \(workspaceTitle(for: path))\(suffix)"
             }
             if let query = action.query {
-                    return AppLanguage.localizedString("Searched for %@%@", query, suffix)
+                return "Searched for \(query)\(suffix)"
             }
             return fallback
         case .listFiles:
@@ -1345,7 +1453,7 @@ private struct ConversationTurnDiffRow: View {
         Button {
             presented = PresentedDiff(
                 id: "turn-diff",
-                title: AppLanguage.localizedString("Turn Diff"),
+                title: "Turn Diff",
                 diff: data.diff,
                 stats: DiffStats(additions: data.additions, deletions: data.deletions),
                 sections: presentedDiffSections(from: data.diff)
@@ -1458,7 +1566,7 @@ private struct ConversationCommandExecutionRow: View {
         if !trimmed.isEmpty {
             return trimmed
         }
-        return AppLanguage.localizedString(data.isInProgress ? "Waiting for output…" : "No output")
+        return data.isInProgress ? "Waiting for output…" : "No output"
     }
 
     private var displayedCommand: String {
@@ -1585,18 +1693,12 @@ private struct ConversationCommandOutputViewport: View {
                             expandedLongOutput.toggle()
                         }
                     } label: {
-                        Text(AppLanguage.localizedString(expandedLongOutput ? "Show less" : "Show more"))
+                        Text(expandedLongOutput ? "Show less" : "Show more")
                             .litterFont(.caption2, weight: .semibold)
                             .foregroundColor(LitterTheme.accent)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(
-                        AppLanguage.localizedString(
-                            expandedLongOutput
-                                ? "Show less command output"
-                                : "Show more command output"
-                        )
-                    )
+                    .accessibilityLabel(expandedLongOutput ? "Show less command output" : "Show more command output")
                 }
             }
         }
@@ -1733,24 +1835,17 @@ private struct ConversationDividerRow: View {
     private var title: String {
         switch kind {
         case .contextCompaction:
-            return AppLanguage.localizedString(
-                effectiveContextCompactionComplete ? "Context compacted" : "Compacting context"
-            )
+            return effectiveContextCompactionComplete ? "Context compacted" : "Compacting context"
         case .modelRerouted(let fromModel, let toModel, let reason):
-            let base = fromModel.map { "\($0) -> \(toModel)" }
-                ?? AppLanguage.localizedString("Routed to %@", toModel)
+            let base = fromModel.map { "\($0) -> \(toModel)" } ?? "Routed to \(toModel)"
             if let reason, !reason.isEmpty {
                 return "\(base) · \(reason)"
             }
             return base
         case .reviewEntered(let review):
-            return review.isEmpty
-                ? AppLanguage.localizedString("Entered review")
-                : AppLanguage.localizedString("Entered review: %@", review)
+            return review.isEmpty ? "Entered review" : "Entered review: \(review)"
         case .reviewExited(let review):
-            return review.isEmpty
-                ? AppLanguage.localizedString("Exited review")
-                : AppLanguage.localizedString("Exited review: %@", review)
+            return review.isEmpty ? "Exited review" : "Exited review: \(review)"
         case .workedFor(let duration):
             return duration
         case .generic(let title, let detail):
@@ -1983,7 +2078,7 @@ struct ConversationPinnedContextStrip: View {
         }
         return PresentedDiff(
             id: "session-diff",
-            title: AppLanguage.localizedString("Session Diff"),
+            title: "Session Diff",
             diff: nil,
             stats: stats,
             sections: sections
@@ -1997,16 +2092,9 @@ struct ConversationPinnedContextStrip: View {
             let total = data.steps.count
             let summary: String = {
                 if completed == 0 {
-            return AppLanguage.localizedString(
-                "To do list created with %lld tasks",
-                Int64(total)
-            )
+                    return "To do list created with \(total) tasks"
                 }
-        return AppLanguage.localizedString(
-            "%lld out of %lld tasks completed",
-            Int64(completed),
-            Int64(total)
-        )
+                return "\(completed) out of \(total) tasks completed"
             }()
 
             VStack(alignment: .leading, spacing: 0) {
@@ -2183,13 +2271,9 @@ private struct DiffIndicatorLabel: View {
 
     private var accessibilityLabel: String {
         if stats.hasChanges {
-            return AppLanguage.localizedString(
-                "Show diff details. %lld additions, %lld deletions.",
-                Int64(stats.additions),
-                Int64(stats.deletions)
-            )
+            return "Show diff details. \(stats.additions) additions, \(stats.deletions) deletions."
         }
-        return AppLanguage.localizedString("Show diff details.")
+        return "Show diff details."
     }
 }
 

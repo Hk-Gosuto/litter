@@ -79,21 +79,18 @@ struct SubagentCardView: View {
 
     private var actionLabel: String {
         let agentCount = max(data.targets.count, data.agentStates.count)
-        let suffix = AppLanguage.localizedString(
-            agentCount == 1 ? "%lld agent" : "%lld agents",
-            Int64(agentCount)
-        )
+        let suffix = agentCount == 1 ? "1 agent" : "\(agentCount) agents"
         switch data.tool.lowercased() {
         case "spawnagent", "spawn_agent":
-            return AppLanguage.localizedString("Spawning %@", suffix)
+            return "Spawning \(suffix)"
         case "sendinput", "send_input":
-            return AppLanguage.localizedString("Sending input to %@", suffix)
+            return "Sending input to \(suffix)"
         case "resumeagent", "resume_agent":
-            return AppLanguage.localizedString("Resuming %@", suffix)
+            return "Resuming \(suffix)"
         case "wait":
-            return AppLanguage.localizedString("Waiting for %@", suffix)
+            return "Waiting for \(suffix)"
         case "closeagent", "close_agent":
-            return AppLanguage.localizedString("Closing %@", suffix)
+            return "Closing \(suffix)"
         default:
             return "\(data.tool) \(suffix)"
         }
@@ -240,12 +237,12 @@ struct SubagentCardView: View {
 
     private func readableStatus(_ status: AppSubagentStatus?) -> String {
         switch status ?? .unknown {
-        case .running: return AppLanguage.localizedString("is thinking")
-        case .pendingInit: return AppLanguage.localizedString("is awaiting instruction")
-        case .completed: return AppLanguage.localizedString("has completed")
-        case .errored: return AppLanguage.localizedString("encountered an error")
-        case .interrupted: return AppLanguage.localizedString("was interrupted")
-        case .shutdown: return AppLanguage.localizedString("was shut down")
+        case .running: return "is thinking"
+        case .pendingInit: return "is awaiting instruction"
+        case .completed: return "has completed"
+        case .errored: return "encountered an error"
+        case .interrupted: return "was interrupted"
+        case .shutdown: return "was shut down"
         case .unknown: return ""
         }
     }
@@ -370,7 +367,6 @@ private struct SubagentDetailSheet: View {
         if title != resolved {
             title = resolved
         }
-        return agentLabel ?? AppLanguage.localizedString("Agent")
     }
 
     private func looksLikeId(_ value: String) -> Bool {
@@ -388,11 +384,7 @@ private struct SubagentDetailSheet: View {
                                 Spacer().frame(height: 40)
                                 ProgressView()
                                     .tint(LitterTheme.accent)
-                                Text(
-                                    AppLanguage.localizedString(
-                                        isLoading ? "Loading thread..." : "Waiting for agent output..."
-                                    )
-                                )
+                                Text(isLoading ? "Loading thread..." : "Waiting for agent output...")
                                     .litterFont(.caption)
                                     .foregroundColor(LitterTheme.textMuted)
                                 Spacer()

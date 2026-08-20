@@ -162,18 +162,12 @@ struct UserBubble: View, Equatable {
                                     expandedLongText.toggle()
                                 }
                             } label: {
-                                Text(AppLanguage.localizedString(expandedLongText ? "Show less" : "Show more"))
+                                Text(expandedLongText ? "Show less" : "Show more")
                                     .litterFont(.caption2, weight: .semibold)
                                     .foregroundColor(LitterTheme.accent)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel(
-                                AppLanguage.localizedString(
-                                    expandedLongText
-                                        ? "Show less user message"
-                                        : "Show more user message"
-                                )
-                            )
+                            .accessibilityLabel(expandedLongText ? "Show less user message" : "Show more user message")
                         }
                     }
                 }
@@ -599,149 +593,6 @@ private final class StreamingMathDetectionCache {
             entries.removeValue(forKey: key)
             accessStamps.removeValue(forKey: key)
         }
-    }
-
-    private var assistantAgentLabel: String? {
-        AgentLabelFormatter.format(
-            nickname: message.agentNickname,
-            role: message.agentRole
-        )
-    }
-
-    private var reasoningContent: some View {
-        let (_, body) = extractSystemTitleAndBody(message.text)
-        return Text(normalizedReasoningText(body))
-            .litterFont(size: contentFontSize)
-            .italic()
-            .foregroundColor(LitterTheme.textSecondary)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contextMenu {
-                if canCopyMessageText {
-                    Button("Copy Message") {
-                        UIPasteboard.general.string = message.text
-                    }
-                }
-            }
-    }
-
-    @ViewBuilder
-    private var systemBubble: some View {
-        if let widget = message.widgetState {
-            WidgetContainerView(
-                widget: widget,
-                originThreadId: resolvedOriginThreadId,
-                onMessage: handleWidgetMessage
-            )
-        } else {
-            let parsed = systemParseResultForRendering
-            switch parsed {
-            case .recognized(let model):
-                ToolCallCardView(model: model, serverId: serverId)
-            case .unrecognized:
-                genericSystemBubble
-            }
-        }
-    }
-
-    private func handleWidgetMessage(_ body: Any) {
-        guard let dict = body as? [String: Any],
-              let type = dict["_type"] as? String else { return }
-        switch type {
-        case "sendPrompt":
-            if let text = dict["text"] as? String, !text.isEmpty {
-                onWidgetPrompt?(text)
-            }
-        case "openLink":
-            if let urlStr = dict["url"] as? String, let url = URL(string: urlStr) {
-                UIApplication.shared.open(url)
-            }
-        default:
-            break
-        }
-    }
-
-    private var genericSystemBubble: some View {
-        let (title, body) = extractSystemTitleAndBody(message.text)
-        let markdown = title == nil ? message.text : body
-        let displayTitle = title ?? AppLanguage.localizedString("System")
-
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle.fill")
-                    .litterFont(size: 11, weight: .semibold)
-                    .foregroundColor(LitterTheme.accent)
-                Text(displayTitle.uppercased())
-                    .litterFont(.caption2, weight: .bold)
-                    .foregroundColor(LitterTheme.accent)
-                Spacer()
-            }
-
-            if !markdown.isEmpty {
-                LitterMarkdownView(
-                    markdown: markdown,
-                    style: .system,
-                    bodySize: contentFontSize,
-                    codeSize: contentFontSize
-                )
-                    .padding(.top, 8)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .modifier(GlassRectModifier(cornerRadius: 12))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(LitterTheme.accent.opacity(0.9))
-                .frame(width: 3)
-                .padding(.vertical, 6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contextMenu {
-            if canCopyMessageText {
-                Button("Copy Message") {
-                    UIPasteboard.general.string = message.text
-                }
-            }
-        }
-    }
-
-    private func extractSystemTitleAndBody(_ text: String) -> (String?, String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("### ") else { return (nil, trimmed) }
-        let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
-        guard let first = lines.first else { return (nil, trimmed) }
-        let title = first.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return (title.isEmpty ? nil : title, body)
-    }
-
-    private func normalizedReasoningText(_ body: String) -> String {
-        body
-            .components(separatedBy: .newlines)
-            .map { line in
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("**"), trimmed.hasSuffix("**"), trimmed.count > 4 {
-                    return String(trimmed.dropFirst(2).dropLast(2))
-                }
-                return line
-            }
-            .joined(separator: "\n")
-    }
-
-    private var assistantSegmentsForRendering: [MessageRenderCache.AssistantSegment] {
-        renderCache.assistantSegments(
-            for: message,
-            key: renderRevisionKey
-        )
-    }
-
-    private var systemParseResultForRendering: ToolCallParseResult {
-        renderCache.systemParseResult(
-            for: message,
-            key: renderRevisionKey,
-            resolveTargetLabel: resolveTargetLabel
-        )
     }
 }
 

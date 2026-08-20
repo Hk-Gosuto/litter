@@ -150,11 +150,11 @@ struct ToolCallCardView: View {
     private func durationAccessibilityLabel(_ duration: String) -> String {
         switch model.status {
         case .completed:
-            return AppLanguage.localizedString("%@, completed", duration)
+            return "\(duration), completed"
         case .inProgress:
-            return AppLanguage.localizedString("%@, in progress", duration)
+            return "\(duration), in progress"
         case .failed:
-            return AppLanguage.localizedString("%@, failed", duration)
+            return "\(duration), failed"
         case .unknown:
             return duration
         }
@@ -272,10 +272,7 @@ struct ToolCallCardView: View {
     }
 
     private func sectionLabel(_ label: String) -> some View {
-        Text(
-            AppLanguage.localizedString(label)
-                .uppercased(with: AppLanguage.current.locale)
-        )
+        Text(label.uppercased())
             .litterFont(.caption2, weight: .bold)
             .foregroundColor(LitterTheme.textSecondary)
     }
@@ -377,22 +374,12 @@ struct ToolCallCardView: View {
                     }
                 }
             } label: {
-                Text(
-                    AppLanguage.localizedString(
-                        expandedLongTextIDs.contains(id) ? "Show less" : "Show more"
-                    )
-                )
+                Text(expandedLongTextIDs.contains(id) ? "Show less" : "Show more")
                     .litterFont(.caption2, weight: .semibold)
                     .foregroundColor(LitterTheme.accent)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(
-                AppLanguage.localizedString(
-                    expandedLongTextIDs.contains(id)
-                        ? "Show less text"
-                        : "Show more text"
-                )
-            )
+            .accessibilityLabel(expandedLongTextIDs.contains(id) ? "Show less text" : "Show more text")
         }
     }
 
@@ -569,104 +556,16 @@ private struct ToolCallImagePreview: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(LitterTheme.codeBackground.opacity(0.82))
 
-                if let renderedImage {
-                    Image(uiImage: renderedImage)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .draggable(Image(uiImage: renderedImage)) {
-                            Image(uiImage: renderedImage)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 120)
-                        }
-                } else if isLoading {
-                    ProgressView()
-                        .tint(LitterTheme.accent)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 32)
-                } else {
-                    Text(loadError ?? AppLanguage.localizedString("Image unavailable"))
-                        .litterFont(.caption)
-                        .foregroundColor(loadError == nil ? LitterTheme.textSecondary : LitterTheme.danger)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 24)
-                }
+                ResolvedChatImageView(
+                    source: descriptor.resolvedSource,
+                    serverId: serverId,
+                    maxHeight: 320
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .task(id: taskKey) {
-            await loadImage()
-        }
-    }
-
-    private var taskKey: String {
-        "\(descriptor.cacheKey)|\(serverId ?? "<none>")"
-    }
-
-    private func loadImage() async {
-        if let cached = Self.imageCache.object(forKey: taskKey as NSString) {
-            renderedImage = cached
-            loadError = nil
-            isLoading = false
-            return
-        }
-
-        isLoading = true
-        loadError = nil
-
-        defer {
-            isLoading = false
-        }
-
-        do {
-            let image: UIImage
-            switch descriptor {
-            case .inlineData(let data):
-                guard let decoded = UIImage(data: data) else {
-                    throw ToolCallImageError.invalidImageData
-                }
-                image = decoded
-            case .filePath(let path):
-                let data = try await fetchImageData(path: path)
-                guard let decoded = UIImage(data: data) else {
-                    throw ToolCallImageError.invalidImageData
-                }
-                image = decoded
-            }
-
-            Self.imageCache.setObject(image, forKey: taskKey as NSString)
-            renderedImage = image
-            loadError = nil
-        } catch {
-            renderedImage = nil
-            loadError = ToolCallImageError.message(for: error)
-        }
-    }
-
-    private func fetchImageData(path: String) async throws -> Data {
-        let resolved = try await appModel.client.resolveImageView(
-            serverId: serverId ?? "",
-            path: path
-        )
-        return Data(resolved.bytes)
-    }
-}
-
-private enum ToolCallImageError: LocalizedError {
-    case invalidImageData
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidImageData:
-            return AppLanguage.localizedString("Could not decode the image.")
-        }
-    }
-
-    static func message(for error: Error) -> String {
-        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.isEmpty ? "Image unavailable" : message
     }
 }
 

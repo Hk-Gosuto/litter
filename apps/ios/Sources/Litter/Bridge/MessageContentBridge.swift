@@ -59,7 +59,7 @@ enum MessageContentBridge {
         rustBlocks.compactMap { block in
             switch block {
             case .markdown(markdown: let markdown):
-                return markdown.isEmpty ? nil : .markdown(markdown)
+                return markdown.isEmpty ? nil : AssistantRenderBlock.markdown(markdown)
             case .codeBlock(language: let language, code: let code):
                 return .codeBlock(language: language, code: code)
             case .inlineImage(data: let data, mimeType: _):
