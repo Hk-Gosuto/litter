@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.DeveloperBoard
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Laptop
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -78,6 +79,8 @@ import com.litter.android.state.SshAuthMethod
 import com.litter.android.state.SshCredentialStore
 import com.litter.android.state.connectionProgressDetail
 import com.litter.android.state.isConnected
+import com.litter.android.state.statusColor
+import com.litter.android.state.statusLabel
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalAppModel
@@ -1786,81 +1789,6 @@ private fun connectedSnapshot(
     servers: List<AppServerSnapshot>,
 ): AppServerSnapshot? = servers.firstOrNull { it.serverId == entry.id }
     ?: servers.firstOrNull { it.host.lowercase().trim().trimStart('[').trimEnd(']') == entry.deduplicationKey }
-
-private fun mergeServers(
-    discovered: List<AppDiscoveredServer>,
-    saved: List<SavedServer>,
-): List<SavedServer> {
-    val merged = linkedMapOf<String, SavedServer>()
-
-    fun sourceRank(source: String): Int = when (source) {
-        "bonjour" -> 0
-        "tailscale" -> 1
-        "lanProbe" -> 2
-        "arpScan" -> 3
-        "ssh" -> 4
-        "manual" -> 5
-        "local" -> 6
-        else -> 7
-    }
-
-    fun mergeCandidate(existing: SavedServer, candidate: SavedServer): SavedServer {
-        val betterSource = sourceRank(candidate.source) < sourceRank(existing.source)
-        val hasCodexUpgrade = candidate.hasCodexServer && !existing.hasCodexServer
-        val betterCodexPort = candidate.availableDirectCodexPorts.any { it !in existing.availableDirectCodexPorts }
-        val betterName = existing.name == existing.hostname && candidate.name != candidate.hostname
-        val preferCandidate = betterSource || hasCodexUpgrade || betterCodexPort || betterName
-
-        val mergedCodexPorts = buildList {
-            addAll(existing.availableDirectCodexPorts)
-            addAll(candidate.availableDirectCodexPorts)
-        }.distinct()
-
-        val mergedOs = if (candidate.sshBanner != null) candidate.os else (candidate.os ?: existing.os)
-        val mergedBanner = candidate.sshBanner ?: existing.sshBanner
-
-        val mergedServer = if (preferCandidate) {
-            candidate.copy(
-                id = existing.id,
-                codexPorts = mergedCodexPorts,
-                wakeMAC = candidate.wakeMAC ?: existing.wakeMAC,
-                preferredConnectionMode = existing.resolvedPreferredConnectionMode ?: candidate.resolvedPreferredConnectionMode,
-                preferredCodexPort = existing.resolvedPreferredCodexPort ?: candidate.resolvedPreferredCodexPort,
-                sshPortForwardingEnabled = null,
-                websocketURL = candidate.websocketURL ?: existing.websocketURL,
-                os = mergedOs,
-                sshBanner = mergedBanner,
-            )
-        } else {
-            existing.copy(
-                codexPorts = mergedCodexPorts,
-                sshPort = existing.sshPort ?: candidate.sshPort,
-                wakeMAC = existing.wakeMAC ?: candidate.wakeMAC,
-                preferredConnectionMode = existing.resolvedPreferredConnectionMode ?: candidate.resolvedPreferredConnectionMode,
-                preferredCodexPort = existing.resolvedPreferredCodexPort ?: candidate.resolvedPreferredCodexPort,
-                sshPortForwardingEnabled = null,
-                websocketURL = existing.websocketURL ?: candidate.websocketURL,
-                os = mergedOs,
-                sshBanner = mergedBanner,
-            )
-        }
-
-        return mergedServer.normalizedForPersistence()
-    }
-
-    for (server in saved) {
-        merged[server.deduplicationKey] = server
-    }
-
-    for (server in discovered.map(SavedServer::from)) {
-        val key = server.deduplicationKey
-        merged[key] = merged[key]?.let { existing -> mergeCandidate(existing, server) } ?: server
-    }
-
-    return merged.values.sortedWith(
-        compareBy<SavedServer> { sourceRank(it.source) }.thenBy { it.name.lowercase() },
-    )
-}
 
 private fun serverIconForEntry(entry: SavedServer): androidx.compose.ui.graphics.vector.ImageVector {
     if (entry.source == "local") return Icons.Outlined.PhoneAndroid
