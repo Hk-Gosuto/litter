@@ -90,6 +90,9 @@ val AppServerSnapshot.connectionProgressLabel: String?
         null -> null
     }
 
+val AppServerSnapshot.connectionProgressDetail: String?
+    get() = currentConnectionStep?.detail ?: connectionProgress?.terminalMessage
+
 val AppServerSnapshot.statusLabel: String
     get() = when {
         connectionProgressLabel != null -> connectionProgressLabel!!

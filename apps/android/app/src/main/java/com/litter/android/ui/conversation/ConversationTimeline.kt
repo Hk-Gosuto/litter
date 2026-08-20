@@ -512,16 +512,19 @@ private fun AssistantRenderBlocks(
                     }
                 }
                 is AppMessageRenderBlock.InlineImage -> {
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(block.data)
-                            .crossfade(false)
-                            .build(),
-                        contentDescription = stringResource(R.string.a11y_assistant_image_number, index + 1),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 300.dp)
-                            .clip(RoundedCornerShape(10.dp)),
+                    InlineChatImage(
+                        data = block.data,
+                        contentDescription = stringResource(
+                            R.string.a11y_assistant_image_number,
+                            index + 1,
+                        ),
+                    )
+                }
+                is AppMessageRenderBlock.LocalImage -> {
+                    ResolvedChatImage(
+                        path = block.path,
+                        serverId = serverId,
+                        cwd = cwd,
                     )
                 }
             }

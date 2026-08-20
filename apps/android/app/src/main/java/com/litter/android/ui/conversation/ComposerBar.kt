@@ -900,19 +900,6 @@ fun ComposerBar(
                 .background(LitterTheme.codeBackground, RoundedCornerShape(26.dp))
                 .padding(horizontal = 6.dp, vertical = 4.dp),
         ) {
-            if (!isRecording && !isTranscribing && !isThinking) {
-                IconButton(
-                    onClick = { showAttachMenu = true },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = stringResource(R.string.composer_attach),
-                        tint = LitterTheme.textPrimary,
-                    )
-                }
-            }
-
             // Text field
             Row(
                 modifier = Modifier
@@ -1016,37 +1003,36 @@ fun ComposerBar(
                     }
                 }
 
-                when {
-                    isRecording -> {
-                        Spacer(Modifier.width(8.dp))
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    val auth = runCatching {
-                                        appModel.client.authStatus(
-                                            threadKey.serverId,
-                                            AuthStatusRequest(
-                                                includeToken = true,
-                                                refreshToken = false,
-                                            ),
-                                        )
-                                    }.getOrNull()
-                                    val transcript = transcriptionManager.stopAndTranscribe(
-                                        authMethod = auth?.authMethod,
-                                        authToken = auth?.authToken,
-                                    )
-                                    transcript?.let {
-                                        textFieldValue = insertComposerTranscript(textFieldValue, it)
-                                    }
-                                }
-                            },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Stop,
-                                contentDescription = stringResource(R.string.a11y_stop_recording),
-                                tint = LitterTheme.accentStrong,
-                            )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (!isRecording && !isTranscribing && !isThinking) {
+                    IconButton(
+                        onClick = { showAttachMenu = true },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(LitterTheme.surface.copy(alpha = 0.78f), CircleShape),
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = stringResource(R.string.composer_attach),
+                            tint = LitterTheme.textPrimary,
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+
+                Text(
+                    text = buildString {
+                        append(composerModelLabel)
+                        if (composerReasoningLabel.isNotBlank() && composerReasoningLabel != "default") {
+                            append("  ")
+                            append(composerReasoningLabel)
                         }
                         append("  ⌄")
                     },
@@ -1092,7 +1078,11 @@ fun ComposerBar(
                         },
                         modifier = Modifier.size(40.dp),
                     ) {
-                        Icon(Icons.Default.Stop, contentDescription = "Stop recording", tint = LitterTheme.accentStrong)
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = stringResource(R.string.a11y_stop_recording),
+                            tint = LitterTheme.accentStrong,
+                        )
                     }
 
                     isTranscribing -> LinearProgressIndicator(
@@ -1111,7 +1101,7 @@ fun ComposerBar(
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
+                            contentDescription = stringResource(R.string.common_send),
                             tint = Color.Black,
                             modifier = Modifier.size(17.dp),
                         )
@@ -1135,7 +1125,7 @@ fun ComposerBar(
                     ) {
                         Icon(
                             Icons.Default.Stop,
-                            contentDescription = "Cancel response",
+                            contentDescription = stringResource(R.string.common_cancel),
                             tint = LitterTheme.surface,
                             modifier = Modifier.size(15.dp),
                         )
@@ -1186,58 +1176,6 @@ fun ComposerBar(
                         }
                     }
                 }
-            }
-
-            Spacer(Modifier.width(4.dp))
-
-            if (canSend) {
-                IconButton(
-                    onClick = sendCurrent,
-                    enabled = !isRecording && !isTranscribing,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (!isRecording && !isTranscribing) {
-                                LitterTheme.accent
-                            } else {
-                                LitterTheme.accent.copy(alpha = 0.45f)
-                            },
-                            CircleShape,
-                        ),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = stringResource(R.string.common_send),
-                        tint = Color.Black,
-                        modifier = Modifier.size(17.dp),
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-            }
-
-            if (isThinking && !canSend) {
-                Text(
-                    text = stringResource(R.string.common_cancel),
-                    color = LitterTheme.textPrimary,
-                    fontSize = LitterTextStyle.caption.scaled,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(LitterTheme.surface)
-                        .clickable {
-                            val turnId = activeTurnId ?: return@clickable
-                            scope.launch {
-                                try {
-                                    appModel.client.interruptTurn(
-                                        threadKey.serverId,
-                                        AppInterruptTurnRequest(threadId = threadKey.threadId, turnId = turnId),
-                                    )
-                                } catch (_: Exception) {}
-                            }
-                        }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                )
             }
         }
 

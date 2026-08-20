@@ -32,7 +32,9 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.DeveloperBoard
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Laptop
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -59,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +76,7 @@ import com.litter.android.state.SavedSshCredential
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.SshAuthMethod
 import com.litter.android.state.SshCredentialStore
+import com.litter.android.state.connectionProgressDetail
 import com.litter.android.state.isConnected
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.litter.android.ui.LitterTheme
@@ -437,8 +441,8 @@ fun DiscoveryScreen(
                     sshServer = prepared.withPreferredConnection("ssh")
                 }
 
-                else -> {
-                    val directCodexPort = checkNotNull(prepared.directCodexPort)
+                prepared.directCodexPort != null -> {
+                    val directCodexPort = prepared.directCodexPort!!
                     appModel.serverBridge.connectRemoteServer(
                         prepared.id,
                         prepared.name,
@@ -584,81 +588,6 @@ fun DiscoveryScreen(
                 loadSlingshotEnvironments()
             }
         }
-    }
-
-    connectionChoiceServer?.let { server ->
-        AlertDialog(
-            onDismissRequest = { connectionChoiceServer = null },
-            title = {
-                Text(stringResource(R.string.discovery_connect_server, server.name.ifBlank { server.hostname }))
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        connectionChoiceMessage(context, server),
-                        color = LitterTheme.textSecondary,
-                    )
-                    server.availableDirectCodexPorts.forEach { port ->
-                        TextButton(
-                            onClick = {
-                                connectionChoiceServer = null
-                                scope.launch {
-                                    try {
-                                        appModel.serverBridge.connectRemoteServer(
-                                            server.id,
-                                            server.name,
-                                            server.hostname,
-                                            port.toUShort(),
-                                        )
-                                        SavedServerStore.remember(
-                                            context,
-                                            server.withPreferredConnection("directCodex", port),
-                                        )
-                                        reloadSavedServers()
-                                        appModel.refreshSnapshot()
-                                        onDismiss()
-                                    } catch (e: Exception) {
-                                        LLog.e(
-                                            logTag,
-                                            "direct codex connect failed",
-                                            e,
-                                            fields = mapOf(
-                                                "serverId" to server.id,
-                                                "host" to server.hostname,
-                                                "codexPort" to port,
-                                                "os" to server.os,
-                                            ),
-                                        )
-                                        connectError = e.message
-                                            ?: context.getString(R.string.discovery_connect_failed)
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.discovery_use_codex_port, port))
-                        }
-                    }
-                    if (server.canConnectViaSsh) {
-                        TextButton(
-                            onClick = {
-                                sshServer = server.withPreferredConnection("ssh")
-                                connectionChoiceServer = null
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.discovery_connect_via_ssh), color = LitterTheme.accent)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { connectionChoiceServer = null }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            },
-            dismissButton = {},
-        )
     }
 
     sshServer?.let { server ->
@@ -1931,6 +1860,31 @@ private fun mergeServers(
     return merged.values.sortedWith(
         compareBy<SavedServer> { sourceRank(it.source) }.thenBy { it.name.lowercase() },
     )
+}
+
+private fun serverIconForEntry(entry: SavedServer): androidx.compose.ui.graphics.vector.ImageVector {
+    if (entry.source == "local") return Icons.Outlined.PhoneAndroid
+    val os = entry.os?.lowercase()
+    if (os != null) {
+        if (os.contains("windows")) return Icons.Outlined.DesktopWindows
+        if (os.contains("raspbian")) return Icons.Outlined.DeveloperBoard
+        if (
+            os.contains("ubuntu") ||
+            os.contains("debian") ||
+            os.contains("fedora") ||
+            os.contains("red hat") ||
+            os.contains("freebsd") ||
+            os.contains("linux")
+        ) {
+            return Icons.Outlined.Dns
+        }
+    }
+    return when (entry.source) {
+        "bonjour" -> Icons.Outlined.Laptop
+        "tailscale" -> Icons.Outlined.Lan
+        "ssh" -> Icons.Outlined.Terminal
+        else -> Icons.Outlined.Dns
+    }
 }
 
 private fun connectionChoiceMessage(context: Context, server: SavedServer): String {

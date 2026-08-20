@@ -296,13 +296,16 @@ private fun SettingsTopLevel(
             Column(
                 Modifier.fillMaxWidth().background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
             ) {
-                FontRow("Berkeley Mono", BerkeleyMono, LitterThemeManager.monoFontEnabled) { LitterThemeManager.applyFont(true) }
-                HorizontalDivider(color = LitterTheme.divider)
-                FontRow(
-                    stringResource(R.string.settings_system_default),
-                    FontFamily.Default,
-                    !LitterThemeManager.monoFontEnabled,
-                ) { LitterThemeManager.applyFont(false) }
+                LitterFontFamilyOption.entries.forEachIndexed { index, option ->
+                    if (index > 0) {
+                        HorizontalDivider(color = LitterTheme.divider)
+                    }
+                    FontRow(
+                        option.displayName,
+                        LitterTheme.fontFamily(option),
+                        LitterThemeManager.selectedFontFamily == option,
+                    ) { LitterThemeManager.applyFont(option) }
+                }
             }
         }
 

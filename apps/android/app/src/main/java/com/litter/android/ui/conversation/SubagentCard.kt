@@ -176,7 +176,7 @@ fun SubagentCard(
                             modifier = Modifier.size(28.dp),
                         ) {
                             Icon(
-                                Icons.Default.OpenInNew,
+                                Icons.AutoMirrored.Filled.OpenInNew,
                                 contentDescription = stringResource(R.string.common_open),
                                 tint = LitterTheme.accent,
                                 modifier = Modifier.size(16.dp),

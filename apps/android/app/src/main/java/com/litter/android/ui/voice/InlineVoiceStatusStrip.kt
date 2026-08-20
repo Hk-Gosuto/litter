@@ -114,7 +114,7 @@ fun InlineVoiceStatusStrip(
 
         // Speaker toggle
         Icon(
-            Icons.Default.VolumeUp,
+            Icons.AutoMirrored.Filled.VolumeUp,
             contentDescription = stringResource(R.string.voice_toggle_speaker),
             tint = LitterTheme.textPrimary,
             modifier = Modifier
