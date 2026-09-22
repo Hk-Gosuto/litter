@@ -33,6 +33,7 @@ pub struct SavedServerRecord {
     pub ssh_port_forwarding_enabled: Option<bool>,
     pub websocket_url: Option<String>,
     pub remembered_by_user: bool,
+    pub detached_transport: bool,
     /// Legacy Alleycat marker. Unsupported after the iroh-backed host migration;
     /// records with only these fields require a new pairing scan.
     pub alleycat_host: Option<String>,
@@ -510,23 +511,65 @@ pub(crate) async fn execute_reconnect_plan(
                 auth,
                 unlock_macos_keychain: credential.unlock_macos_keychain,
             };
+            let normalized_host = crate::terminal::normalize_host(host);
+            let trust_store = client
+                .ssh_trust_store
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone());
+            let pinned_fingerprint = trust_store
+                .as_ref()
+                .and_then(|store| store.pinned(normalized_host.clone(), *ssh_port));
+            let policy_pin = pinned_fingerprint.clone();
+            let observed_fingerprint = Arc::new(tokio::sync::Mutex::new(None::<String>));
+            let callback_observed = Arc::clone(&observed_fingerprint);
             let ssh_client = match SshClient::connect(
                 ssh_creds,
-                Box::new(move |_fingerprint| Box::pin(async move { true })),
+                Box::new(move |fingerprint| {
+                    let expected = policy_pin.clone();
+                    let observed = Arc::clone(&callback_observed);
+                    let fingerprint = fingerprint.to_string();
+                    Box::pin(async move {
+                        *observed.lock().await = Some(fingerprint.clone());
+                        match expected {
+                            Some(expected) => expected == fingerprint,
+                            None => true,
+                        }
+                    })
+                }),
             )
             .await
             {
-                Ok(client) => Arc::new(client),
+                Ok(client) => {
+                    if let Some(store) = trust_store.as_ref()
+                        && pinned_fingerprint.as_ref().is_none()
+                        && let Some(fingerprint) = observed_fingerprint.lock().await.clone()
+                    {
+                        store.pin(normalized_host, *ssh_port, fingerprint);
+                    }
+                    Arc::new(client)
+                }
                 Err(e) => {
+                    let message = match e {
+                        crate::ssh::SshError::HostKeyVerification { fingerprint } => {
+                            let marker = if pinned_fingerprint.is_some() {
+                                "host-key-changed"
+                            } else {
+                                "unknown-host"
+                            };
+                            format!("{marker}:{fingerprint}")
+                        }
+                        other => other.to_string(),
+                    };
                     warn!(
                         "reconnect: SSH bridge plan failed to connect server_id={} error={}",
-                        server_id, e
+                        server_id, message
                     );
                     return ReconnectResult {
                         server_id: server_id.clone(),
                         success: false,
                         needs_local_auth_restore: false,
-                        error_message: Some(e.to_string()),
+                        error_message: Some(message),
                     };
                 }
             };
@@ -917,6 +960,7 @@ mod tests {
             ssh_port_forwarding_enabled: None,
             websocket_url: None,
             remembered_by_user: true,
+            detached_transport: false,
             alleycat_host: None,
             alleycat_udp_port: None,
             alleycat_node_id: None,

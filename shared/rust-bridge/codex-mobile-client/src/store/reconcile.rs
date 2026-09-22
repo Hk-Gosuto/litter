@@ -65,8 +65,8 @@ impl MobileClient {
                     response,
                     params.include_turns,
                 )
-                    .map(|_| ())
-                    .map_err(RpcError::Deserialization)
+                .map(|_| ())
+                .map_err(RpcError::Deserialization)
             }
             "thread/resume" => {
                 let response = downcast_public_rpc_response::<upstream::ThreadResumeResponse>(
@@ -176,6 +176,7 @@ impl MobileClient {
             .filter_map(crate::thread_info_from_upstream_thread)
             .collect::<Vec<_>>();
         self.app_store.sync_thread_list(server_id, &threads);
+        self.apply_persisted_thread_modes_to_infos(server_id, &threads);
         Ok(threads)
     }
 
@@ -200,6 +201,7 @@ impl MobileClient {
             .collect::<Vec<_>>();
         self.app_store
             .upsert_thread_list_page_for_runtime(server_id, runtime_kind, &threads);
+        self.apply_persisted_thread_modes_to_infos(server_id, &threads);
         threads
     }
 
@@ -252,6 +254,7 @@ impl MobileClient {
         let key = snapshot.key.clone();
         let existing = self.app_store.thread_snapshot(&key);
         crate::reconcile_active_turn(existing.as_ref(), &mut snapshot, &response.thread.turns);
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         Ok(key)
     }
@@ -279,25 +282,17 @@ impl MobileClient {
             upstream_thread.turns.clear();
         }
         let upstream_turns = upstream_thread.turns.clone();
-        let key = ThreadKey {
-            server_id: server_id.to_string(),
-            thread_id: upstream_thread.id.clone(),
-        };
-        let existing = self.app_store.thread_snapshot(&key);
-        let (approval_policy, sandbox_policy) = crate::merge_thread_read_policies(
-            existing.as_ref(),
-            response.approval_policy.map(Into::into),
-            response.sandbox.clone().map(Into::into),
-        );
         let mut snapshot = crate::thread_snapshot_from_upstream_thread_with_overrides(
             server_id,
             upstream_thread,
             None,
             None,
-            approval_policy,
-            sandbox_policy,
+            response.approval_policy.map(Into::into),
+            response.sandbox.clone().map(Into::into),
         )
         .map_err(|e| e.to_string())?;
+        let key = snapshot.key.clone();
+        let existing = self.app_store.thread_snapshot(&key);
         // Share the preserve-on-empty merge with resume/fork. A paginated
         // v0.125+ server returns `thread.turns: []` on thread/read — we
         // must keep any items + `older_turns_cursor` the prior
@@ -313,6 +308,7 @@ impl MobileClient {
             snapshot.initial_turns_loaded = true;
         }
         crate::reconcile_active_turn(existing.as_ref(), &mut snapshot, &upstream_turns);
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         Ok(key)
     }
@@ -339,6 +335,7 @@ impl MobileClient {
         let existing = self.app_store.thread_snapshot(&key);
         apply_pagination_merge(existing.as_ref(), &mut snapshot, &response.thread.turns);
         crate::reconcile_active_turn(existing.as_ref(), &mut snapshot, &response.thread.turns);
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         Ok(key)
     }
@@ -365,6 +362,7 @@ impl MobileClient {
         let existing = self.app_store.thread_snapshot(&key);
         apply_pagination_merge(existing.as_ref(), &mut snapshot, &response.thread.turns);
         crate::reconcile_active_turn(existing.as_ref(), &mut snapshot, &response.thread.turns);
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         Ok(key)
     }
@@ -405,6 +403,7 @@ impl MobileClient {
             initial_turns_loaded = thread.initial_turns_loaded,
             "apply_thread_turns_page merged"
         );
+        self.apply_persisted_thread_collaboration_mode(&mut thread);
         self.app_store.upsert_thread_snapshot(thread);
         Ok(())
     }
@@ -444,6 +443,7 @@ impl MobileClient {
             crate::reconcile_active_turn(Some(current), &mut snapshot, &response.thread.turns);
         }
         let next_key = snapshot.key.clone();
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         Ok(next_key)
     }
@@ -457,7 +457,7 @@ impl MobileClient {
 /// does not flicker to empty while pagination loads the first page. Legacy
 /// servers ignore `exclude_turns` and return the embedded turns — we treat
 /// those as an authoritative hydration.
-fn apply_pagination_merge(
+pub(crate) fn apply_pagination_merge(
     existing: Option<&ThreadSnapshot>,
     target: &mut ThreadSnapshot,
     upstream_turns: &[upstream::Turn],
@@ -633,24 +633,25 @@ fn merge_paged_turns(
                 )
         });
         if let Some(id) = group_turn_id.as_deref()
-            && existing_turn_ids.contains(id) {
-                // A reconnect repair page is authoritative for completed turn
-                // text. Drop stale streaming assistant/reasoning placeholders
-                // absent from the replay, while preserving the historical
-                // turn-id dedupe for non-stream/user items.
-                if thread.active_turn_id.is_none()
-                    && group_replays_existing_user
-                    && group_has_persisted_text
-                {
-                    prune_replayed_live_span(thread, &group_user_keys, &incoming_item_ids);
-                    thread.items.retain(|item| {
-                        incoming_item_ids.contains(&item.id)
-                            || !is_stream_text_item(item)
-                            || item.source_turn_id.as_deref() != Some(id)
-                    });
-                }
-                continue;
+            && existing_turn_ids.contains(id)
+        {
+            // A reconnect repair page is authoritative for completed turn
+            // text. Drop stale streaming assistant/reasoning placeholders
+            // absent from the replay, while preserving the historical
+            // turn-id dedupe for non-stream/user items.
+            if thread.active_turn_id.is_none()
+                && group_replays_existing_user
+                && group_has_persisted_text
+            {
+                prune_replayed_live_span(thread, &group_user_keys, &incoming_item_ids);
+                thread.items.retain(|item| {
+                    incoming_item_ids.contains(&item.id)
+                        || !is_stream_text_item(item)
+                        || item.source_turn_id.as_deref() != Some(id)
+                });
             }
+            continue;
+        }
         if thread.active_turn_id.is_none()
             && group_replays_existing_user
             && group_has_persisted_text
@@ -735,25 +736,32 @@ mod tests {
 
     fn test_upstream_thread(id: &str) -> upstream::Thread {
         upstream::Thread {
-            id: id.to_string(),
+            environments: None,
             extra: None,
+            parent_thread_id: None,
+            section: None,
+            section_entered_at: None,
+            project_id: None,
+            model: None,
+            reasoning_effort: None,
+            recency_at: None,
+            originator: None,
+            can_accept_direct_input: None,
+            daybreak_enabled: None,
+            history_mode: Default::default(),
+            id: id.to_string(),
             session_id: format!("session-{id}"),
             forked_from_id: None,
-            parent_thread_id: None,
             preview: "hello".to_string(),
             ephemeral: false,
-            is_pinned: false,
-            history_mode: Default::default(),
             model_provider: "openai".to_string(),
             created_at: 1,
             updated_at: 2,
-            recency_at: None,
             status: upstream::ThreadStatus::Idle,
             path: Some(PathBuf::from("/tmp/thread.jsonl")),
             cwd: test_abs_path("/tmp"),
             cli_version: "1.0.0".to_string(),
             source: upstream::SessionSource::default(),
-            can_accept_direct_input: None,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -832,13 +840,17 @@ mod tests {
                     unlimited: false,
                     balance: Some("5.00".to_string()),
                 }),
-                individual_limit: None,
-                spend_control_reached: None,
                 plan_type: Some(codex_protocol::account::PlanType::Plus),
                 rate_limit_reached_type: None,
+                individual_limit: None,
+                normal_model_slug: None,
+                spend_control_reached: None,
             },
             rate_limits_by_limit_id: None,
+            account_id: None,
+            ordinary_usage_allowed: None,
             rate_limit_reset_credits: None,
+            rate_limit_upsell: None,
         };
 
         client
@@ -895,9 +907,11 @@ mod tests {
                 supports_personality: true,
                 additional_speed_tiers: Vec::new(),
                 service_tiers: Vec::new(),
-                default_service_tier: None,
                 is_default: true,
                 availability_nux: None,
+                model_specialty: None,
+                multi_agent_version: None,
+                default_service_tier: None,
                 upgrade_info: None,
             }],
             next_cursor: None,
@@ -1175,7 +1189,8 @@ mod tests {
         thread.items = vec![
             live_user,
             assistant_item(None, "live-assistant-id", "partial"),
-        ].into();
+        ]
+        .into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1199,7 +1214,8 @@ mod tests {
             assistant_item(Some("turn-0"), "older-assistant-id", "older final"),
             live_user,
             assistant_item(None, "live-assistant-id", "partial"),
-        ].into();
+        ]
+        .into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1229,7 +1245,8 @@ mod tests {
         thread.items = vec![
             live_user,
             assistant_item(Some("active-turn"), "active-assistant-id", "partial"),
-        ].into();
+        ]
+        .into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1254,7 +1271,8 @@ mod tests {
             item_with_turn("turn-1", "persisted-user-id"),
             assistant_item(Some("turn-1"), "persisted-assistant-id", "final"),
             assistant_item(Some("turn-1"), "late-stream-assistant-id", "late duplicate"),
-        ].into();
+        ]
+        .into();
         let page = AppListThreadTurnsResponse {
             turns: vec![
                 item_with_turn("turn-1", "persisted-user-id"),
@@ -1338,6 +1356,7 @@ mod tests {
             ServerHealthSnapshot::Connected,
         );
         let response = upstream::ThreadStartResponse {
+            multi_agent_mode: Default::default(),
             thread: test_upstream_thread("thread-1"),
             model: "gpt-5".to_string(),
             model_provider: "openai".to_string(),
@@ -1350,7 +1369,6 @@ mod tests {
             sandbox: upstream::SandboxPolicy::DangerFullAccess,
             active_permission_profile: None,
             reasoning_effort: None,
-            multi_agent_mode: Default::default(),
         };
         let key = client
             .apply_thread_start_response("srv", &response)
@@ -1444,8 +1462,8 @@ mod tests {
             id: "turn-1".to_string(),
             status: upstream::TurnStatus::Completed,
             items: vec![upstream::ThreadItem::UserMessage {
-                id: "server-user-item".to_string(),
                 client_id: None,
+                id: "server-user-item".to_string(),
                 content: vec![upstream::UserInput::Text {
                     text: "hi".to_string(),
                     text_elements: Vec::new(),
@@ -1591,8 +1609,8 @@ mod tests {
             id: "unbounded-turn".to_string(),
             status: upstream::TurnStatus::Completed,
             items: vec![upstream::ThreadItem::UserMessage {
-                id: "unbounded-item".to_string(),
                 client_id: None,
+                id: "unbounded-item".to_string(),
                 content: vec![upstream::UserInput::Text {
                     text: "bridge returned history despite includeTurns=false".to_string(),
                     text_elements: Vec::new(),

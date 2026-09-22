@@ -2661,6 +2661,14 @@ internal fun StatusIcon(status: AppOperationStatus) {
                 modifier = Modifier.size(14.dp),
             )
         }
+        AppOperationStatus.INTERRUPTED -> {
+            Icon(
+                Icons.Default.Error,
+                contentDescription = "Interrupted",
+                tint = LitterTheme.textMuted,
+                modifier = Modifier.size(14.dp),
+            )
+        }
         AppOperationStatus.FAILED -> {
             Icon(
                 Icons.Default.Error,

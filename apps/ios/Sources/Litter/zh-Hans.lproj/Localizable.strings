@@ -564,6 +564,9 @@
 "Couldn't reach this folder: %@" = "无法访问此文件夹：%@";
 "Date" = "日期";
 "Declined" = "已拒绝";
+"Interrupted" = "已中断";
+"Persistent" = "持续";
+"Run Kittylitter on the host you want to connect to, then scan its QR code or paste the JSON it prints. The scanner includes an installation command you can copy." = "在要连接的主机上运行 Kittylitter，然后扫描二维码或粘贴其输出的 JSON。扫描器中还提供可复制的安装命令。";
 "Details are open by default" = "默认展开详细信息";
 "Details are removed from the transcript" = "从对话记录中隐藏详细信息";
 "Details stay behind a disclosure" = "详细信息默认折叠";

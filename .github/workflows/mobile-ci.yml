@@ -59,6 +59,11 @@ jobs:
         with:
           xcode-version: '26.3'
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
       - name: Setup Zig (libghostty build)
         uses: mlugg/setup-zig@v2
         with:
@@ -92,7 +97,7 @@ jobs:
         with:
           path: |
             shared/rust-bridge/generated
-          key: mobile-bindings-${{ runner.os }}-${{ hashFiles('apps/ios/scripts/sync-codex.sh', 'shared/rust-bridge/generate-bindings.sh', 'shared/rust-bridge/Cargo.toml', 'shared/rust-bridge/Cargo.lock', 'shared/rust-bridge/codex-mobile-client/src/**', 'shared/rust-bridge/uniffi-bindgen/**', 'patches/codex/**', 'shared/third_party/codex/codex-rs/app-server-protocol/src/protocol/**', 'shared/third_party/codex/codex-rs/protocol/src/**') }}
+          key: mobile-bindings-both-${{ runner.os }}-${{ hashFiles('apps/ios/scripts/sync-codex.sh', 'shared/rust-bridge/generate-bindings.sh', 'shared/rust-bridge/Cargo.toml', 'shared/rust-bridge/Cargo.lock', 'shared/rust-bridge/codex-mobile-client/src/**', 'shared/rust-bridge/uniffi-bindgen/**', 'patches/codex/**', 'shared/third_party/codex/codex-rs/app-server-protocol/src/protocol/**', 'shared/third_party/codex/codex-rs/protocol/src/**') }}
 
       - name: Generate shared mobile bindings
         if: steps.mobile-bindings-cache.outputs.cache-hit != 'true'
@@ -102,17 +107,30 @@ jobs:
           cd shared/rust-bridge
           ./generate-bindings.sh
 
+      - name: Generate Material3 scheme roles
+        run: |
+          bash tools/scripts/generate-material-schemes.sh
+          node --import ./tools/scripts/register-esm.mjs --test tools/scripts/generate-material-schemes.test.mjs
+
       # The shared Rust crate is the only implementation of session, thread,
       # streaming, hydration, discovery and reconnect logic; both platforms are
       # thin projections over it. Compiling it is not evidence that it works.
       - name: Shared Rust tests
         env:
           CARGO_INCREMENTAL: "0"
-        run: cargo test --manifest-path shared/rust-bridge/Cargo.toml -p codex-mobile-client -p codex-slingshot
+          # Cargo's libgit2/SecureTransport fetch repeatedly failed on libyuv.
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          cargo test --manifest-path shared/rust-bridge/Cargo.toml -p codex-mobile-client -p codex-slingshot
+          # The codex submodule is checked out pristine on cache hits, so apply
+          # the patch set before testing patched submodule crates.
+          ./apps/ios/scripts/sync-codex.sh --recorded-gitlink
+          cargo test --manifest-path shared/third_party/codex/codex-rs/Cargo.toml -p codex-thread-store
 
       - name: Release script tests
         run: |
           bash apps/ios/scripts/tests/testflight-finalize.test.sh
+          bash apps/ios/scripts/tests/app-store-release.test.sh
           python3 tools/scripts/tests/test_fetch_mobile_store_artifacts.py
 
       - name: Package shared mobile sources
@@ -131,7 +149,8 @@ jobs:
           tar -czf .ci-prep/shared/generated-mobile-sources.tgz -C . \
             shared/rust-bridge/generated \
             apps/ios/Sources/Litter/Bridge/UniFFICodexClient.generated.swift \
-            apps/ios/GeneratedRust/Headers
+            apps/ios/GeneratedRust/Headers \
+            apps/android/app/src/main/java/com/litter/android/ui/LitterMaterialSchemes.generated.kt
 
       - name: Upload shared prep artifact
         uses: actions/upload-artifact@v6
@@ -177,7 +196,7 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;30.0.14904198"
 
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libcap-dev clang cmake
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libcap-dev clang lld cmake
 
       - name: Setup Zig (libghostty build)
         uses: mlugg/setup-zig@v2
@@ -255,7 +274,7 @@ jobs:
   ios:
     needs: shared-prep
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
       SCCACHE_BUCKET: rust-cache
@@ -382,3 +401,57 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             -only-testing:LitterTests \
             test-without-building
+
+      - name: Test harness settings and conversation input
+        timeout-minutes: 10
+        run: |
+          xcodebuild \
+            -project apps/ios/Litter.xcodeproj \
+            -scheme Litter \
+            -configuration Debug \
+            -destination "id=$IOS_SIMULATOR_UDID" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/harness-ui.xcresult" \
+            -only-testing:LitterUITests/LitterUITests/testHarnessSettingsNavigationEditingAndReadOnlyPolicy \
+            -only-testing:LitterUITests/LitterUITests/testConversationDisplaySettingsRowsAreReachable \
+            -only-testing:LitterUITests/LitterUITests/testConversationComposerAcceptsSimulatorKeyboardInput \
+            -only-testing:LitterUITests/LitterUITests/testConversationComposerPreservesRapidKeyboardInput \
+            test-without-building
+
+      - name: Upload harness UI test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-harness-ui-results
+          path: ${{ runner.temp }}/harness-ui.xcresult
+          if-no-files-found: ignore
+
+      # Runtime smoke test: install the freshly built app, launch it, and
+      # assert the process survives. Unit tests never boot the embedded iSH
+      # guest runtime, so they cannot catch silently-broken embeds (e.g.
+      # litter-ish's ARM64 vdso degrading to an empty stub when no
+      # lld-capable clang is available, which SIGABRTs the app at launch).
+      - name: Smoke test (app launches and stays alive)
+        run: |
+          set -euo pipefail
+          xcrun simctl bootstatus "$IOS_SIMULATOR_UDID" -b
+          APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+            -path "*Debug-iphonesimulator/Litter.app" -type d -print -quit 2>/dev/null || true)"
+          if [ -z "$APP" ]; then
+            echo "Could not locate Litter.app in DerivedData" >&2
+            exit 1
+          fi
+          echo "Using app: $APP"
+          xcrun simctl install "$IOS_SIMULATOR_UDID" "$APP"
+          xcrun simctl launch "$IOS_SIMULATOR_UDID" com.sigkitten.litter
+          sleep 10
+          if ! xcrun simctl spawn "$IOS_SIMULATOR_UDID" launchctl list 2>/dev/null \
+              | grep -q "UIKitApplication:com.sigkitten.litter"; then
+            echo "App exited or crashed within 10s of launch" >&2
+            xcrun simctl spawn "$IOS_SIMULATOR_UDID" log show --last 2m \
+              --predicate 'process == "Litter"' --style compact 2>/dev/null | tail -80 || true
+            exit 1
+          fi
+          echo "App is alive"

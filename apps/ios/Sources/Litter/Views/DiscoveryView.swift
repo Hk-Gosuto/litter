@@ -121,9 +121,17 @@ struct DiscoveryView: View {
                 }
             } else if serverSnapshot.health == .disconnected,
                       let message = serverSnapshot.connectionProgress?.terminalMessage {
+                let failedServerId = pendingAutoNavigateServerId
                 self.pendingAutoNavigateServerId = nil
                 self.pendingAutoNavigateServer = nil
-                connectError = message
+                if decodeSshHostKeyChallenge(message: message)?.isChanged == true {
+                    appModel.recordSshHostKeyChange(
+                        serverId: failedServerId ?? "",
+                        errorMessage: message
+                    )
+                } else {
+                    connectError = message
+                }
             }
         }
         .alert("Connection Failed", isPresented: showConnectError, actions: {
@@ -131,6 +139,23 @@ struct DiscoveryView: View {
         }, message: {
             Text(connectError ?? "Unable to connect.")
         })
+        .alert("SSH Host Identity Changed", isPresented: Binding(
+            get: { appModel.sshHostKeyChangeChallenge != nil },
+            set: { if !$0 { appModel.clearSshHostKeyChange() } }
+        )) {
+            Button("Replace Stored Identity", role: .destructive) {
+                guard let challenge = appModel.sshHostKeyChangeChallenge else { return }
+                Task {
+                    await AppRuntimeController.shared.replaceSshHostKey(
+                        serverId: challenge.serverId,
+                        fingerprint: challenge.fingerprint
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) { appModel.clearSshHostKeyChange() }
+        } message: {
+            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(appModel.sshHostKeyChangeChallenge?.fingerprint ?? "unknown")")
+        }
     }
 
     // MARK: - Chooser
@@ -146,7 +171,7 @@ struct DiscoveryView: View {
 
                 chooserCard(
                     title: "Pair with kittylitter",
-                    subtitle: "Run npx kittylitter on the host, then scan the QR code it prints.",
+                    subtitle: "Install Kittylitter on your computer, then scan its QR code.",
                     badge: "RECOMMENDED",
                     icon: "qrcode.viewfinder",
                     supportedAgents: Self.kittylitterAgents,
@@ -542,7 +567,18 @@ struct DiscoveryView: View {
             )
         } catch {
             connectingServer = nil
-            connectError = error.localizedDescription
+            // The probe session is the first trust-store check in the guided
+            // flow, so a changed host key surfaces here first. Route it to
+            // the shared confirm dialog instead of the raw marker text.
+            let message = error.localizedDescription
+            if decodeSshHostKeyChallenge(message: message)?.isChanged == true {
+                appModel.recordSshHostKeyChange(
+                    serverId: server.id,
+                    errorMessage: message
+                )
+            } else {
+                connectError = message
+            }
         }
     }
 

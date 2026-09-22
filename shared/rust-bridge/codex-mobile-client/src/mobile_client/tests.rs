@@ -9,6 +9,49 @@ mod mobile_client_tests {
     use std::sync::{Arc, Mutex as StdMutex};
 
     #[test]
+    fn unsupported_mcp_elicitations_always_cancel_without_accepting_fabricated_proof() {
+        for request in [
+            json!({"mode":"openai/userVerification", "title":"Verify", "description":"Approve", "challenge":"challenge"}),
+            json!({"mode":"openai/form", "message":"Approve", "requestedSchema":{"type":"object"}}),
+            json!({"mode":"openaiForm", "message":"Approve", "requestedSchema":{"type":"object"}}),
+        ] {
+            let mut raw_params = request;
+            raw_params["threadId"] = json!("thread");
+            raw_params["serverName"] = json!("test-mcp");
+            let seed = PendingUserInputSeed {
+                request_id: upstream::RequestId::Integer(1),
+                response_kind: PendingUserInputResponseKind::McpServerElicitation,
+                raw_params,
+            };
+            for answers in [
+                vec![],
+                vec![PendingUserInputAnswer {
+                    question_id: MCP_URL_ACTION_FIELD_ID.into(),
+                    answers: vec![MCP_URL_FINISHED_LABEL.into()],
+                }],
+                vec![PendingUserInputAnswer {
+                    question_id: MCP_APPROVAL_FIELD_ID.into(),
+                    answers: vec![
+                        MCP_APPROVAL_ACCEPT_ONCE_LABEL.into(),
+                        MCP_APPROVAL_ACCEPT_ALWAYS_LABEL.into(),
+                    ],
+                }],
+                vec![PendingUserInputAnswer {
+                    question_id: "proof".into(),
+                    answers: vec![r#"{"verified":true,"signature":"fabricated"}"#.into()],
+                }],
+            ] {
+                assert_eq!(
+                    mcp_elicitation_response_json(&seed, &answers).unwrap(),
+                    json!({
+                        "action": "cancel", "content": null, "_meta": null
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
     fn account_sync_warmup_only_runs_when_codex_runtime_is_present() {
         assert!(runtime_kinds_support_account_sync(&["codex".to_string()]));
         assert!(runtime_kinds_support_account_sync(&[
@@ -706,6 +749,60 @@ mod mobile_client_tests {
     }
 
     #[test]
+    fn codex_mobile_threads_disable_login_hooks_without_changing_other_settings() {
+        let client = MobileClient::new();
+        for runtime in ["codex", "pi", "local-studio", "claude"] {
+            let config = Some(std::collections::HashMap::from([
+                ("allow_login_shell".into(), serde_json::json!(true)),
+                ("features.shell_snapshot".into(), serde_json::json!(true)),
+                ("model_reasoning_effort".into(), serde_json::json!("high")),
+            ]));
+            let mut requests = [
+                upstream::ClientRequest::ThreadStart {
+                    request_id: upstream::RequestId::Integer(1),
+                    params: upstream::ThreadStartParams {
+                        config: config.clone(),
+                        ..Default::default()
+                    },
+                },
+                upstream::ClientRequest::ThreadResume {
+                    request_id: upstream::RequestId::Integer(2),
+                    params: upstream::ThreadResumeParams {
+                        config: config.clone(),
+                        ..Default::default()
+                    },
+                },
+                upstream::ClientRequest::ThreadFork {
+                    request_id: upstream::RequestId::Integer(3),
+                    params: upstream::ThreadForkParams {
+                        config: config.clone(),
+                        ..Default::default()
+                    },
+                },
+            ];
+            for request in &mut requests {
+                client.normalize_model_selection_for_request("srv", runtime.into(), request);
+                let config = match request {
+                    upstream::ClientRequest::ThreadStart { params, .. } => params.config.as_ref(),
+                    upstream::ClientRequest::ThreadResume { params, .. } => params.config.as_ref(),
+                    upstream::ClientRequest::ThreadFork { params, .. } => params.config.as_ref(),
+                    _ => unreachable!(),
+                }
+                .unwrap();
+                assert_eq!(
+                    config["allow_login_shell"],
+                    serde_json::json!(runtime != "codex")
+                );
+                assert_eq!(
+                    config["features.shell_snapshot"],
+                    serde_json::json!(runtime != "codex")
+                );
+                assert_eq!(config["model_reasoning_effort"], serde_json::json!("high"));
+            }
+        }
+    }
+
+    #[test]
     fn codex_permission_overrides_remain_unchanged() {
         let client = MobileClient::new();
         let mut request = upstream::ClientRequest::ThreadStart {
@@ -727,6 +824,10 @@ mod mobile_client_tests {
             Some(upstream::AskForApproval::OnRequest)
         );
         assert_eq!(params.sandbox, Some(upstream::SandboxMode::WorkspaceWrite));
+        assert_eq!(
+            params.config.unwrap()["allow_login_shell"],
+            serde_json::json!(false)
+        );
     }
 
     #[test]
@@ -827,7 +928,7 @@ mod mobile_client_tests {
     fn thread_runtime_infers_non_codex_from_existing_thread_model_prefix() {
         for (model, expected_runtime) in [
             ("opencode/qwen3-coder", "opencode".to_string()),
-            ("amp/smart", "amp".to_string()),
+            ("amp/medium", "amp".to_string()),
             ("pi.dev/default", "pi".to_string()),
             ("factory/droid", "droid".to_string()),
         ] {
@@ -878,7 +979,7 @@ mod mobile_client_tests {
         }))
         .expect("thread/read response should deserialize");
 
-        upsert_thread_snapshot_from_app_server_read_response(&reducer, "srv", response)
+        upsert_thread_snapshot_from_app_server_read_response(&reducer, "srv", response, true)
             .expect("upsert should succeed");
 
         let key = ThreadKey {
@@ -942,7 +1043,7 @@ mod mobile_client_tests {
         }))
         .expect("thread/read response should deserialize");
 
-        upsert_thread_snapshot_from_app_server_read_response(&reducer, "srv", response)
+        upsert_thread_snapshot_from_app_server_read_response(&reducer, "srv", response, true)
             .expect("upsert should succeed");
 
         let snapshot = reducer
@@ -954,6 +1055,78 @@ mod mobile_client_tests {
 
         assert_eq!(snapshot.active_turn_id, None);
         assert_eq!(snapshot.info.status, ThreadSummaryStatus::Idle);
+    }
+
+    #[test]
+    fn metadata_read_preserves_page_and_active_turn_despite_embedded_history() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+        let mut existing = ThreadSnapshot::from_info("srv", make_thread_info("thread-1"));
+        existing.active_turn_id = Some("turn-1".to_string());
+        existing.info.status = ThreadSummaryStatus::Active;
+        existing.items = vec![crate::conversation::make_error_item(
+            "paged-item".into(),
+            "kept".into(),
+            None,
+        )]
+        .into();
+        existing.older_turns_cursor = Some("older".to_string());
+        existing.initial_turns_loaded = true;
+        reducer.upsert_thread_snapshot(existing);
+
+        let response: upstream::ThreadReadResponse = serde_json::from_value(serde_json::json!({
+            "thread": {
+                "id": "thread-1",
+                "sessionId": "session-1",
+                "preview": "hi",
+                "ephemeral": false,
+                "modelProvider": "openai",
+                "createdAt": 1,
+                "updatedAt": 2,
+                "status": { "type": "idle" },
+                "path": "/tmp/thread",
+                "cwd": "/tmp/thread",
+                "cliVersion": "1.0.0",
+                "source": "cli",
+                "agentNickname": null,
+                "agentRole": null,
+                "gitInfo": null,
+                "name": "thread",
+                "turns": [
+                    {
+                        "id": "turn-1",
+                        "items": [],
+                        "itemsView": "full",
+                        "status": "completed",
+                        "error": null,
+                        "startedAt": null,
+                        "completedAt": null,
+                        "durationMs": null
+                    }
+                ]
+            }
+        }))
+        .expect("thread/read response should deserialize");
+
+        upsert_thread_snapshot_from_app_server_read_response(&reducer, "srv", response, false)
+            .expect("upsert should succeed");
+
+        let snapshot = reducer
+            .snapshot()
+            .threads
+            .get(&key)
+            .cloned()
+            .expect("thread snapshot should exist");
+
+        assert_eq!(snapshot.active_turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(snapshot.older_turns_cursor.as_deref(), Some("older"));
+        assert!(snapshot.initial_turns_loaded);
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.items[0].id, "paged-item");
+        assert_eq!(snapshot.info.status, ThreadSummaryStatus::Active);
     }
 
     #[test]
@@ -1470,7 +1643,7 @@ mod mobile_client_tests {
 
         let mut thread = thread_snapshot_with_active_turn(server_id, thread_id, "turn-active");
         thread.agent_runtime_kind = "amp".to_string();
-        thread.model = Some("amp/smart".to_string());
+        thread.model = Some("amp/medium".to_string());
         thread.info.model_provider = Some("amp".to_string());
         client.app_store.upsert_thread_snapshot(thread);
         client.note_thread_runtime(key.clone(), "amp".to_string());
@@ -1517,7 +1690,7 @@ mod mobile_client_tests {
                             "name": "thread",
                             "turns": turns
                         },
-                        "model": "amp/smart",
+                        "model": "amp/medium",
                         "modelProvider": "amp",
                         "cwd": "/tmp/thread",
                         "approvalPolicy": "never",
@@ -2149,5 +2322,129 @@ mod mobile_client_tests {
 
         assert_eq!(preview.kind, AppQueuedFollowUpKind::PendingSteer);
         assert_eq!(preview.text, "Please try the same search again.");
+    }
+
+    #[tokio::test]
+    async fn start_turn_uses_persisted_plan_mode_after_cold_restore() {
+        let client = MobileClient::new();
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let preferences_dir = tempdir.path().to_string_lossy().to_string();
+        client.set_mobile_preferences_directory(preferences_dir.clone());
+        let server_id = "srv";
+        let thread_id = "thread-1";
+        let key = ThreadKey {
+            server_id: server_id.to_string(),
+            thread_id: thread_id.to_string(),
+        };
+        crate::thread_modes::set_mode(&preferences_dir, &key, AppModeKind::Plan);
+
+        let config = make_server_config(server_id);
+        client
+            .app_store
+            .upsert_server(&config, ServerHealthSnapshot::Connected);
+        let mut thread = ThreadSnapshot::from_info(server_id, make_thread_info(thread_id));
+        thread.info.status = ThreadSummaryStatus::Idle;
+        thread.model = Some("gpt-5".to_string());
+        client.app_store.upsert_thread_snapshot(thread);
+
+        let turn_start_calls = Arc::new(StdMutex::new(Vec::<upstream::ClientRequest>::new()));
+        let request_handler: TestRequestHandler = {
+            let turn_start_calls = Arc::clone(&turn_start_calls);
+            Arc::new(move |request| {
+                turn_start_calls
+                    .lock()
+                    .expect("turn start calls lock should not be poisoned")
+                    .push(request.clone());
+                match request {
+                    upstream::ClientRequest::TurnStart { .. } => {
+                        serde_json::to_value(upstream::TurnStartResponse {
+                            turn: upstream::Turn {
+                                id: "turn-next".to_string(),
+                                items: Vec::new(),
+                                status: upstream::TurnStatus::InProgress,
+                                error: None,
+                                started_at: None,
+                                completed_at: None,
+                                duration_ms: None,
+                                items_view: upstream::TurnItemsView::default(),
+                            },
+                        })
+                        .map_err(|error| RpcError::Deserialization(error.to_string()))
+                    }
+                    other => Err(RpcError::Deserialization(format!(
+                        "unexpected request in test: {}",
+                        other.method_name()
+                    ))),
+                }
+            })
+        };
+        let session = Arc::new(ServerSession::test_stub_with_handlers(
+            config,
+            Some(request_handler),
+            None,
+            None,
+        ));
+        client
+            .sessions
+            .write()
+            .expect("sessions lock should not be poisoned")
+            .insert(server_id.to_string(), session);
+
+        client
+            .start_turn(
+                server_id,
+                upstream::TurnStartParams {
+                    additional_context: None,
+                    client_user_message_id: None,
+                    cyber_access_program: None,
+                    turn_trigger: None,
+                    tool_output: None,
+                    service_tier_for_turn: None,
+                    multi_agent_mode: None,
+                    thread_id: thread_id.to_string(),
+                    input: vec![upstream::UserInput::Text {
+                        text: "hello".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                    responsesapi_client_metadata: None,
+                    cwd: None,
+                    runtime_workspace_roots: None,
+                    approval_policy: None,
+                    approvals_reviewer: None,
+                    sandbox_policy: None,
+                    environments: None,
+                    permissions: None,
+                    model: None,
+                    service_tier: None,
+                    effort: None,
+                    summary: None,
+                    personality: None,
+                    output_schema: None,
+                    collaboration_mode: None,
+                },
+            )
+            .await
+            .expect("start turn should succeed");
+
+        let captured = turn_start_calls
+            .lock()
+            .expect("turn start calls lock should not be poisoned");
+        let upstream::ClientRequest::TurnStart { params, .. } = &captured[0] else {
+            panic!("expected turn/start request");
+        };
+        assert_eq!(
+            params
+                .collaboration_mode
+                .as_ref()
+                .map(|mode| mode.mode.clone()),
+            Some(codex_protocol::config_types::ModeKind::Plan)
+        );
+        assert_eq!(
+            client
+                .snapshot_thread(&key)
+                .expect("thread snapshot")
+                .collaboration_mode,
+            AppModeKind::Plan
+        );
     }
 }

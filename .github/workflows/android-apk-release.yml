@@ -75,6 +75,11 @@ jobs:
         with:
           xcode-version: '26.3'
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
       - name: Setup Zig (libghostty build)
         uses: mlugg/setup-zig@v2
         with:
@@ -108,7 +113,7 @@ jobs:
         with:
           path: |
             shared/rust-bridge/generated
-          key: mobile-bindings-${{ runner.os }}-${{ hashFiles('apps/ios/scripts/sync-codex.sh', 'shared/rust-bridge/generate-bindings.sh', 'shared/rust-bridge/Cargo.toml', 'shared/rust-bridge/Cargo.lock', 'shared/rust-bridge/codex-mobile-client/src/**', 'shared/rust-bridge/uniffi-bindgen/**', 'patches/codex/**', 'shared/third_party/codex/codex-rs/app-server-protocol/src/protocol/**', 'shared/third_party/codex/codex-rs/protocol/src/**') }}
+          key: mobile-bindings-kotlin-${{ runner.os }}-${{ hashFiles('apps/ios/scripts/sync-codex.sh', 'shared/rust-bridge/generate-bindings.sh', 'shared/rust-bridge/Cargo.toml', 'shared/rust-bridge/Cargo.lock', 'shared/rust-bridge/codex-mobile-client/src/**', 'shared/rust-bridge/uniffi-bindgen/**', 'patches/codex/**', 'shared/third_party/codex/codex-rs/app-server-protocol/src/protocol/**', 'shared/third_party/codex/codex-rs/protocol/src/**') }}
 
       - name: Generate shared mobile bindings
         if: steps.mobile-bindings-cache.outputs.cache-hit != 'true'
@@ -118,11 +123,16 @@ jobs:
           cd shared/rust-bridge
           ./generate-bindings.sh --kotlin-only
 
+      - name: Generate Material3 scheme roles
+        run: |
+          bash tools/scripts/generate-material-schemes.sh
+
       - name: Package shared prep artifact
         run: |
           mkdir -p .ci-prep/shared
           tar -czf .ci-prep/shared/generated-mobile-sources.tgz -C . \
             shared/rust-bridge/generated \
+            apps/android/app/src/main/java/com/litter/android/ui/LitterMaterialSchemes.generated.kt \
 
       - name: Upload shared prep artifact
         uses: actions/upload-artifact@v6

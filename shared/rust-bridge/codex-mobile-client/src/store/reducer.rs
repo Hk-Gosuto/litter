@@ -18,13 +18,13 @@ use crate::conversation_uniffi::{
 };
 use crate::session::connection::ServerConfig;
 use crate::session::events::UiEvent;
-use crate::types::{
-    AgentRuntimeInfo, AgentRuntimeKind, PendingApproval, PendingApprovalKey, PendingApprovalSeed,
-    PendingUserInputAnswer, PendingUserInputKey, PendingUserInputRequest,
-    PendingUserInputSeed, ThreadInfo, ThreadKey, ThreadSummaryStatus,
-};
 #[cfg(test)]
 use crate::types::PendingApprovalWithSeed;
+use crate::types::{
+    AgentRuntimeInfo, AgentRuntimeKind, PendingApproval, PendingApprovalKey, PendingApprovalSeed,
+    PendingUserInputAnswer, PendingUserInputKey, PendingUserInputRequest, PendingUserInputSeed,
+    ThreadInfo, ThreadKey, ThreadSummaryStatus,
+};
 use crate::types::{
     AppModeKind, AppOperationStatus, AppPlanProgressSnapshot, AppPlanStep, AppThreadGoal,
     AppVoiceSessionPhase, AppVoiceTranscriptEntry, AppVoiceTranscriptUpdate,
@@ -789,7 +789,8 @@ impl AppStoreReducer {
             // entry can be read in place. Cloning it here duplicated every
             // item of the thread on every upsert just to read a handful of
             // preserved fields.
-            if let Some(existing) = snapshot.threads.get(&key) {
+            let existing = snapshot.threads.get(&key);
+            if let Some(existing) = existing {
                 preserve_thread_title(&existing.info, &mut thread.info);
                 preserve_thread_preview(&existing.info, &mut thread.info);
                 preserve_thread_created_at(&existing.info, &mut thread.info);
@@ -808,6 +809,7 @@ impl AppStoreReducer {
                     thread.items = existing.items.clone();
                 }
             }
+            restore_plan_implementation_prompt_from_history(&mut thread, existing);
             if !thread.queued_follow_up_drafts.is_empty() || thread.queued_follow_ups.is_empty() {
                 sync_thread_follow_up_projection(&mut thread);
             }
@@ -991,11 +993,10 @@ impl AppStoreReducer {
             .mutate_thread_with_result(key, |thread| {
                 let mut updated_item = None;
                 let mut needs_reprojection = false;
-                let pending_overlay_index =
-                    thread.local_overlay_items.iter().position(|item| {
-                        item.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
-                            && item.source_turn_id.is_none()
-                    });
+                let pending_overlay_index = thread.local_overlay_items.iter().position(|item| {
+                    item.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
+                        && item.source_turn_id.is_none()
+                });
                 if let Some(item) = pending_overlay_index
                     .and_then(|index| thread.local_overlay_items.get_mut(index))
                 {
@@ -1117,37 +1118,6 @@ impl AppStoreReducer {
             self.emit_thread_metadata_changed(key);
         }
         result
-    }
-
-    pub(crate) fn finish_steer_queued_follow_up(
-        &self,
-        key: &ThreadKey,
-        preview_id: &str,
-        accepted: bool,
-    ) {
-        let changed = self
-            .mutate_thread_with_result(key, |thread| {
-                let Some(position) = thread
-                    .queued_follow_up_drafts
-                    .iter()
-                    .position(|draft| draft.preview.id == preview_id)
-                else {
-                    return false;
-                };
-
-                if accepted {
-                    thread.queued_follow_up_drafts.remove(position);
-                } else {
-                    thread.queued_follow_up_drafts[position].preview.kind =
-                        super::snapshot::AppQueuedFollowUpKind::Message;
-                }
-                sync_thread_follow_up_projection(thread);
-                true
-            })
-            .unwrap_or(false);
-        if changed {
-            self.emit_thread_metadata_changed(key);
-        }
     }
 
     pub fn set_thread_follow_up_previews(
@@ -1470,6 +1440,16 @@ impl AppStoreReducer {
         self.emit(AppStoreUpdateRecord::ServerChanged {
             server_id: server_id.to_string(),
         });
+    }
+
+    /// Read only the catalog rather than cloning conversation and terminal state.
+    pub(crate) fn server_models(&self, server_id: &str) -> Option<Vec<crate::types::ModelInfo>> {
+        self.snapshot
+            .read()
+            .expect("app store lock poisoned")
+            .servers
+            .get(server_id)
+            .and_then(|server| server.available_models.clone())
     }
 
     pub fn update_server_models(
@@ -2286,8 +2266,7 @@ impl AppStoreReducer {
                         }
                         VoiceDerivedUpdate::HandoffRequest(request) => {
                             {
-                                let mut snapshot =
-                                    self.write_snapshot();
+                                let mut snapshot = self.write_snapshot();
                                 snapshot.voice_session.phase = Some(AppVoiceSessionPhase::Handoff);
                             }
                             self.emit(AppStoreUpdateRecord::VoiceSessionChanged);
@@ -2298,8 +2277,7 @@ impl AppStoreReducer {
                         }
                         VoiceDerivedUpdate::SpeechStarted => {
                             {
-                                let mut snapshot =
-                                    self.write_snapshot();
+                                let mut snapshot = self.write_snapshot();
                                 snapshot.voice_session.phase =
                                     Some(AppVoiceSessionPhase::Listening);
                             }
@@ -3431,7 +3409,7 @@ fn local_user_message_overlay_item(
     Some(HydratedConversationItem {
         id: format!(
             "{LOCAL_USER_MESSAGE_ITEM_PREFIX}{}",
-            uuid::Uuid::new_v4()
+            crate::next_request_id()
         ),
         content: HydratedConversationItemContent::User(
             crate::conversation_uniffi::HydratedUserMessageData {
@@ -3461,11 +3439,9 @@ fn render_user_input(inputs: &[upstream::UserInput]) -> (String, Vec<String>) {
             upstream::UserInput::LocalImage { path, .. } => {
                 images.push(format!("file://{}", path.display()));
             }
-            upstream::UserInput::Audio { url } => {
-                text_parts.push(format!("[Audio] {url}"));
-            }
+            upstream::UserInput::Audio { .. } => text_parts.push("[Audio attachment]".to_string()),
             upstream::UserInput::LocalAudio { path } => {
-                text_parts.push(format!("[Audio] {}", path.display()));
+                text_parts.push(format!("[Audio attachment] {}", path.display()))
             }
             upstream::UserInput::Skill { name, path } => {
                 if !name.is_empty() && path != &PathBuf::new() {
@@ -3665,6 +3641,51 @@ fn preserve_thread_runtime_state(source: &ThreadSnapshot, target: &mut ThreadSna
     }
 }
 
+fn restore_plan_implementation_prompt_from_history(
+    target: &mut ThreadSnapshot,
+    existing: Option<&ThreadSnapshot>,
+) {
+    if target.collaboration_mode != AppModeKind::Plan
+        || target.active_turn_id.is_some()
+        || target.pending_plan_implementation_turn_id.is_some()
+    {
+        return;
+    }
+
+    let Some((plan_index, plan_turn_id)) = latest_proposed_plan_turn(&target.items) else {
+        return;
+    };
+    if existing.is_some_and(|thread| {
+        latest_proposed_plan_turn(&thread.items).is_some_and(|(_, turn_id)| {
+            turn_id == plan_turn_id && thread.pending_plan_implementation_turn_id.is_none()
+        })
+    }) {
+        return;
+    }
+    if target.items.iter().skip(plan_index + 1).any(|item| {
+        item.is_from_user_turn_boundary
+            || matches!(&item.content, HydratedConversationItemContent::User(_))
+    }) {
+        return;
+    }
+    target.pending_plan_implementation_turn_id = Some(plan_turn_id);
+}
+
+fn latest_proposed_plan_turn(items: &[HydratedConversationItem]) -> Option<(usize, String)> {
+    items.iter().enumerate().rev().find_map(|(index, item)| {
+        if matches!(
+            &item.content,
+            HydratedConversationItemContent::ProposedPlan(_)
+        ) {
+            item.source_turn_id
+                .as_ref()
+                .map(|turn_id| (index, turn_id.clone()))
+        } else {
+            None
+        }
+    })
+}
+
 fn preserve_thread_title(existing: &ThreadInfo, incoming: &mut ThreadInfo) {
     let incoming_blank = incoming
         .title
@@ -3745,7 +3766,7 @@ fn is_duplicate_overlay_item(
     local: &HydratedConversationItem,
     existing: &HydratedConversationItem,
 ) -> bool {
-    if local.id == existing.id {
+    if local.id == existing.id && local.id.starts_with(USER_INPUT_RESPONSE_ITEM_PREFIX) {
         return true;
     }
 
@@ -3772,7 +3793,22 @@ fn is_superseded_overlay_item(
     existing: &HydratedConversationItem,
     _active_turn_id: Option<&str>,
 ) -> bool {
-    is_duplicate_overlay_item(local, existing)
+    if is_duplicate_overlay_item(local, existing) {
+        return true;
+    }
+
+    match (&local.content, &existing.content) {
+        (
+            HydratedConversationItemContent::User(local_data),
+            HydratedConversationItemContent::User(existing_data),
+        ) => {
+            local.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
+                && local.is_from_user_turn_boundary
+                && existing.is_from_user_turn_boundary
+                && local_data == existing_data
+        }
+        _ => false,
+    }
 }
 
 fn answered_user_input_item(
@@ -3861,6 +3897,38 @@ mod tests {
     };
     use tokio::sync::broadcast::error::TryRecvError;
 
+    #[test]
+    #[ignore = "manual performance measurement; prints scoped versus global snapshot cost"]
+    fn benchmark_scoped_thread_snapshot() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        let store = AppStoreReducer::new();
+        for i in 0..1000 {
+            let mut info = make_thread_info(&format!("thread-{i}"));
+            info.title = Some("large session title ".repeat(50));
+            store.upsert_thread_snapshot(ThreadSnapshot::from_info("srv", info));
+        }
+        let key = ThreadKey {
+            server_id: "srv".into(),
+            thread_id: "thread-500".into(),
+        };
+        let start = Instant::now();
+        for _ in 0..200 {
+            black_box(store.snapshot().threads.get(&key).cloned().unwrap());
+        }
+        let global_us = start.elapsed().as_micros();
+        let start = Instant::now();
+        for _ in 0..200 {
+            black_box(store.thread_snapshot(&key).unwrap());
+        }
+        let scoped_us = start.elapsed().as_micros();
+        assert_eq!(store.thread_snapshot(&key).unwrap().info.id, key.thread_id);
+        println!(
+            "snapshot benchmark: threads=1000 reads=200 global_us={global_us} scoped_us={scoped_us}"
+        );
+    }
+
     fn make_thread_info(id: &str) -> ThreadInfo {
         ThreadInfo {
             id: id.to_string(),
@@ -3880,7 +3948,6 @@ mod tests {
             updated_at: None,
         }
     }
-
 
     // ── Derived-state cache invalidation ──────────────────────────────
     //
@@ -4164,7 +4231,10 @@ mod tests {
 
         let big = "x".repeat(200_000);
         let running = base(&big, AppOperationStatus::InProgress);
-        assert_eq!(item_fingerprint(&running), item_fingerprint(&running.clone()));
+        assert_eq!(
+            item_fingerprint(&running),
+            item_fingerprint(&running.clone())
+        );
 
         // Status change after a huge output body: same length, different
         // value — this is what the retained tail window is for.
@@ -5333,24 +5403,6 @@ mod tests {
     }
 
     #[test]
-    fn local_user_message_overlay_ids_are_process_independent() {
-        let inputs = [upstream::UserInput::Text {
-            text: "hello".to_string(),
-            text_elements: Vec::new(),
-        }];
-        let first = local_user_message_overlay_item(&inputs).expect("first overlay");
-        let second = local_user_message_overlay_item(&inputs).expect("second overlay");
-
-        assert_ne!(first.id, second.id);
-        for id in [&first.id, &second.id] {
-            let suffix = id
-                .strip_prefix(LOCAL_USER_MESSAGE_ITEM_PREFIX)
-                .expect("local user message prefix");
-            uuid::Uuid::parse_str(suffix).expect("UUID-backed overlay id");
-        }
-    }
-
-    #[test]
     fn server_backed_user_message_supersedes_local_overlay_after_turn_binding() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
@@ -5460,7 +5512,7 @@ mod tests {
     }
 
     #[test]
-    fn server_backed_user_message_with_client_id_supersedes_unbound_local_overlay() {
+    fn server_backed_user_message_immediately_supersedes_unbound_local_overlay() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
             server_id: "srv".to_string(),
@@ -5469,7 +5521,7 @@ mod tests {
         reducer
             .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
 
-        let overlay_id = reducer
+        reducer
             .stage_local_user_message_overlay(
                 &key,
                 &[upstream::UserInput::Text {
@@ -5482,7 +5534,7 @@ mod tests {
         reducer.apply_item_update(
             &key,
             HydratedConversationItem {
-                id: overlay_id.clone(),
+                id: "server-user-item".to_string(),
                 content: HydratedConversationItemContent::User(
                     crate::conversation_uniffi::HydratedUserMessageData {
                         text: "hello from composer".to_string(),
@@ -5500,7 +5552,7 @@ mod tests {
         let thread = snapshot.threads.get(&key).expect("thread exists");
         assert!(thread.local_overlay_items.is_empty());
         assert_eq!(thread.items.len(), 1);
-        assert_eq!(thread.items[0].id, overlay_id);
+        assert_eq!(thread.items[0].id, "server-user-item");
     }
 
     /// Repro for the duplicate-first-user-message bug surfaced by user
@@ -5553,20 +5605,20 @@ mod tests {
 
         // Step 3: ItemStarted/ItemCompleted with a UserMessage item built via
         // the same `conversation_item_from_upstream` path the event loop uses.
-        // The notification envelope supplies the turn id, so dedupe remains
-        // scoped to this turn instead of matching text across the conversation.
+        // This sets `source_turn_id: None` (events don't carry the turn id)
+        // and exercises the real dedupe surface.
         let mut update_receiver = reducer.subscribe();
         // Drain any prior emits so we observe only the upcoming ones.
         let _ = drain_updates(&mut update_receiver);
 
         let upstream_item = upstream::ThreadItem::UserMessage {
-            id: "server-user-item".to_string(),
             client_id: None,
+            id: "server-user-item".to_string(),
             content: inputs.clone(),
         };
         let server_user_item = crate::store::actions::conversation_item_from_upstream_with_turn(
             upstream_item.clone(),
-            Some("turn-1"),
+            None,
         )
         .expect("hydrate user item");
         reducer.apply_item_update(&key, server_user_item.clone());
@@ -5605,26 +5657,33 @@ mod tests {
         // thread.turns. Build the equivalent ThreadSnapshot via the same
         // helper apply_thread_read_response uses, then upsert.
         let upstream_thread = upstream::Thread {
-            id: "thread-1".to_string(),
+            environments: None,
             extra: None,
+            parent_thread_id: None,
+            section: None,
+            section_entered_at: None,
+            project_id: None,
+            model: None,
+            reasoning_effort: None,
+            recency_at: None,
+            originator: None,
+            can_accept_direct_input: None,
+            daybreak_enabled: None,
+            history_mode: Default::default(),
+            id: "thread-1".to_string(),
             session_id: "session-1".to_string(),
             forked_from_id: None,
-            parent_thread_id: None,
             preview: "run some tools im testing".to_string(),
             ephemeral: false,
-            is_pinned: false,
-            history_mode: Default::default(),
             model_provider: "openai".to_string(),
             created_at: 1,
             updated_at: 2,
-            recency_at: None,
             status: upstream::ThreadStatus::Idle,
             path: Some(std::path::PathBuf::from("/tmp/thread.jsonl")),
             cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked("/tmp")
                 .expect("absolute path"),
             cli_version: "0.125.0".to_string(),
             source: upstream::SessionSource::default(),
-            can_accept_direct_input: None,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -5634,8 +5693,8 @@ mod tests {
                 id: "turn-1".to_string(),
                 status: upstream::TurnStatus::Completed,
                 items: vec![upstream::ThreadItem::UserMessage {
-                    id: "server-user-item".to_string(),
                     client_id: None,
+                    id: "server-user-item".to_string(),
                     content: inputs.clone(),
                 }],
                 items_view: upstream::TurnItemsView::Full,
@@ -5758,15 +5817,13 @@ mod tests {
             server_id: "srv".to_string(),
             thread_id: "thread".to_string(),
         };
-        let item = |id: &str, content: HydratedConversationItemContent| {
-            HydratedConversationItem {
-                id: id.to_string(),
-                content,
-                source_turn_id: None,
-                source_turn_index: None,
-                timestamp: None,
-                is_from_user_turn_boundary: false,
-            }
+        let item = |id: &str, content: HydratedConversationItemContent| HydratedConversationItem {
+            id: id.to_string(),
+            content,
+            source_turn_id: None,
+            source_turn_index: None,
+            timestamp: None,
+            is_from_user_turn_boundary: false,
         };
         let mut live = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
         live.items.push(item(
@@ -5866,7 +5923,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_thread_snapshot_dedupes_matching_client_id_overlay() {
+    fn upsert_thread_snapshot_dedupes_matching_unbound_local_overlay() {
         let reducer = AppStoreReducer::new();
         let key = ThreadKey {
             server_id: "srv".to_string(),
@@ -5874,7 +5931,7 @@ mod tests {
         };
         reducer
             .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
-        let overlay_id = reducer
+        reducer
             .stage_local_user_message_overlay(
                 &key,
                 &[upstream::UserInput::Text {
@@ -5888,7 +5945,7 @@ mod tests {
         incoming
             .items
             .push(crate::conversation_uniffi::HydratedConversationItem {
-                id: overlay_id.clone(),
+                id: "server-user-item".to_string(),
                 content: HydratedConversationItemContent::User(HydratedUserMessageData {
                     text: "hello from composer".to_string(),
                     image_data_uris: Vec::new(),
@@ -5905,7 +5962,7 @@ mod tests {
         let thread = snapshot.threads.get(&key).expect("thread exists");
         assert!(thread.local_overlay_items.is_empty());
         assert_eq!(thread.items.len(), 1);
-        assert_eq!(thread.items[0].id, overlay_id);
+        assert_eq!(thread.items[0].id, "server-user-item");
     }
 
     #[test]
@@ -5963,67 +6020,6 @@ mod tests {
         assert_eq!(thread.active_turn_id.as_deref(), Some("turn-2"));
         assert_eq!(thread.queued_follow_ups.len(), 1);
         assert_eq!(thread.queued_follow_ups[0].id, "queued-2");
-    }
-
-    #[test]
-    fn accepted_steer_is_removed_from_queued_follow_ups_immediately() {
-        let reducer = AppStoreReducer::new();
-        let key = ThreadKey {
-            server_id: "srv".to_string(),
-            thread_id: "thread".to_string(),
-        };
-        reducer
-            .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
-        reducer.enqueue_thread_follow_up_preview(
-            &key,
-            AppQueuedFollowUpPreview {
-                id: "queued-1".to_string(),
-                kind: crate::store::snapshot::AppQueuedFollowUpKind::Message,
-                text: "guide the current turn".to_string(),
-            },
-        );
-        reducer
-            .try_begin_steer_queued_follow_up(&key, "queued-1")
-            .expect("steer begins");
-
-        reducer.finish_steer_queued_follow_up(&key, "queued-1", true);
-
-        let snapshot = reducer.snapshot();
-        let thread = snapshot.threads.get(&key).expect("thread exists");
-        assert!(thread.queued_follow_ups.is_empty());
-        assert!(thread.queued_follow_up_drafts.is_empty());
-    }
-
-    #[test]
-    fn rejected_steer_returns_to_retryable_queue_state() {
-        let reducer = AppStoreReducer::new();
-        let key = ThreadKey {
-            server_id: "srv".to_string(),
-            thread_id: "thread".to_string(),
-        };
-        reducer
-            .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
-        reducer.enqueue_thread_follow_up_preview(
-            &key,
-            AppQueuedFollowUpPreview {
-                id: "queued-1".to_string(),
-                kind: crate::store::snapshot::AppQueuedFollowUpKind::Message,
-                text: "guide the current turn".to_string(),
-            },
-        );
-        reducer
-            .try_begin_steer_queued_follow_up(&key, "queued-1")
-            .expect("steer begins");
-
-        reducer.finish_steer_queued_follow_up(&key, "queued-1", false);
-
-        let snapshot = reducer.snapshot();
-        let thread = snapshot.threads.get(&key).expect("thread exists");
-        assert_eq!(thread.queued_follow_ups.len(), 1);
-        assert_eq!(
-            thread.queued_follow_ups[0].kind,
-            crate::store::snapshot::AppQueuedFollowUpKind::Message
-        );
     }
 
     #[test]
@@ -6268,7 +6264,8 @@ mod tests {
                 timestamp: None,
                 is_from_user_turn_boundary: false,
             },
-        ].into();
+        ]
+        .into();
         reducer.upsert_thread_snapshot(existing);
 
         let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
@@ -6299,7 +6296,8 @@ mod tests {
                 timestamp: None,
                 is_from_user_turn_boundary: false,
             },
-        ].into();
+        ]
+        .into();
 
         let mut receiver = reducer.subscribe();
         assert!(drain_updates(&mut receiver).is_empty());
@@ -6335,7 +6333,8 @@ mod tests {
             source_turn_index: Some(1),
             timestamp: None,
             is_from_user_turn_boundary: false,
-        }].into();
+        }]
+        .into();
         reducer.upsert_thread_snapshot(existing);
 
         let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
@@ -6351,7 +6350,8 @@ mod tests {
             source_turn_index: Some(1),
             timestamp: None,
             is_from_user_turn_boundary: false,
-        }].into();
+        }]
+        .into();
 
         let mut receiver = reducer.subscribe();
         assert!(drain_updates(&mut receiver).is_empty());
@@ -6592,6 +6592,105 @@ mod tests {
         assert!(entry_b.buffer.contains("BBB"));
         assert_eq!(entry_a.item_id, "item-A");
         assert_eq!(entry_b.item_id, "item-B");
+    }
+
+    // Fork-added plan-mode persistence tests (issue #100).
+
+    fn plan_item(item_id: &str, turn_id: &str) -> HydratedConversationItem {
+        HydratedConversationItem {
+            id: item_id.to_string(),
+            content: HydratedConversationItemContent::ProposedPlan(HydratedProposedPlanData {
+                content: "plan".to_string(),
+            }),
+            source_turn_id: Some(turn_id.to_string()),
+            source_turn_index: None,
+            timestamp: None,
+            is_from_user_turn_boundary: false,
+        }
+    }
+
+    fn user_item(item_id: &str, turn_id: &str) -> HydratedConversationItem {
+        HydratedConversationItem {
+            id: item_id.to_string(),
+            content: HydratedConversationItemContent::User(HydratedUserMessageData {
+                text: "next turn".to_string(),
+                image_data_uris: Vec::new(),
+            }),
+            source_turn_id: Some(turn_id.to_string()),
+            source_turn_index: None,
+            timestamp: None,
+            is_from_user_turn_boundary: true,
+        }
+    }
+
+    #[test]
+    fn upsert_thread_snapshot_restores_plan_prompt_from_history() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        let mut thread = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        thread.collaboration_mode = AppModeKind::Plan;
+        thread.items.push(plan_item("plan", "turn-plan"));
+
+        reducer.upsert_thread_snapshot(thread);
+
+        assert_eq!(
+            reducer
+                .thread_snapshot(&key)
+                .unwrap()
+                .pending_plan_implementation_turn_id
+                .as_deref(),
+            Some("turn-plan")
+        );
+    }
+
+    #[test]
+    fn upsert_thread_snapshot_does_not_restore_dismissed_plan_prompt() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        let mut thread = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        thread.collaboration_mode = AppModeKind::Plan;
+        thread.items.push(plan_item("plan", "turn-plan"));
+        reducer.upsert_thread_snapshot(thread.clone());
+        reducer.dismiss_plan_implementation_prompt(&key);
+
+        reducer.upsert_thread_snapshot(thread);
+
+        assert_eq!(
+            reducer
+                .thread_snapshot(&key)
+                .unwrap()
+                .pending_plan_implementation_turn_id,
+            None
+        );
+    }
+
+    #[test]
+    fn upsert_thread_snapshot_does_not_restore_old_plan_prompt_after_user_turn() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        let mut thread = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        thread.collaboration_mode = AppModeKind::Plan;
+        thread.items.push(plan_item("plan", "turn-plan"));
+        thread.items.push(user_item("user", "turn-user"));
+
+        reducer.upsert_thread_snapshot(thread);
+
+        assert_eq!(
+            reducer
+                .thread_snapshot(&key)
+                .unwrap()
+                .pending_plan_implementation_turn_id,
+            None
+        );
     }
 }
 

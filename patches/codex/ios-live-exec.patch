@@ -1,0 +1,675 @@
+diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
+index af644709f..9ebb2ab3c 100644
+--- a/codex-rs/core/src/exec.rs
++++ b/codex-rs/core/src/exec.rs
+@@ -7,6 +7,16 @@ use std::io;
+ use std::path::Path;
+ use std::path::PathBuf;
+ use std::process::ExitStatus;
++#[cfg(target_os = "ios")]
++use std::future::Future;
++#[cfg(target_os = "ios")]
++use std::pin::Pin;
++#[cfg(target_os = "ios")]
++use std::sync::Mutex;
++#[cfg(target_os = "ios")]
++use std::sync::atomic::AtomicBool;
++#[cfg(target_os = "ios")]
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ use std::time::Instant;
+
+@@ -15,6 +25,8 @@ use tokio::io::AsyncRead;
+ use tokio::io::AsyncReadExt;
+ use tokio::io::BufReader;
+ use tokio::process::Child;
++#[cfg(target_os = "ios")]
++use tokio::sync::Notify;
+ use tokio_util::sync::CancellationToken;
+
+ use crate::sandboxing::ExecOptions;
+@@ -63,10 +75,123 @@ use std::sync::Arc;
+ #[cfg(any(target_os = "ios", target_os = "android"))]
+ use std::sync::OnceLock;
+
++/// Per-invocation cancellation for iOS exec hooks.
++#[cfg(target_os = "ios")]
++#[derive(Clone)]
++pub struct IosExecCancel {
++    inner: Arc<IosExecCancelInner>,
++}
++
++#[cfg(target_os = "ios")]
++struct IosExecCancelInner {
++    cancelled: AtomicBool,
++    notify: Notify,
++    on_cancel: Mutex<Option<Arc<dyn Fn() + Send + Sync + 'static>>>,
++}
++
++#[cfg(target_os = "ios")]
++impl IosExecCancel {
++    pub fn new() -> Self {
++        Self {
++            inner: Arc::new(IosExecCancelInner {
++                cancelled: AtomicBool::new(false),
++                notify: Notify::new(),
++                on_cancel: Mutex::new(None),
++            }),
++        }
++    }
++
++    pub fn is_cancelled(&self) -> bool {
++        self.inner.cancelled.load(Ordering::SeqCst)
++    }
++
++    pub fn cancel(&self) {
++        self.inner.cancelled.store(true, Ordering::SeqCst);
++        self.inner.notify.notify_waiters();
++        self.fire_on_cancel();
++    }
++
++    pub fn drop_guard(&self) -> IosExecCancelGuard {
++        IosExecCancelGuard {
++            cancel: self.clone(),
++            armed: true,
++        }
++    }
++
++    pub fn set_on_cancel(&self, callback: impl Fn() + Send + Sync + 'static) {
++        if let Ok(mut guard) = self.inner.on_cancel.lock() {
++            *guard = Some(Arc::new(callback));
++        }
++        if self.is_cancelled() {
++            self.fire_on_cancel();
++        }
++    }
++
++    pub fn clear_on_cancel(&self) {
++        if let Ok(mut guard) = self.inner.on_cancel.lock() {
++            *guard = None;
++        }
++    }
++
++    pub async fn cancelled(&self) {
++        if self.is_cancelled() {
++            return;
++        }
++        let notified = self.inner.notify.notified();
++        if self.is_cancelled() {
++            return;
++        }
++        notified.await;
++        while !self.is_cancelled() {
++            self.inner.notify.notified().await;
++        }
++    }
++
++    fn fire_on_cancel(&self) {
++        let callback = self
++            .inner
++            .on_cancel
++            .lock()
++            .ok()
++            .and_then(|mut guard| guard.take());
++        if let Some(callback) = callback {
++            callback();
++        }
++    }
++}
++
++#[cfg(target_os = "ios")]
++pub struct IosExecCancelGuard {
++    cancel: IosExecCancel,
++    armed: bool,
++}
++
++#[cfg(target_os = "ios")]
++impl IosExecCancelGuard {
++    pub fn disarm(&mut self) {
++        self.armed = false;
++    }
++}
++
++#[cfg(target_os = "ios")]
++impl Drop for IosExecCancelGuard {
++    fn drop(&mut self) {
++        if self.armed {
++            self.cancel.cancel();
++        }
++    }
++}
++
+ /// Pluggable executor for platforms that cannot fork/exec (e.g. iOS).
+ #[cfg(target_os = "ios")]
+ pub(crate) static IOS_EXEC_HOOK: OnceLock<
+-    fn(&[String], &Path, &HashMap<String, String>, Option<u64>) -> (i32, Vec<u8>),
++    fn(
++        &[String],
++        &Path,
++        &HashMap<String, String>,
++        Option<u64>,
++        &IosExecCancel,
++    ) -> (i32, Vec<u8>),
+ > = OnceLock::new();
+
+ #[cfg(target_os = "ios")]
+@@ -80,13 +205,20 @@ pub(crate) static IOS_STREAMING_EXEC_HOOK: OnceLock<
+         &HashMap<String, String>,
+         Option<u64>,
+         IosExecOutputHandler,
++        &IosExecCancel,
+     ) -> (i32, Vec<u8>),
+ > = OnceLock::new();
+
+ /// Register the iOS exec hook before starting the server.
+ #[cfg(target_os = "ios")]
+ pub fn set_ios_exec_hook(
+-    f: fn(&[String], &Path, &HashMap<String, String>, Option<u64>) -> (i32, Vec<u8>),
++    f: fn(
++        &[String],
++        &Path,
++        &HashMap<String, String>,
++        Option<u64>,
++        &IosExecCancel,
++    ) -> (i32, Vec<u8>),
+ ) {
+     let _ = IOS_EXEC_HOOK.set(f);
+ }
+@@ -101,11 +233,77 @@ pub fn set_ios_streaming_exec_hook(
+         &HashMap<String, String>,
+         Option<u64>,
+         IosExecOutputHandler,
++        &IosExecCancel,
+     ) -> (i32, Vec<u8>),
+ ) {
+     let _ = IOS_STREAMING_EXEC_HOOK.set(f);
+ }
+
++#[cfg(target_os = "ios")]
++#[derive(Debug, Clone, Default)]
++pub struct IosLiveRead {
++    pub chunks: Vec<(u64, Vec<u8>)>,
++    pub next_seq: u64,
++    pub exited: bool,
++    pub exit_code: Option<i32>,
++    pub closed: bool,
++    pub failure: Option<String>,
++}
++
++#[cfg(target_os = "ios")]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum IosLiveWriteStatus {
++    Accepted,
++    Starting,
++    StdinClosed,
++    UnknownSession,
++}
++
++#[cfg(target_os = "ios")]
++pub trait IosLiveExecProcess: Send + Sync {
++    fn read(
++        &self,
++        after_seq: Option<u64>,
++        max_bytes: Option<usize>,
++        wait_ms: Option<u64>,
++    ) -> Pin<Box<dyn Future<Output = std::result::Result<IosLiveRead, String>> + Send + '_>>;
++
++    fn write(
++        &self,
++        data: Vec<u8>,
++    ) -> Pin<
++        Box<dyn Future<Output = std::result::Result<IosLiveWriteStatus, String>> + Send + '_>,
++    >;
++
++    fn signal(
++        &self,
++        signum: i32,
++    ) -> Pin<Box<dyn Future<Output = std::result::Result<(), String>> + Send + '_>>;
++
++    fn terminate(&self) -> Pin<Box<dyn Future<Output = std::result::Result<(), String>> + Send + '_>>;
++}
++
++#[cfg(target_os = "ios")]
++pub type IosLiveExecSpawnHook = fn(
++    command: &[String],
++    cwd: &Path,
++    env: &HashMap<String, String>,
++    tty: bool,
++) -> std::result::Result<Arc<dyn IosLiveExecProcess>, String>;
++
++#[cfg(target_os = "ios")]
++pub(crate) static IOS_LIVE_EXEC_SPAWN_HOOK: OnceLock<IosLiveExecSpawnHook> = OnceLock::new();
++
++#[cfg(target_os = "ios")]
++pub fn set_ios_live_exec_spawn_hook(hook: IosLiveExecSpawnHook) {
++    let _ = IOS_LIVE_EXEC_SPAWN_HOOK.set(hook);
++}
++
++#[cfg(target_os = "ios")]
++pub(crate) fn ios_live_exec_spawn_hook() -> Option<IosLiveExecSpawnHook> {
++    IOS_LIVE_EXEC_SPAWN_HOOK.get().copied()
++}
++
+ /// Resolve a CLI tool name (e.g. "git") to an absolute path on Android.
+ ///
+ /// Android's app sandbox can fork/exec freely, but the only writable+executable
+@@ -1015,9 +1213,10 @@ async fn exec(
+         } else {
+             None
+         };
++        let cancel = IosExecCancel::new();
+         let (code, data) = IOS_EXEC_HOOK
+             .get()
+-            .map(|f| f(&command, &cwd, &env, timeout_ms))
++            .map(|f| f(&command, &cwd, &env, timeout_ms, &cancel))
+             .unwrap_or_else(|| {
+                 (
+                     -1,
+diff --git a/codex-rs/core/src/unified_exec/process.rs b/codex-rs/core/src/unified_exec/process.rs
+index 27e21f716..7c993fb75 100644
+--- a/codex-rs/core/src/unified_exec/process.rs
++++ b/codex-rs/core/src/unified_exec/process.rs
+@@ -29,6 +29,12 @@ use codex_utils_pty::ExecCommandSession;
+ use codex_utils_pty::ProcessSignal as PtyProcessSignal;
+ use codex_utils_pty::SpawnedPty;
+
++#[cfg(target_os = "ios")]
++use crate::exec::IosLiveExecProcess;
++#[cfg(target_os = "ios")]
++use crate::exec::IosLiveRead;
++#[cfg(target_os = "ios")]
++use crate::exec::IosLiveWriteStatus;
+ use super::UNIFIED_EXEC_OUTPUT_MAX_BYTES;
+ use super::UNIFIED_EXEC_OUTPUT_MAX_TOKENS;
+ use super::UnifiedExecError;
+@@ -37,6 +43,8 @@ use super::process_state::ProcessState;
+ use crate::shell_snapshot::ShellSnapshotFile;
+
+ const EARLY_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(150);
++#[cfg(target_os = "ios")]
++const SIGINT_SIGNUM: i32 = 2;
+ pub(crate) trait SpawnLifecycle: std::fmt::Debug + Send + Sync {
+     /// Returns file descriptors that must stay open across the child `exec()`.
+     ///
+@@ -84,6 +92,8 @@ impl Drop for OutputTaskGuard {
+ enum ProcessHandle {
+     Local(Box<ExecCommandSession>),
+     ExecServer(Arc<dyn ExecProcess>),
++    #[cfg(target_os = "ios")]
++    IosLive(Arc<dyn IosLiveExecProcess>),
+ }
+
+ /// Unified wrapper over directly spawned PTY sessions and exec-server-backed
+@@ -169,6 +179,20 @@ impl UnifiedExecProcess {
+                     Err(err) => Err(UnifiedExecError::process_failed(err.to_string())),
+                 }
+             }
++            #[cfg(target_os = "ios")]
++            ProcessHandle::IosLive(process_handle) => {
++                match process_handle.write(data.to_vec()).await {
++                    Ok(IosLiveWriteStatus::Accepted) => Ok(()),
++                    Ok(IosLiveWriteStatus::UnknownSession | IosLiveWriteStatus::StdinClosed) => {
++                        let state = self.state_rx.borrow().clone();
++                        let _ = self.state_tx.send_replace(state.exited(state.exit_code));
++                        self.output.cancellation_token.cancel();
++                        Err(UnifiedExecError::WriteToStdin)
++                    }
++                    Ok(IosLiveWriteStatus::Starting) => Err(UnifiedExecError::WriteToStdin),
++                    Err(err) => Err(UnifiedExecError::process_failed(err)),
++                }
++            }
+         }
+     }
+
+@@ -197,6 +221,8 @@ impl UnifiedExecProcess {
+         match &self.process_handle {
+             ProcessHandle::Local(process_handle) => state.has_exited || process_handle.has_exited(),
+             ProcessHandle::ExecServer(_) => state.has_exited,
++            #[cfg(target_os = "ios")]
++            ProcessHandle::IosLive(_) => state.has_exited,
+         }
+     }
+
+@@ -210,6 +236,8 @@ impl UnifiedExecProcess {
+                 state.exit_code.or_else(|| process_handle.exit_code())
+             }
+             ProcessHandle::ExecServer(_) => state.exit_code,
++            #[cfg(target_os = "ios")]
++            ProcessHandle::IosLive(_) => state.exit_code,
+         }
+     }
+
+@@ -237,6 +265,13 @@ impl UnifiedExecProcess {
+                     let _ = process_handle.terminate().await;
+                 });
+             }
++            #[cfg(target_os = "ios")]
++            ProcessHandle::IosLive(process_handle) => {
++                let process_handle = Arc::clone(process_handle);
++                tokio::spawn(async move {
++                    let _ = process_handle.terminate().await;
++                });
++            }
+         }
+         self.finish_termination();
+     }
+@@ -250,6 +285,13 @@ impl UnifiedExecProcess {
+                     .await
+                     .map_err(|err| UnifiedExecError::process_failed(err.to_string()))?;
+             }
++            #[cfg(target_os = "ios")]
++            ProcessHandle::IosLive(process_handle) => {
++                process_handle
++                    .terminate()
++                    .await
++                    .map_err(UnifiedExecError::process_failed)?;
++            }
+         }
+         self.signal_exit(self.exit_code());
+         self.finish_termination();
+@@ -265,6 +307,11 @@ impl UnifiedExecProcess {
+                 .signal(ExecServerProcessSignal::Interrupt)
+                 .await
+                 .map_err(|err| UnifiedExecError::process_failed(err.to_string())),
++            #[cfg(target_os = "ios")]
++            ProcessHandle::IosLive(process_handle) => process_handle
++                .signal(SIGINT_SIGNUM)
++                .await
++                .map_err(UnifiedExecError::process_failed),
+         }
+     }
+
+@@ -434,6 +481,119 @@ impl UnifiedExecProcess {
+         Ok(managed)
+     }
+
++    #[cfg(target_os = "ios")]
++    pub(super) async fn from_ios_live(
++        process: Arc<dyn IosLiveExecProcess>,
++    ) -> Result<Self, UnifiedExecError> {
++        let process_handle = ProcessHandle::IosLive(Arc::clone(&process));
++        let mut managed = Self::new(
++            process_handle,
++            SandboxType::None,
++            /*spawn_lifecycle*/ None,
++        );
++        let output_handles = managed.output_handles().clone();
++        managed.output_task = Some(Self::spawn_ios_live_output_task(
++            process,
++            output_handles,
++            managed.output_tx.clone(),
++            managed.state_tx.clone(),
++        ));
++
++        let mut state_rx = managed.state_rx.clone();
++        if tokio::time::timeout(EARLY_EXIT_GRACE_PERIOD, async {
++            loop {
++                let state = state_rx.borrow().clone();
++                if state.has_exited || state.failure_message.is_some() {
++                    break;
++                }
++                if state_rx.changed().await.is_err() {
++                    break;
++                }
++            }
++        })
++        .await
++        .is_ok()
++        {
++            managed.check_for_sandbox_denial().await?;
++        }
++
++        Ok(managed)
++    }
++
++    #[cfg(target_os = "ios")]
++    fn spawn_ios_live_output_task(
++        process: Arc<dyn IosLiveExecProcess>,
++        output_handles: OutputHandles,
++        output_tx: broadcast::Sender<Vec<u8>>,
++        state_tx: watch::Sender<ProcessState>,
++    ) -> JoinHandle<()> {
++        let OutputHandles {
++            output_buffer,
++            output_notify,
++            output_closed,
++            output_closed_notify,
++            cancellation_token,
++        } = output_handles;
++        tokio::spawn(async move {
++            let _output_task_guard = OutputTaskGuard {
++                output_closed: Arc::clone(&output_closed),
++                output_closed_notify: Arc::clone(&output_closed_notify),
++            };
++            let mut last_seq: u64 = 0;
++            loop {
++                let read = tokio::select! {
++                    _ = cancellation_token.cancelled() => {
++                        let _ = process.terminate().await;
++                        break;
++                    }
++                    read = process.read(Some(last_seq), None, Some(250)) => read,
++                };
++                let IosLiveRead {
++                    chunks,
++                    next_seq,
++                    exited,
++                    exit_code,
++                    closed,
++                    failure,
++                } = match read {
++                    Ok(read) => read,
++                    Err(err) => {
++                        let state = state_tx.borrow().clone();
++                        let _ = state_tx.send_replace(state.failed(err));
++                        cancellation_token.cancel();
++                        break;
++                    }
++                };
++                for (seq, bytes) in chunks {
++                    if seq <= last_seq {
++                        continue;
++                    }
++                    last_seq = seq;
++                    let mut guard = output_buffer.lock().await;
++                    guard.push_chunk(&bytes);
++                    drop(guard);
++                    let _ = output_tx.send(bytes);
++                    output_notify.notify_waiters();
++                }
++                last_seq = last_seq.max(next_seq.saturating_sub(1));
++                if let Some(message) = failure {
++                    let state = state_tx.borrow().clone();
++                    let _ = state_tx.send_replace(state.failed(message));
++                    cancellation_token.cancel();
++                    break;
++                }
++                if exited {
++                    let state = state_tx.borrow().clone();
++                    let _ = state_tx.send_replace(state.exited(exit_code));
++                }
++                if closed {
++                    cancellation_token.cancel();
++                    break;
++                }
++            }
++        })
++    }
++
+     fn spawn_exec_server_output_task(
+         started: StartedExecProcess,
+         output_handles: OutputHandles,
+diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
+index d69938f9c..f48da6cb6 100644
+--- a/codex-rs/core/src/unified_exec/process_manager.rs
++++ b/codex-rs/core/src/unified_exec/process_manager.rs
+@@ -55,8 +55,6 @@ use crate::unified_exec::UnifiedExecError;
+ use crate::unified_exec::UnifiedExecProcessManager;
+ use crate::unified_exec::WriteStdinInteractionEvent;
+ use crate::unified_exec::WriteStdinRequest;
+-#[cfg(target_os = "ios")]
+-use crate::unified_exec::async_watcher::Buffer;
+ use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
+ use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
+ use crate::unified_exec::async_watcher::spawn_exit_watcher;
+@@ -503,11 +501,6 @@ impl UnifiedExecProcessManager {
+         mut completion: Option<&mut Completion<'_>>,
+     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+         let cwd = request.cwd.clone();
+-        #[cfg(target_os = "ios")]
+-        {
+-            return self.exec_command_ios(&request, cwd, context).await;
+-        }
+-        #[allow(unreachable_code)]
+         let process = self
+             .open_session_with_sandbox(&request, cwd.clone(), context)
+             .await;
+@@ -821,123 +814,6 @@ impl UnifiedExecProcessManager {
+         Ok(response)
+     }
+
+-    #[cfg(target_os = "ios")]
+-    async fn exec_command_ios(
+-        &self,
+-        request: &ExecCommandRequest,
+-        cwd: PathUri,
+-        context: &UnifiedExecContext,
+-    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+-        use crate::exec::IOS_EXEC_HOOK;
+-        use crate::exec::IOS_STREAMING_EXEC_HOOK;
+-        use crate::exec::IosExecOutputHandler;
+-        use crate::exec::MOBILE_EXEC_PREFLIGHT;
+-
+-        let event_ctx = ToolEventCtx::new(
+-            context.session.as_ref(),
+-            context.step_context.turn.as_ref(),
+-            &context.step_context.settings.model_info,
+-            &context.call_id,
+-            None,
+-        );
+-        let emitter = ToolEmitter::unified_exec(
+-            &request.command,
+-            cwd.clone(),
+-            ExecCommandSource::UnifiedExecStartup,
+-            Some(request.process_id.to_string()),
+-            None,
+-        );
+-        emitter.emit(event_ctx, ToolEventStage::Begin).await;
+-
+-        let env = create_env(
+-            request.turn_environment.shell_environment_policy(),
+-            Some(context.session.thread_id),
+-        );
+-        let start = Instant::now();
+-        let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
+-        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+-        let output_handler: IosExecOutputHandler = Arc::new(move |chunk| {
+-            let _ = chunk_tx.send(chunk);
+-        });
+-        let local_cwd = cwd
+-            .to_abs_path()
+-            .map_err(|error| UnifiedExecError::process_failed(error.to_string()))?;
+-        let mut join = tokio::task::spawn_blocking({
+-            let mut command = request.command.clone();
+-            let cwd = local_cwd;
+-            let output_handler = Arc::clone(&output_handler);
+-            move || {
+-                if let Some(preflight) = MOBILE_EXEC_PREFLIGHT.get() {
+-                    preflight(&mut command);
+-                }
+-                if let Some(streaming_hook) = IOS_STREAMING_EXEC_HOOK.get() {
+-                    streaming_hook(&command, &cwd, &env, None, output_handler)
+-                } else {
+-                    IOS_EXEC_HOOK
+-                        .get()
+-                        .map(|f| f(&command, &cwd, &env, None))
+-                        .unwrap_or((-1, b"no iOS exec hook registered\n".to_vec()))
+-                }
+-            }
+-        });
+-
+-        let mut output = Buffer::for_mobile(context, Arc::clone(&transcript));
+-        let (exit_code, raw_output) = loop {
+-            tokio::select! {
+-                Some(chunk) = chunk_rx.recv() => output.push(chunk).await,
+-                result = &mut join => {
+-                    break result.unwrap_or((-1, b"spawn_blocking panicked\n".to_vec()));
+-                }
+-            }
+-        };
+-        while let Ok(chunk) = chunk_rx.try_recv() {
+-            output.push(chunk).await;
+-        }
+-        output.finish().await;
+-        let wall_time = Instant::now().saturating_duration_since(start);
+-
+-        let text = String::from_utf8_lossy(&raw_output).to_string();
+-        emit_exec_end_for_unified_exec(
+-            Arc::clone(&context.session),
+-            Arc::clone(&context.step_context.turn),
+-            Arc::clone(&context.step_context.settings.model_info),
+-            context.call_id.clone(),
+-            request.command.clone(),
+-            cwd,
+-            Some(request.process_id.to_string()),
+-            None,
+-            transcript,
+-            text.clone(),
+-            exit_code,
+-            wall_time,
+-            false,
+-        )
+-        .await;
+-
+-        self.release_process_id(request.process_id).await;
+-
+-        let original_token_count =
+-            usize::try_from(approx_tokens_from_byte_count(raw_output.len())).unwrap_or(usize::MAX);
+-        Ok(ExecCommandToolOutput {
+-            event_call_id: context.call_id.clone(),
+-            chunk_id: generate_chunk_id(),
+-            wall_time,
+-            raw_output,
+-            truncation_policy: context
+-                .step_context
+-                .settings
+-                .model_info
+-                .truncation_policy
+-                .into(),
+-            output_omitted_bytes: None,
+-            max_output_tokens: request.max_output_tokens,
+-            process_id: None,
+-            exit_code: Some(exit_code),
+-            original_token_count: Some(original_token_count),
+-            hook_command: Some(request.hook_command.clone()),
+-        })
+-    }
+-
+     pub(crate) async fn write_stdin(
+         &self,
+         context: &UnifiedExecContext,
+@@ -1410,6 +1286,24 @@ impl UnifiedExecProcessManager {
+             return UnifiedExecProcess::from_exec_server_started(started).await;
+         }
+
++        #[cfg(target_os = "ios")]
++        if let Some(hook) = crate::exec::ios_live_exec_spawn_hook() {
++            let native_cwd = request
++                .cwd
++                .to_abs_path()
++                .map_err(|_| UnifiedExecError::ForeignPath {
++                    path: request.cwd.clone(),
++                })?;
++            let mut command = request.command.clone();
++            if let Some(preflight) = crate::exec::MOBILE_EXEC_PREFLIGHT.get() {
++                preflight(&mut command);
++            }
++            let live = hook(&command, native_cwd.as_path(), &request.env, tty)
++                .map_err(UnifiedExecError::create_process)?;
++            spawn_lifecycle.after_spawn();
++            return UnifiedExecProcess::from_ios_live(live).await;
++        }
++
+         // TODO(anp): Keep PathUri through the local PTY/process launch boundary.
+         let native_cwd = request
+             .cwd

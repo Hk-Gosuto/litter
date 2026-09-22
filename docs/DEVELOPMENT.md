@@ -65,8 +65,11 @@ app.
      'command -v codex || command -v codex-app-server'
    ```
 
-   If the second command prints nothing, install Codex and/or fix shell PATH
-   startup files.
+   If the second command prints nothing, install Codex in a standard tool directory or expose it in the SSH
+   session PATH. Background setup does not execute shell startup files: those
+   can open desktop windows or block on interactive prompts. User-local
+   `.local/bin`, Cargo, Bun, Node managers, Homebrew and Nix paths are
+   discovered directly.
 
 3. Connect from the Litter app.
 
@@ -145,11 +148,12 @@ xcodebuild \
 
 ## Build and Run Android
 
-Prerequisites: Java 17 or newer, Android SDK + build tools for API 36, and the
-checked-in Gradle 9 wrapper. The Rust/JNI lane also requires the Android NDK
+Prerequisites: Node 24 (for Material3 theme generation), Java 17 or newer,
+Android SDK + build tools for API 36, and the checked-in Gradle 9 wrapper. The Rust/JNI lane also requires the Android NDK
 and `cargo-ndk`.
 
 ```bash
+make material-schemes                  # generate theme sources before standalone Gradle/Android Studio builds
 open -a "Android Studio" apps/android  # open in Android Studio
 make test-android                      # generate bindings and run unit tests
 make android                           # full Rust/JNI + debug APK pipeline

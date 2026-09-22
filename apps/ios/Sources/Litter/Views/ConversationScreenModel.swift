@@ -96,7 +96,6 @@ final class ConversationScreenModel {
     private(set) var transcript: ConversationTranscriptSnapshot = .empty
     private(set) var pinnedContextItems: [ConversationItem] = []
     private(set) var composer: ConversationComposerSnapshot = .empty
-    private(set) var followScrollToken = 0
     private(set) var minigameOverlay: MinigameOverlayState = .idle
     /// Precomputed server snapshot for the current thread's server. Read by
     /// HeaderView and ConversationToolbarControls via param instead of
@@ -136,6 +135,7 @@ final class ConversationScreenModel {
     @ObservationIgnored private var cachedHydratedConversationItems: [HydratedConversationItem] = []
     @ObservationIgnored private var cachedProjectedConversationItems: [ConversationItem] = []
     @ObservationIgnored private var transcriptRevision: Int = 0
+    @ObservationIgnored private var projectedRevision: UInt64?
     @ObservationIgnored private var minigameTask: Task<Void, Never>?
 
     func bind(
@@ -152,11 +152,11 @@ final class ConversationScreenModel {
         self.agentDirectoryVersion = agentDirectoryVersion
 
         if threadChanged {
-            followScrollToken = 0
             cachedHydratedConversationItems = []
             cachedConversationItemProjections = [:]
             cachedProjectedConversationItems = []
             transcriptRevision = 0
+            projectedRevision = nil
             minigameTask?.cancel()
             minigameTask = nil
             minigameOverlay = .idle
@@ -173,7 +173,6 @@ final class ConversationScreenModel {
             transcript = .empty
             pinnedContextItems = []
             composer = .empty
-            followScrollToken = 0
             resolveTargetLabel = { _ in nil }
             resolveThreadKey = { _ in nil }
             resolveLiveStatus = { _ in nil }
@@ -303,20 +302,12 @@ final class ConversationScreenModel {
             agentDirectoryVersion: agentDirectoryVersion,
             renderDigest: transcriptChanged ? transcriptRevision : currentTranscript.renderDigest
         )
-        var nextFollowScrollToken = followScrollToken
-        if hasTurnInFlight,
-           projection.didChange {
-            nextFollowScrollToken &+= 1
-        }
         if transcript != nextTranscript {
             transcript = nextTranscript
             pinnedContextItems = items
         }
         if composer != composerSnapshot {
             composer = composerSnapshot
-        }
-        if followScrollToken != nextFollowScrollToken {
-            followScrollToken = nextFollowScrollToken
         }
     }
 }
@@ -391,7 +382,30 @@ private struct ProjectedConversationItemsResult {
 private extension ConversationScreenModel {
     func projectConversationItems(from hydratedItems: [HydratedConversationItem]) -> ProjectedConversationItemsResult {
         let previousHydratedItems = cachedHydratedConversationItems
+        let revision = appModel?.snapshotRevision
+
+        // Cheap change signals first — the deep equality walk over the whole
+        // hydrated array is the most expensive part of `refreshState`, and it
+        // re-ran on every coalesced snapshot bump (~8 fps while streaming)
+        // plus on duplicate binds (the revision and composerPrefillRequest
+        // onChange handlers both call `bindScreenModel`).
+        //
+        // 1. Same snapshot revision as the last projection: the snapshot only
+        //    changes when the revision bumps, so the arrays are identical.
+        // 2. Item count / last item id: appends and truncations are detected
+        //    in O(1). Only when all cheap signals agree do we fall back to
+        //    deep equality.
+        if let revision, revision == projectedRevision,
+           previousHydratedItems.count == hydratedItems.count,
+           previousHydratedItems.last?.id == hydratedItems.last?.id {
+            return ProjectedConversationItemsResult(
+                items: cachedProjectedConversationItems,
+                didChange: false
+            )
+        }
+
         if previousHydratedItems == hydratedItems {
+            projectedRevision = revision
             return ProjectedConversationItemsResult(
                 items: cachedProjectedConversationItems,
                 didChange: false
@@ -463,6 +477,7 @@ private extension ConversationScreenModel {
         cachedHydratedConversationItems = hydratedItems
         cachedConversationItemProjections = nextCache
         cachedProjectedConversationItems = projectedItems
+        projectedRevision = revision
         return ProjectedConversationItemsResult(items: projectedItems, didChange: true)
     }
 

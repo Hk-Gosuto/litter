@@ -108,6 +108,11 @@ final class AppModel {
         let text: String
     }
 
+    struct SshHostKeyChangeChallenge: Equatable {
+        let serverId: String
+        let fingerprint: String
+    }
+
     let store: AppStore
     let client: AppClient
     let serverBridge: ServerBridge
@@ -131,10 +136,11 @@ final class AppModel {
     private(set) var snapshotRevision: UInt64 = 0
     private(set) var lastError: String?
     private(set) var composerPrefillRequest: ComposerPrefillRequest?
+    private(set) var sshHostKeyChangeChallenge: SshHostKeyChangeChallenge?
 
     @ObservationIgnored private var subscription: AppStoreSubscription?
     @ObservationIgnored private var updateTask: Task<Void, Never>?
-    @ObservationIgnored private var loadingModelServerIds: Set<String> = []
+    @ObservationIgnored private var loadingModelServerIds: [String: Int] = [:]
     @ObservationIgnored private var modelCatalogErrorsByServer: [String: String] = [:]
     @ObservationIgnored private var loadingRateLimitServerIds: Set<String> = []
     @ObservationIgnored private var pendingThreadRefreshKeys: Set<ThreadKey> = []
@@ -166,6 +172,20 @@ final class AppModel {
         pendingHandoffTurnErrors.removeValue(forKey: key)
     }
 
+    func recordSshHostKeyChange(serverId: String, errorMessage: String?) {
+        guard let errorMessage,
+              let challenge = decodeSshHostKeyChallenge(message: errorMessage),
+              challenge.isChanged else { return }
+        sshHostKeyChangeChallenge = SshHostKeyChangeChallenge(
+            serverId: serverId,
+            fingerprint: challenge.fingerprint
+        )
+    }
+
+    func clearSshHostKeyChange() {
+        sshHostKeyChangeChallenge = nil
+    }
+
     init(
         store: AppStore? = nil,
         client: AppClient? = nil,
@@ -180,11 +200,16 @@ final class AppModel {
         self.ssh = ssh ?? bridges.ssh
         self.reconnectController = reconnectController ?? bridges.reconnectController
 
+        let sshTrustStore = TerminalSshTrustStore(backend: SwiftSshTrustBackend.shared)
+        self.serverBridge.setSshTrustStore(store: sshTrustStore)
+        self.reconnectController.setSshTrustStore(store: sshTrustStore)
+
         // Register the saved-apps directory with the Rust client so the
         // dynamic-tool finalize hook can auto-upsert on `show_widget` calls.
         // Without this, auto-save silently no-ops.
         self.client.setSavedAppsDirectory(directory: SavedAppsDirectory.path)
         self.client.setSlingshotCredentialsDirectory(directory: MobilePreferencesDirectory.path)
+        self.client.setMobilePreferencesDirectory(directory: MobilePreferencesDirectory.path)
 
         // Route Swift presentation lookups through the Rust-owned
         // `AgentMetadataStore`. Any view rendering an agent label /
@@ -2067,10 +2092,16 @@ final class AppModel {
 
     func loadAvailableModelsIfNeeded(serverId: String, force: Bool = false) async {
         guard let server = snapshot?.serverSnapshot(for: serverId), server.isConnected else { return }
-        guard force || server.availableModels == nil else { return }
-        guard !loadingModelServerIds.contains(serverId) else { return }
-        loadingModelServerIds.insert(serverId)
-        defer { loadingModelServerIds.remove(serverId) }
+        guard force || client.modelsNeedRefresh(serverId: serverId) else { return }
+        guard force || loadingModelServerIds[serverId, default: 0] == 0 else { return }
+        loadingModelServerIds[serverId, default: 0] += 1
+        defer {
+            if loadingModelServerIds[serverId, default: 0] <= 1 {
+                loadingModelServerIds.removeValue(forKey: serverId)
+            } else {
+                loadingModelServerIds[serverId, default: 0] -= 1
+            }
+        }
         modelCatalogErrorsByServer.removeValue(forKey: serverId)
         do {
             _ = try await client.refreshModels(
@@ -2260,7 +2291,7 @@ final class AppModel {
     /// is still false. Called after a resume that sent `exclude_turns: true`
     /// against a v0.125+ server.
     func loadInitialTurns(threadId key: ThreadKey) async {
-        await loadTurnPage(key: key, cursor: nil, limit: Self.initialTurnPageSize)
+        _ = await loadTurnPage(key: key, cursor: nil, limit: Self.initialTurnPageSize)
     }
 
     func loadInitialTurnsIfNeeded(threadId key: ThreadKey) async {
@@ -2271,18 +2302,18 @@ final class AppModel {
     }
 
     /// Fetch the next older page of turns using the thread's current cursor.
-    /// No-op when no cursor is available (older-turns button should be hidden
-    /// in that case).
-    func loadOlderTurns(threadId key: ThreadKey) async {
+    /// No-op when the loaded history cache has reached the start of the
+    /// server-side session and no cursor remains.
+    func loadOlderTurns(threadId key: ThreadKey) async -> Bool {
         guard let cursor = threadSnapshot(for: key)?.olderTurnsCursor,
               !cursor.isEmpty else {
-            return
+            return false
         }
-        await loadTurnPage(key: key, cursor: cursor, limit: Self.olderTurnPageSize)
+        return await loadTurnPage(key: key, cursor: cursor, limit: Self.olderTurnPageSize)
     }
 
-    private func loadTurnPage(key: ThreadKey, cursor: String?, limit: UInt32) async {
-        if loadingTurnPageThreadKeys.contains(key) { return }
+    private func loadTurnPage(key: ThreadKey, cursor: String?, limit: UInt32) async -> Bool {
+        if loadingTurnPageThreadKeys.contains(key) { return false }
         loadingTurnPageThreadKeys.insert(key)
         defer { loadingTurnPageThreadKeys.remove(key) }
 
@@ -2292,8 +2323,10 @@ final class AppModel {
                 cursor: cursor,
                 limit: limit
             )
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
         }
     }
 

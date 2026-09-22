@@ -360,7 +360,7 @@
     <string name="conversation_allow">允许</string>
 
     <!-- 发现和连接 -->
-    <string name="discovery_scan_qr_subtitle">在主机上运行 npx kittylitter，然后扫描显示的二维码。</string>
+    <string name="discovery_scan_qr_subtitle">在电脑上安装 Kittylitter，然后扫描其二维码。</string>
     <string name="discovery_chatgpt_subtitle">连接到已使用此 ChatGPT 账户登录并运行 Codex 的电脑。</string>
     <string name="discovery_manual_subtitle">通过 SSH 连接或粘贴 ws:// Codex 地址。</string>
     <string name="discovery_connect_server">连接 %1$s</string>
@@ -571,7 +571,7 @@
     <string name="discovery_sign_in_slingshot">使用 Slingshot 连接前请先登录 ChatGPT。</string>
     <string name="alleycat_add_remote_host">添加远程主机</string>
     <string name="alleycat_connect_local_studio">连接 Local Studio</string>
-    <string name="alleycat_kittylitter_instructions">在主机上运行 npx kittylitter，然后扫描二维码或粘贴其输出的 JSON。</string>
+    <string name="alleycat_kittylitter_instructions">在主机上运行 Kittylitter，然后扫描二维码或粘贴其输出的 JSON。扫描器中还提供可复制的安装命令。</string>
     <string name="alleycat_local_studio_instructions">在 Local Studio 中打开“个人资料”→“手机连接”，然后扫描二维码或粘贴复制的连接 JSON。</string>
     <string name="alleycat_scan_pairing_qr">扫描配对二维码</string>
     <string name="alleycat_rescan_qr">重新扫描二维码</string>
@@ -697,6 +697,7 @@
     <string name="effort_xhigh">极高</string>
     <string name="effort_max">最大</string>
     <string name="effort_ultra">超高</string>
+    <string name="effort_persistent">持续</string>
     <string name="composer_steer">↳ 引导</string>
     <string name="terminal_title">终端</string>
     <string name="terminal_trust_host">信任 %1$s</string>

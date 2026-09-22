@@ -12,7 +12,7 @@ func voiceTranscriptionEndpoint(for authMethod: AuthMode?) -> VoiceTranscription
         return .openAI
     case .chatgpt?, .chatgptAuthTokens?, .personalAccessToken?:
         return .chatGPT
-    case .headers?, .agentIdentity?, .bedrockApiKey?, nil:
+    case .headers?, .agentIdentity?, .bedrockApiKey?, .bedrockAccessKeys?, nil:
         return nil
     }
 }

@@ -136,6 +136,7 @@ import uniffi.codex_mobile_client.projectIdFor
 fun HomeDashboardScreen(
     onOpenConversation: (ThreadKey) -> Unit,
     onShowDiscovery: () -> Unit,
+    discoveryVisible: Boolean = false,
     onShowSettings: () -> Unit,
     onShowApps: () -> Unit,
     onOpenProjectPicker: () -> Unit,
@@ -155,6 +156,28 @@ fun HomeDashboardScreen(
     val voiceController = remember { com.litter.android.state.VoiceRuntimeController.shared }
     val lifecycleController = remember { AppLifecycleController() }
 
+    // Discovery renders its own confirm dialog for the same shared challenge
+    // state; skip here while it is up so the two never stack.
+    if (!discoveryVisible) appModel.sshHostKeyChangeChallenge?.let { challenge ->
+        AlertDialog(
+            onDismissRequest = appModel::clearSshHostKeyChange,
+            title = { Text("SSH Host Identity Changed") },
+            text = {
+                Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: ${challenge.fingerprint}")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        lifecycleController.replaceSshHostKey(appModel, challenge.serverId, challenge.fingerprint)
+                    }
+                }) { Text("Replace Stored Identity") }
+            },
+            dismissButton = {
+                TextButton(onClick = appModel::clearSshHostKeyChange) { Text("Cancel") }
+            },
+        )
+    }
+
     var showTipJar by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<AppServerSnapshot?>(null) }
     var renameText by remember { mutableStateOf("") }
@@ -162,12 +185,12 @@ fun HomeDashboardScreen(
     val appVersionLabel = remember { "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})" }
 
     val snap = snapshot
-    val servers = remember(snap) {
+    val servers = remember(snap?.servers, snap?.activeThread?.serverId) {
         snap?.let { HomeDashboardSupport.sortedConnectedServers(it) } ?: emptyList()
     }
     // Every session across connected servers — unlimited, used by the search
     // view so the user can pin any thread.
-    val allSessions = remember(snap) {
+    val allSessions = remember(snap?.servers, snap?.sessionSummaries) {
         snap?.let { HomeDashboardSupport.recentSessions(it, limit = Int.MAX_VALUE) } ?: emptyList()
     }
     // Fork lineage map computed from the unfiltered snapshot so a fork

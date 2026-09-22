@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -498,10 +497,10 @@ fun ConversationScreen(
                             }
                         }
 
-                        itemsIndexed(
+                        items(
                             items = displayedTurns,
-                            key = { index, turn -> "${turn.id}#$index" },
-                        ) { _, turn ->
+                            key = { turn -> turn.id },
+                        ) { turn ->
                             val isExpanded = !turn.isCollapsedByDefault || expandedTurnIds.contains(turn.id)
                             val streamingAssistantItemId = remember(turn.items, turn.isActiveTurn) {
                                 if (!turn.isActiveTurn) {
@@ -784,25 +783,17 @@ fun ConversationScreen(
                     }
 
                     // Composer bar
-                    ComposerBar(
-                        threadKey = threadKey,
-                        collaborationMode = thread?.collaborationMode ?: uniffi.codex_mobile_client.AppModeKind.DEFAULT,
-                        activePlanProgress = thread?.activePlanProgress,
-                        activeTurnId = thread?.activeTurnId,
-                        contextPercent = thread?.composerContextPercent(),
-                        isThinking = isThinking,
-                        activeTaskSummary = activeTaskSummary,
-                        queuedFollowUps = thread?.queuedFollowUps ?: emptyList(),
-                        goal = thread?.goal,
-                        rateLimits = thread?.agentRuntimeKind?.let { runtimeKind ->
-                            server?.rateLimitsByRuntime?.firstOrNull { it.runtimeKind == runtimeKind }?.rateLimits
-                        },
-                        showCollaborationModeChip = pinnedContext?.diffSummary == null,
-                        onOpenCollaborationModePicker = { showCollaborationModeSelector = true },
-                        onToggleModelSelector = { showModelSelector = !showModelSelector },
-                        onNavigateToSessions = onNavigateToSessions,
-                        onShowDirectoryPicker = onShowDirectoryPicker,
-                        onShowRenameDialog = { initialName ->
+                    // Stable callbacks: freshly-allocated inline lambdas here
+                    // re-allocate on every recomposition (snapshot emissions are
+                    // frequent while streaming), disabling ComposerBar's
+                    // argument-level skipping. remember()ed captures keep
+                    // identity stable across unrelated recompositions.
+                    val onOpenCollaborationModePicker = remember { { showCollaborationModeSelector = true } }
+                    val onToggleModelSelector = remember { { showModelSelector = !showModelSelector } }
+                    val onShowDirectoryPickerStable = remember { onShowDirectoryPicker }
+                    val onNavigateToSessionsStable = remember { onNavigateToSessions }
+                    val onShowRenameDialog: (String?) -> Unit = remember(scope, appModel, threadKey, thread?.info?.title) {
+                        { initialName: String? ->
                             val trimmed = initialName?.trim().orEmpty()
                             if (trimmed.isNotEmpty()) {
                                 scope.launch {
@@ -824,15 +815,40 @@ fun ConversationScreen(
                                 renameDraft = thread?.info?.title?.takeIf { it.isNotBlank() }.orEmpty()
                                 showRenameDialog = true
                             }
+                        }
+                    }
+                    val onShowPermissionsSheet = remember { { showPermissionsSheet = true } }
+                    val onShowExperimentalSheet = remember { { showExperimentalSheet = true } }
+                    val onShowSkillsSheet = remember { { showSkillsSheet = true } }
+                    val onSlashError = remember { { message: String -> slashErrorMessage = message } }
+                    val onDismissPendingUserInput: () -> Unit = remember(pendingInput) {
+                        { pendingInput?.let { dismissedUserInputs.dismiss(it.id) }; Unit }
+                    }
+                    ComposerBar(
+                        threadKey = threadKey,
+                        collaborationMode = thread?.collaborationMode ?: uniffi.codex_mobile_client.AppModeKind.DEFAULT,
+                        activePlanProgress = thread?.activePlanProgress,
+                        onOpenCollaborationModePicker = onOpenCollaborationModePicker,
+                        onToggleModelSelector = onToggleModelSelector,
+                        onNavigateToSessions = onNavigateToSessionsStable,
+                        onShowDirectoryPicker = onShowDirectoryPickerStable,
+                        activeTurnId = thread?.activeTurnId,
+                        contextPercent = thread?.composerContextPercent(),
+                        isThinking = isThinking,
+                        activeTaskSummary = activeTaskSummary,
+                        queuedFollowUps = thread?.queuedFollowUps ?: emptyList(),
+                        goal = thread?.goal,
+                        rateLimits = thread?.agentRuntimeKind?.let { runtimeKind ->
+                            server?.rateLimitsByRuntime?.firstOrNull { it.runtimeKind == runtimeKind }?.rateLimits
                         },
-                        onShowPermissionsSheet = { showPermissionsSheet = true },
-                        onShowExperimentalSheet = { showExperimentalSheet = true },
-                        onShowSkillsSheet = { showSkillsSheet = true },
-                        onSlashError = { slashErrorMessage = it },
+                        showCollaborationModeChip = pinnedContext?.diffSummary == null,
+                        onShowRenameDialog = onShowRenameDialog,
+                        onShowPermissionsSheet = onShowPermissionsSheet,
+                        onShowExperimentalSheet = onShowExperimentalSheet,
+                        onShowSkillsSheet = onShowSkillsSheet,
+                        onSlashError = onSlashError,
                         pendingUserInput = pendingInput,
-                        onDismissPendingUserInput = {
-                            pendingInput?.let { dismissedUserInputs.dismiss(it.id) }
-                        },
+                        onDismissPendingUserInput = onDismissPendingUserInput,
                     )
 
                     Spacer(Modifier.navigationBarsPadding())
@@ -899,6 +915,9 @@ fun ConversationScreen(
         }
 
         if (showModelSelector) {
+            LaunchedEffect(threadKey.serverId) {
+                appModel.loadAvailableModelsIfNeeded(threadKey.serverId)
+            }
             ModalBottomSheet(
                 onDismissRequest = { showModelSelector = false },
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1121,7 +1140,7 @@ private fun fallbackCollaborationModePresets(): List<uniffi.codex_mobile_client.
             kind = uniffi.codex_mobile_client.AppModeKind.PLAN,
             name = "Plan",
             model = null,
-            reasoningEffort = uniffi.codex_mobile_client.ReasoningEffort.MEDIUM,
+            reasoningEffort = uniffi.codex_mobile_client.ReasoningEffort.Medium,
         ),
     )
 
@@ -1202,14 +1221,16 @@ private fun collaborationModeEffortLabel(
     effort: uniffi.codex_mobile_client.ReasoningEffort,
 ): String =
     when (effort) {
-        uniffi.codex_mobile_client.ReasoningEffort.NONE -> stringResource(R.string.effort_none)
-        uniffi.codex_mobile_client.ReasoningEffort.MINIMAL -> stringResource(R.string.effort_minimal)
-        uniffi.codex_mobile_client.ReasoningEffort.LOW -> stringResource(R.string.effort_low)
-        uniffi.codex_mobile_client.ReasoningEffort.MEDIUM -> stringResource(R.string.effort_medium)
-        uniffi.codex_mobile_client.ReasoningEffort.HIGH -> stringResource(R.string.effort_high)
-        uniffi.codex_mobile_client.ReasoningEffort.X_HIGH -> stringResource(R.string.effort_xhigh)
-        uniffi.codex_mobile_client.ReasoningEffort.MAX -> stringResource(R.string.effort_max)
-        uniffi.codex_mobile_client.ReasoningEffort.ULTRA -> stringResource(R.string.effort_ultra)
+        uniffi.codex_mobile_client.ReasoningEffort.None -> stringResource(R.string.effort_none)
+        uniffi.codex_mobile_client.ReasoningEffort.Minimal -> stringResource(R.string.effort_minimal)
+        uniffi.codex_mobile_client.ReasoningEffort.Low -> stringResource(R.string.effort_low)
+        uniffi.codex_mobile_client.ReasoningEffort.Medium -> stringResource(R.string.effort_medium)
+        uniffi.codex_mobile_client.ReasoningEffort.High -> stringResource(R.string.effort_high)
+        uniffi.codex_mobile_client.ReasoningEffort.XHigh -> stringResource(R.string.effort_xhigh)
+        uniffi.codex_mobile_client.ReasoningEffort.Max -> stringResource(R.string.effort_max)
+        uniffi.codex_mobile_client.ReasoningEffort.Ultra -> stringResource(R.string.effort_ultra)
+        uniffi.codex_mobile_client.ReasoningEffort.Persistent -> stringResource(R.string.effort_persistent)
+        is uniffi.codex_mobile_client.ReasoningEffort.Custom -> effort.value
     }
 
 private data class PinnedContextData(

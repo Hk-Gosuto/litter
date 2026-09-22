@@ -124,6 +124,10 @@ extension ExperimentalFeature: Identifiable {
 }
 
 extension ModelInfo: Identifiable {
+    var supportedDefaultReasoningEffort: ReasoningEffort? {
+        supportedReasoningEfforts.contains { $0.reasoningEffort == defaultReasoningEffort }
+            ? defaultReasoningEffort : nil
+    }
     var runtimeScopedID: String { "\(agentRuntimeKind):\(id)" }
 }
 
@@ -149,6 +153,8 @@ extension AppAskForApproval {
         switch self {
         case .unlessTrusted:
             return "untrusted"
+        case .onFailure:
+            return "on-failure"
         case .onRequest:
             return "on-request"
         case .never:
@@ -162,6 +168,8 @@ extension AppAskForApproval {
         switch self {
         case .unlessTrusted:
             return AppLanguage.localizedString("Untrusted")
+        case .onFailure:
+            return AppLanguage.localizedString("On failure")
         case .onRequest:
             return AppLanguage.localizedString("On request")
         case .granular:
@@ -247,40 +255,10 @@ extension AppThreadPermissionPreset {
 
 extension ReasoningEffort {
     init?(wireValue: String?) {
-        switch wireValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "none":
-            self = .none
-        case "minimal":
-            self = .minimal
-        case "low":
-            self = .low
-        case "medium":
-            self = .medium
-        case "high":
-            self = .high
-        case "xhigh":
-            self = .xHigh
-        case "max":
-            self = .max
-        case "ultra":
-            self = .ultra
-        default:
-            return nil
-        }
+        guard let effort = reasoningEffortFromWireValue(value: wireValue) else { return nil }
+        self = effort
     }
-
-    var wireValue: String {
-        switch self {
-        case .none: return "none"
-        case .minimal: return "minimal"
-        case .low: return "low"
-        case .medium: return "medium"
-        case .high: return "high"
-        case .xHigh: return "xhigh"
-        case .max: return "max"
-        case .ultra: return "ultra"
-        }
-    }
+    var wireValue: String { reasoningEffortWireValue(value: self) }
 }
 
 extension ServiceTier {
@@ -338,7 +316,7 @@ extension PlanType {
         case "unknown":
             self = .unknown
         case "ent26":
-            self = .ent26
+            self = .enterprise
         default:
             return nil
         }
@@ -355,7 +333,6 @@ extension PlanType {
         case .enterprise: return "enterprise"
         case .edu: return "edu"
         case .unknown: return "unknown"
-        case .ent26: return "ent26"
         }
     }
 }

@@ -230,9 +230,13 @@ impl From<codex_protocol::account::PlanType> for PlanType {
             codex_protocol::account::PlanType::Enterprise => Self::Enterprise,
             codex_protocol::account::PlanType::Edu => Self::Edu,
             codex_protocol::account::PlanType::Unknown => Self::Unknown,
-            codex_protocol::account::PlanType::ProLite => Self::Unknown,
+            codex_protocol::account::PlanType::ProLite => Self::Pro,
+            codex_protocol::account::PlanType::SelfServeBusinessProLite => Self::Business,
+            codex_protocol::account::PlanType::Ent26
+            | codex_protocol::account::PlanType::EnterpriseCbpAutomation => Self::Enterprise,
+            codex_protocol::account::PlanType::EduPlus
+            | codex_protocol::account::PlanType::EduPro => Self::Edu,
             codex_protocol::account::PlanType::SelfServeBusinessUsageBased => Self::Business,
-            codex_protocol::account::PlanType::Ent26 => Self::Ent26,
             codex_protocol::account::PlanType::EnterpriseCbpUsageBased => Self::Enterprise,
         }
     }
@@ -286,7 +290,6 @@ impl TryFrom<codex_protocol::config_types::ModeKind> for AppModeKind {
         match value {
             codex_protocol::config_types::ModeKind::Default => Ok(Self::Default),
             codex_protocol::config_types::ModeKind::Plan => Ok(Self::Plan),
-            other => Err(format!("unsupported collaboration mode: {:?}", other)),
         }
     }
 }
@@ -498,6 +501,8 @@ pub enum AuthMode {
     PersonalAccessToken,
     #[serde(rename = "bedrockApiKey")]
     BedrockApiKey,
+    #[serde(rename = "bedrockAccessKeys")]
+    BedrockAccessKeys,
 }
 
 impl From<upstream::AuthMode> for AuthMode {
@@ -506,10 +511,11 @@ impl From<upstream::AuthMode> for AuthMode {
             upstream::AuthMode::ApiKey => Self::ApiKey,
             upstream::AuthMode::Chatgpt => Self::Chatgpt,
             upstream::AuthMode::ChatgptAuthTokens => Self::ChatgptAuthTokens,
-            upstream::AuthMode::Headers => Self::Headers,
             upstream::AuthMode::AgentIdentity => Self::AgentIdentity,
+            upstream::AuthMode::Headers => Self::Headers,
             upstream::AuthMode::PersonalAccessToken => Self::PersonalAccessToken,
             upstream::AuthMode::BedrockApiKey => Self::BedrockApiKey,
+            upstream::AuthMode::BedrockAccessKeys => Self::BedrockAccessKeys,
         }
     }
 }
@@ -665,7 +671,6 @@ pub enum PlanType {
     Enterprise,
     Edu,
     Unknown,
-    Ent26,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -736,9 +741,11 @@ pub enum AppMergeStrategy {
     Upsert,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-#[derive(uniffi::Enum)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, uniffi::Enum)]
+#[serde(
+    from = "codex_protocol::openai_models::ReasoningEffort",
+    into = "codex_protocol::openai_models::ReasoningEffort"
+)]
 pub enum ReasoningEffort {
     None,
     Minimal,
@@ -749,22 +756,63 @@ pub enum ReasoningEffort {
     XHigh,
     Max,
     Ultra,
+    Persistent,
+    Custom {
+        value: String,
+    },
 }
-
 impl From<codex_protocol::openai_models::ReasoningEffort> for ReasoningEffort {
     fn from(value: codex_protocol::openai_models::ReasoningEffort) -> Self {
+        use codex_protocol::openai_models::ReasoningEffort as Core;
         match value {
-            codex_protocol::openai_models::ReasoningEffort::None => Self::None,
-            codex_protocol::openai_models::ReasoningEffort::Minimal => Self::Minimal,
-            codex_protocol::openai_models::ReasoningEffort::Low => Self::Low,
-            codex_protocol::openai_models::ReasoningEffort::Medium => Self::Medium,
-            codex_protocol::openai_models::ReasoningEffort::High => Self::High,
-            codex_protocol::openai_models::ReasoningEffort::XHigh => Self::XHigh,
-            codex_protocol::openai_models::ReasoningEffort::Max => Self::Max,
-            codex_protocol::openai_models::ReasoningEffort::Ultra => Self::Ultra,
-            codex_protocol::openai_models::ReasoningEffort::Custom(_) => Self::Max,
+            Core::None => Self::None,
+            Core::Minimal => Self::Minimal,
+            Core::Low => Self::Low,
+            Core::Medium => Self::Medium,
+            Core::High => Self::High,
+            Core::XHigh => Self::XHigh,
+            Core::Max => Self::Max,
+            Core::Ultra => Self::Ultra,
+            Core::Persistent => Self::Persistent,
+            Core::Custom(value) => Self::Custom { value },
         }
     }
+}
+impl From<ReasoningEffort> for codex_protocol::openai_models::ReasoningEffort {
+    fn from(value: ReasoningEffort) -> Self {
+        match value {
+            ReasoningEffort::None => Self::None,
+            ReasoningEffort::Minimal => Self::Minimal,
+            ReasoningEffort::Low => Self::Low,
+            ReasoningEffort::Medium => Self::Medium,
+            ReasoningEffort::High => Self::High,
+            ReasoningEffort::XHigh => Self::XHigh,
+            ReasoningEffort::Max => Self::Max,
+            ReasoningEffort::Ultra => Self::Ultra,
+            ReasoningEffort::Persistent => Self::Persistent,
+            ReasoningEffort::Custom { value } => Self::Custom(value),
+        }
+    }
+}
+/// Preserve model-defined wire identifiers exactly; do not lowercase custom efforts.
+#[uniffi::export]
+pub fn reasoning_effort_from_wire_value(value: Option<String>) -> Option<ReasoningEffort> {
+    let value = value?;
+    let normalized = value.trim().to_ascii_lowercase();
+    let wire = match normalized.as_str() {
+        "" => return None,
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+        | "persistent" => normalized.as_str(),
+        "x-high" => "xhigh",
+        _ => value.as_str(),
+    };
+    wire.parse::<codex_protocol::openai_models::ReasoningEffort>()
+        .ok()
+        .map(Into::into)
+}
+#[uniffi::export]
+pub fn reasoning_effort_wire_value(value: ReasoningEffort) -> String {
+    codex_protocol::openai_models::ReasoningEffort::from(value).to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -839,7 +887,7 @@ impl From<upstream::SkillScope> for SkillScope {
 pub enum AppAskForApproval {
     #[serde(rename = "untrusted")]
     UnlessTrusted,
-    #[serde(alias = "on-failure")]
+    OnFailure,
     OnRequest,
     Granular {
         sandbox_approval: bool,
@@ -1133,25 +1181,16 @@ pub enum Account {
     #[serde(rename = "chatgpt")]
     #[serde(rename_all = "camelCase")]
     Chatgpt { email: String, plan_type: PlanType },
-    #[serde(rename = "amazonBedrock")]
-    #[serde(rename_all = "camelCase")]
-    AmazonBedrock {
-        uses_codex_managed_credentials: bool,
-    },
 }
 
 impl From<upstream::Account> for Account {
     fn from(value: upstream::Account) -> Self {
         match value {
             upstream::Account::ApiKey {} => Self::ApiKey,
+            upstream::Account::AmazonBedrock { .. } => Self::ApiKey,
             upstream::Account::Chatgpt { email, plan_type } => Self::Chatgpt {
                 email: email.unwrap_or_default(),
                 plan_type: plan_type.into(),
-            },
-            upstream::Account::AmazonBedrock {
-                uses_codex_managed_credentials,
-            } => Self::AmazonBedrock {
-                uses_codex_managed_credentials,
             },
         }
     }
@@ -1514,74 +1553,6 @@ mod tests {
     use crate::types::enums::ThreadSummaryStatus;
 
     #[test]
-    fn approval_policy_migrates_legacy_on_failure_to_on_request() {
-        let approval: AppAskForApproval =
-            serde_json::from_str("\"on-failure\"").expect("legacy policy should deserialize");
-
-        assert_eq!(approval, AppAskForApproval::OnRequest);
-        assert_eq!(
-            serde_json::to_string(&approval).expect("approval policy should serialize"),
-            "\"on-request\""
-        );
-    }
-
-    #[test]
-    fn auth_mode_conversion_preserves_new_upstream_variants() {
-        let cases = [
-            (upstream::AuthMode::ApiKey, AuthMode::ApiKey),
-            (upstream::AuthMode::Chatgpt, AuthMode::Chatgpt),
-            (
-                upstream::AuthMode::ChatgptAuthTokens,
-                AuthMode::ChatgptAuthTokens,
-            ),
-            (upstream::AuthMode::Headers, AuthMode::Headers),
-            (upstream::AuthMode::AgentIdentity, AuthMode::AgentIdentity),
-            (
-                upstream::AuthMode::PersonalAccessToken,
-                AuthMode::PersonalAccessToken,
-            ),
-            (upstream::AuthMode::BedrockApiKey, AuthMode::BedrockApiKey),
-        ];
-
-        for (upstream, expected) in cases {
-            assert_eq!(AuthMode::from(upstream), expected);
-        }
-    }
-
-    #[test]
-    fn account_conversion_preserves_amazon_bedrock_identity() {
-        let account = Account::from(upstream::Account::AmazonBedrock {
-            uses_codex_managed_credentials: true,
-        });
-
-        assert_eq!(
-            account,
-            Account::AmazonBedrock {
-                uses_codex_managed_credentials: true,
-            }
-        );
-    }
-
-    #[test]
-    fn plan_type_conversion_preserves_ent26_identity() {
-        assert_eq!(
-            PlanType::from(codex_protocol::account::PlanType::Ent26),
-            PlanType::Ent26
-        );
-    }
-
-    #[test]
-    fn reasoning_effort_accepts_ultra_and_degrades_future_values() {
-        let ultra: codex_protocol::openai_models::ReasoningEffort =
-            serde_json::from_str("\"ultra\"").expect("ultra should deserialize");
-        assert_eq!(ReasoningEffort::from(ultra), ReasoningEffort::Ultra);
-
-        let future: codex_protocol::openai_models::ReasoningEffort =
-            serde_json::from_str("\"future-effort\"").expect("future values should deserialize");
-        assert_eq!(ReasoningEffort::from(future), ReasoningEffort::Max);
-    }
-
-    #[test]
     fn thread_info_roundtrip() {
         let info = ThreadInfo {
             id: "thr_abc123".to_string(),
@@ -1915,5 +1886,34 @@ mod tests {
         .expect("thread/read response should tolerate legacy fields");
 
         assert_eq!(response.thread.id, "thread-1");
+    }
+}
+
+#[cfg(test)]
+mod reasoning_effort_compatibility_tests {
+    use super::*;
+    #[test]
+    fn persistent_and_model_defined_efforts_round_trip_as_wire_strings() {
+        for wire in ["persistent", "provider/Adaptive-v2", "deep_2048"] {
+            let mobile: ReasoningEffort = serde_json::from_value(serde_json::json!(wire)).unwrap();
+            assert_eq!(
+                serde_json::to_value(&mobile).unwrap(),
+                serde_json::json!(wire)
+            );
+            let upstream: codex_protocol::openai_models::ReasoningEffort = mobile.clone().into();
+            assert_eq!(upstream.as_str(), wire);
+            assert_eq!(ReasoningEffort::from(upstream), mobile);
+            assert_eq!(
+                reasoning_effort_wire_value(
+                    reasoning_effort_from_wire_value(Some(wire.into())).unwrap()
+                ),
+                wire
+            );
+        }
+        assert_eq!(
+            reasoning_effort_from_wire_value(Some(" HIGH ".into())),
+            Some(ReasoningEffort::High)
+        );
+        assert!(serde_json::from_str::<ReasoningEffort>("\"\"").is_err());
     }
 }

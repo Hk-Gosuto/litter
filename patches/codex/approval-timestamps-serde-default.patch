@@ -1,0 +1,50 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/item.rs b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+--- a/codex-rs/app-server-protocol/src/protocol/v2/item.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+@@ -1337,6 +1337,7 @@
+     pub thread_id: String,
+     pub turn_id: String,
+     /// Unix timestamp (in milliseconds) when this review started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Stable identifier for this review.
+@@ -1368,9 +1369,11 @@
+     pub thread_id: String,
+     pub turn_id: String,
+     /// Unix timestamp (in milliseconds) when this review started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Unix timestamp (in milliseconds) when this review completed.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub completed_at_ms: i64,
+     /// Stable identifier for this review.
+@@ -1553,6 +1556,7 @@
+     pub turn_id: String,
+     pub item_id: String,
+     /// Unix timestamp (in milliseconds) when this approval request started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Unique identifier for this specific approval callback.
+@@ -1633,6 +1637,7 @@
+     pub turn_id: String,
+     pub item_id: String,
+     /// Unix timestamp (in milliseconds) when this approval request started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     /// Optional explanatory reason (e.g. request for extra write access).
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs b/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs
+--- a/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/permissions.rs
+@@ -777,6 +777,7 @@
+     #[serde(default)]
+     pub environment_id: Option<String>,
+     /// Unix timestamp (in milliseconds) when this approval request started.
++    #[serde(default)]
+     #[ts(type = "number")]
+     pub started_at_ms: i64,
+     pub cwd: LegacyAppPathString,

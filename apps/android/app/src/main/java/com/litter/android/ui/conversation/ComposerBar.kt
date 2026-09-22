@@ -96,6 +96,7 @@ import com.litter.android.state.ComposerFileAttachment
 import com.litter.android.state.AppComposerPayload
 import com.litter.android.state.VoiceTranscriptionManager
 import com.litter.android.state.ampReasoningEffortLocked
+import com.litter.android.state.supportedDefaultReasoningEffort
 import com.litter.android.util.LLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -186,10 +187,16 @@ fun ComposerBar(
 ) {
     val appModel = LocalAppModel.current
     val appSnapshot by appModel.snapshot.collectAsState()
-    val hasFixedFullAccess = appSnapshot?.threads
-        ?.firstOrNull { it.key == threadKey }
-        ?.agentRuntimeKind
-        ?.hasFixedFullAccess == true
+    // Rescan only when the snapshot input changes; readers recompose only when
+    // the derived flag flips, not on every unrelated recomposition.
+    val hasFixedFullAccess by remember(threadKey) {
+        derivedStateOf {
+            appSnapshot?.threads
+                ?.firstOrNull { it.key == threadKey }
+                ?.agentRuntimeKind
+                ?.hasFixedFullAccess == true
+        }
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val composerPrefillRequest by appModel.composerPrefillRequest.collectAsState()
@@ -208,6 +215,10 @@ fun ComposerBar(
     var attachedFiles by remember(threadKey) {
         mutableStateOf(appModel.composerDraft(threadKey).fileAttachments)
     }
+    // Persist the composer draft on every state change. Debounced/coalesced
+    // variants lose typed text when the composable leaves composition before
+    // the trailing write fires (quick navigation, backgrounding) — so this
+    // stays an immediate, unconditional write.
     LaunchedEffect(threadKey, text, attachedImage, attachedFiles) {
         appModel.setComposerDraft(
             threadKey,
@@ -465,7 +476,7 @@ fun ComposerBar(
                     selectedModel == null -> requested
                     supported.isEmpty() -> null
                     requested != null && supported.contains(requested) -> requested
-                    else -> selectedModel.defaultReasoningEffort
+                    else -> selectedModel.supportedDefaultReasoningEffort
                 }
             }
             val tier = if (HeaderOverrides.pendingFastMode) ServiceTier.FAST else null
@@ -1461,17 +1472,8 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
     }
 
 private fun reasoningEffortFromServerValue(value: String): ReasoningEffort? =
-    when (value.trim().lowercase()) {
-        "none" -> ReasoningEffort.NONE
-        "minimal" -> ReasoningEffort.MINIMAL
-        "low" -> ReasoningEffort.LOW
-        "medium" -> ReasoningEffort.MEDIUM
-        "high" -> ReasoningEffort.HIGH
-        "xhigh" -> ReasoningEffort.X_HIGH
-        "max" -> ReasoningEffort.MAX
-        "ultra" -> ReasoningEffort.ULTRA
-        else -> null
-    }
+    uniffi.codex_mobile_client.reasoningEffortFromWireValue(value)
+
 
 @Composable
 internal fun CollaborationModeChip(

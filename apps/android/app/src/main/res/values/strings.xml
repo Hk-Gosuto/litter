@@ -360,7 +360,7 @@
     <string name="conversation_allow">Allow</string>
 
     <!-- Discovery and connection -->
-    <string name="discovery_scan_qr_subtitle">Run npx kittylitter on the host, then scan the QR code it prints.</string>
+    <string name="discovery_scan_qr_subtitle">Install Kittylitter on your computer, then scan its QR code.</string>
     <string name="discovery_chatgpt_subtitle">Connect to a computer already signed in and running Codex for this ChatGPT account.</string>
     <string name="discovery_manual_subtitle">Connect over SSH or paste a ws:// Codex URL.</string>
     <string name="discovery_connect_server">Connect %1$s</string>
@@ -571,7 +571,7 @@
     <string name="discovery_sign_in_slingshot">Sign in with ChatGPT before connecting with Slingshot.</string>
     <string name="alleycat_add_remote_host">Add Remote Host</string>
     <string name="alleycat_connect_local_studio">Connect Local Studio</string>
-    <string name="alleycat_kittylitter_instructions">Run npx kittylitter on the host, then scan its QR code or paste the JSON it prints.</string>
+    <string name="alleycat_kittylitter_instructions">Run Kittylitter on the host, then scan its QR code or paste the JSON it prints. The scanner includes an installation command you can copy.</string>
     <string name="alleycat_local_studio_instructions">In Local Studio, open Profile → Phone connection. Scan its QR code or paste Copy connection JSON.</string>
     <string name="alleycat_scan_pairing_qr">Scan Pairing QR</string>
     <string name="alleycat_rescan_qr">Rescan QR</string>
@@ -697,6 +697,7 @@
     <string name="effort_xhigh">XHigh</string>
     <string name="effort_max">Max</string>
     <string name="effort_ultra">Ultra</string>
+    <string name="effort_persistent">Persistent</string>
     <string name="composer_steer">↳ Steer</string>
     <string name="terminal_title">Terminal</string>
     <string name="terminal_trust_host">Trust %1$s</string>

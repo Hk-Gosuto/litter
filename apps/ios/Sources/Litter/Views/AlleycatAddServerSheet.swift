@@ -28,8 +28,7 @@ enum AlleycatPairingMode: String, Equatable, Identifiable {
         switch self {
         case .kittylitter:
             AppLanguage.localizedString(
-                "Run %@ on the host you want to connect to, then scan its QR code or paste the JSON it prints.",
-                AlleycatAddServerSheet.pairCommandLabel
+                "Run Kittylitter on the host you want to connect to, then scan its QR code or paste the JSON it prints. The scanner includes an installation command you can copy."
             )
         case .localStudio:
             AppLanguage.localizedString(
@@ -253,8 +252,6 @@ struct AlleycatAddServerSheet: View {
             .disabled(pasteJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
-
-    fileprivate static let pairCommandLabel = "npx kittylitter"
 
     private func previewSection(params: AppAlleycatPairPayload) -> some View {
         Section {
@@ -596,7 +593,7 @@ private struct QRScannerScreen: View {
     let pairingMode: AlleycatPairingMode
     let onScan: (String) -> Void
 
-    private static let pairCommand = "npx kittylitter"
+    private static let pairCommand = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.10/kittylitter-npm-package.tar.gz"
 
     @State private var copied = false
     @State private var isFinishing = false

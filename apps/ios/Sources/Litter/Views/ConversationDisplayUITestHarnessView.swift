@@ -58,8 +58,6 @@ struct ConversationDisplayUITestHarnessView: View {
                         originThreadId: nil,
                         agentDirectoryVersion: 0,
                         messageActionsDisabled: true,
-                        onStreamingSnapshotRendered: nil,
-                        onLiveContentLayoutChanged: nil,
                         resolveTargetLabel: { _ in nil },
                         resolveThreadKey: { _ in nil },
                         resolveLiveStatus: { _ in nil },
@@ -129,6 +127,15 @@ struct ConversationDisplayUITestHarnessView: View {
             id: "ui-test-assistant",
             content: .assistant(ConversationAssistantMessageData(
                 text: "UITEST_ASSISTANT_MESSAGE",
+                agentNickname: nil,
+                agentRole: nil,
+                phase: nil
+            ))
+        ),
+        ConversationItem(
+            id: "ui-test-assistant-link",
+            content: .assistant(ConversationAssistantMessageData(
+                text: "Deployed the preview build. Check it at https://example.com/releases/latest and the docs at https://docs.example.com/setup",
                 agentNickname: nil,
                 agentRole: nil,
                 phase: nil

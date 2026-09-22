@@ -10,12 +10,22 @@ if [[ -z "$version" ]]; then
 fi
 
 tag="v$version"
+for source in \
+  apps/ios/Sources/Litter/Views/AlleycatAddServerSheet.swift \
+  apps/android/app/src/main/java/com/litter/android/ui/discovery/AlleycatAddServerSheet.kt; do
+  if ! grep -Fq "/releases/download/$tag/kittylitter-npm-package.tar.gz" "$source"; then
+    echo "$source must pair with kittylitter $tag" >&2
+    exit 1
+  fi
+done
+
 if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
   exit 0
 fi
 
 git fetch --no-tags --no-recurse-submodules origin "refs/tags/$tag:refs/tags/$tag"
-if git diff --quiet "$tag" -- services/kittylitter; then
+# Installation documentation can change without republishing the host binary.
+if git diff --quiet "$tag" -- services/kittylitter ':!services/kittylitter/README.md'; then
   exit 0
 fi
 

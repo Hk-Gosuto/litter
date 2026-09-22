@@ -2,6 +2,7 @@ package com.litter.android
 
 import com.litter.android.state.SavedServer
 import com.litter.android.state.SavedServerStore
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -111,4 +112,50 @@ class SavedServerTransportTest {
             port = 0,
             alleycatNodeId = nodeId,
         )
+
+    @Test
+    fun detachedTransportDefaultsToFalse() {
+        val server =
+            SavedServer(
+                id = "server-detached-default",
+                name = "SSH Host",
+                hostname = "10.0.0.5",
+                port = 22,
+                source = "ssh",
+            )
+
+        assertFalse(server.detachedTransport)
+    }
+
+    @Test
+    fun detachedTransportPersistsThroughJsonRoundTrip() {
+        val server =
+            SavedServer(
+                id = "server-detached-json",
+                name = "SSH Host",
+                hostname = "10.0.0.5",
+                port = 22,
+                detachedTransport = true,
+            )
+
+        val restored = SavedServer.fromJson(JSONObject(server.toJson().toString()))
+
+        assertTrue(restored.detachedTransport)
+    }
+
+    @Test
+    fun detachedTransportDefaultsToFalseWhenMissingFromJson() {
+        val legacy =
+            SavedServer(
+                id = "server-legacy",
+                name = "SSH Host",
+                hostname = "10.0.0.5",
+                port = 22,
+            )
+        val json = legacy.toJson().apply { remove("detachedTransport") }
+
+        val restored = SavedServer.fromJson(json)
+
+        assertFalse(restored.detachedTransport)
+    }
 }

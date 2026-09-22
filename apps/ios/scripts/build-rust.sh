@@ -22,7 +22,8 @@ MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 SUBMODULE_DIR="$REPO_DIR/shared/third_party/codex"
 IOS_CLANGXX_WRAPPER="$SCRIPT_DIR/ios-clangxx-wrapper.sh"
 PATCH_FILES=(
-  "$REPO_DIR/patches/codex/litter-mobile-compat-0.146.0.patch"
+  "$REPO_DIR/patches/codex/ios-exec-hook.patch"
+  "$REPO_DIR/patches/codex/thread-read-permissions.patch"
 )
 
 SYNC_MODE="--preserve-current"
@@ -116,7 +117,6 @@ for PATCH_FILE in "${PATCH_FILES[@]}"; do
 done
 
 cleanup_patch() {
-  local reverted_any=0
   for PATCH_FILE in "${PATCH_FILES[@]}"; do
     local was_pre_applied=0
     for pre in "${PATCHES_WERE_APPLIED[@]+"${PATCHES_WERE_APPLIED[@]}"}"; do
@@ -128,15 +128,8 @@ cleanup_patch() {
     if [ "$was_pre_applied" -eq 0 ] && git -C "$SUBMODULE_DIR" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
       echo "==> Reverting $(basename "$PATCH_FILE")..."
       git -C "$SUBMODULE_DIR" apply --reverse "$PATCH_FILE"
-      reverted_any=1
     fi
   done
-
-  if [ "$reverted_any" -eq 1 ]; then
-    # The sync stamp promises that the patch is currently applied. A
-    # standalone build that restores the submodule must invalidate it.
-    rm -f "$REPO_DIR"/.build-stamps/sync-codex-*
-  fi
 }
 
 trap cleanup_patch EXIT
@@ -307,6 +300,15 @@ copy_macabi_artifact() {
     -output "$GENERATED_MACABI_DIR/libcodex_mobile_client.a"
 }
 
+# Fail the build instead of shipping an app whose embedded iSH runtime has a
+# broken (empty-stub) ARM64 vdso. litter-ish silently degrades the vdso to an
+# empty placeholder when no lld-capable clang is available; at runtime that
+# makes the app SIGABRT as soon as a guest process hits a signal.
+check_ish_vdso_for() {
+  local triple="$1"
+  "$REPO_DIR/tools/scripts/check-ish-vdso.sh" "$CARGO_TARGET_DIR_EFFECTIVE" "$triple" "$PROFILE"
+}
+
 echo "==> Preparing codex submodule..."
 "$SCRIPT_DIR/sync-codex.sh" "$SYNC_MODE"
 
@@ -334,15 +336,18 @@ rustup target add i686-unknown-linux-musl aarch64-unknown-linux-musl
 if [ "$DEVICE_ONLY" -eq 1 ]; then
   echo "==> Building codex-mobile-client for aarch64-apple-ios ($PROFILE)..."
   cargo rustc --manifest-path "$RUST_BRIDGE_DIR/Cargo.toml" -p codex-mobile-client $CARGO_PROFILE_FLAG --target aarch64-apple-ios --crate-type staticlib $CARGO_FEATURES
+  check_ish_vdso_for aarch64-apple-ios
   copy_device_artifact
 elif [ "$SIM_ONLY" -eq 1 ]; then
   echo "==> Building codex-mobile-client for aarch64-apple-ios-sim ($PROFILE)..."
   cargo rustc --manifest-path "$RUST_BRIDGE_DIR/Cargo.toml" -p codex-mobile-client $CARGO_PROFILE_FLAG --target aarch64-apple-ios-sim --crate-type staticlib $CARGO_FEATURES
+  check_ish_vdso_for aarch64-apple-ios-sim
   copy_sim_artifact "$CARGO_TARGET_DIR_EFFECTIVE/aarch64-apple-ios-sim/$PROFILE/libcodex_mobile_client.a"
 elif [ "$MACABI_ONLY" -eq 1 ]; then
   if [ "$FAST_MACABI" -eq 1 ]; then
     echo "==> Building codex-mobile-client for $MACABI_HOST_TARGET ($PROFILE)..."
     cargo rustc --manifest-path "$RUST_BRIDGE_DIR/Cargo.toml" -p codex-mobile-client $CARGO_PROFILE_FLAG --target "$MACABI_HOST_TARGET" --crate-type staticlib $CARGO_FEATURES
+    check_ish_vdso_for "$MACABI_HOST_TARGET"
     copy_if_changed "$CARGO_TARGET_DIR_EFFECTIVE/$MACABI_HOST_TARGET/$PROFILE/libcodex_mobile_client.a" \
       "$GENERATED_MACABI_DIR/libcodex_mobile_client.a"
   else
@@ -372,6 +377,8 @@ elif [ "$MACABI_ONLY" -eq 1 ]; then
     fi
     [ "$FAILED" -eq 0 ] || exit 1
 
+    check_ish_vdso_for aarch64-apple-ios-macabi
+    check_ish_vdso_for x86_64-apple-ios-macabi
     copy_macabi_artifact
   fi
 else
@@ -421,6 +428,11 @@ else
     FAILED=1
   fi
   [ "$FAILED" -eq 0 ] || exit 1
+
+  check_ish_vdso_for aarch64-apple-ios
+  check_ish_vdso_for aarch64-apple-ios-sim
+  check_ish_vdso_for aarch64-apple-ios-macabi
+  check_ish_vdso_for x86_64-apple-ios-macabi
 
   copy_device_artifact
   copy_sim_artifact "$CARGO_TARGET_DIR_EFFECTIVE/aarch64-apple-ios-sim/$PROFILE/libcodex_mobile_client.a"

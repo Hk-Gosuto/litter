@@ -53,6 +53,7 @@ mod tests {
             mcp_app_resource_uri: None,
             app_context: None,
             plugin_id: None,
+            read_only_hint: None,
             result: None,
             error: None,
             duration_ms: Some(42),

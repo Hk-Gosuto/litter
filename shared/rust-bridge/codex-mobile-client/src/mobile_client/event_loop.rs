@@ -1617,7 +1617,7 @@ mod tests {
                 path
             } if command == "read .pi-tool-demo.txt"
                 && name == ".pi-tool-demo.txt"
-                && path.as_path() == Path::new("/tmp/project/.pi-tool-demo.txt")
+                && path.as_str() == "/tmp/project/.pi-tool-demo.txt"
         ));
         assert!(matches!(
             &command_actions[1],
@@ -1720,7 +1720,7 @@ mod tests {
                 && matches!(
                     &command_actions[0],
                     upstream::CommandAction::Read { path, .. }
-                        if path.as_path() == Path::new("/repo/src/lib.rs")
+                        if path.as_str() == "/repo/src/lib.rs"
                 )
         ));
         assert!(matches!(
@@ -1765,13 +1765,11 @@ mod tests {
     #[test]
     fn deserialize_typed_response_resolves_read_action_paths_against_command_cwd() {
         let command_item = ThreadItem::CommandExecution {
-            id: "cmd-1".into(),
             plugin_id: None,
             script_path: None,
+            id: "cmd-1".into(),
             command: "cat crates/krusty-cli/src/main.rs".into(),
-            cwd: AbsolutePathBuf::from_absolute_path("/repo")
-                .expect("absolute cwd")
-                .into(),
+            cwd: AbsolutePathBuf::from_absolute_path("/repo").expect("absolute cwd").into(),
             process_id: None,
             source: CommandExecutionSource::Agent,
             status: CommandExecutionStatus::Completed,
@@ -1779,7 +1777,7 @@ mod tests {
                 command: "cat crates/krusty-cli/src/main.rs".into(),
                 name: "main.rs".into(),
                 path: AbsolutePathBuf::from_absolute_path("/repo/crates/krusty-cli/src/main.rs")
-                    .expect("absolute read path"),
+                    .expect("absolute read path").into(),
             }],
             aggregated_output: None,
             exit_code: Some(0),
@@ -1804,8 +1802,8 @@ mod tests {
 
         assert_eq!(cwd.as_str(), "/repo");
         assert_eq!(
-            path.as_path(),
-            Path::new("/repo/crates/krusty-cli/src/main.rs")
+            path.as_str(),
+            "/repo/crates/krusty-cli/src/main.rs"
         );
     }
 

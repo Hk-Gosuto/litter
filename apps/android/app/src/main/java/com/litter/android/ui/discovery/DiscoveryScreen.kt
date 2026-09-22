@@ -71,6 +71,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sigkitten.litter.android.R
+import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.SavedServer
 import com.litter.android.state.SavedServerStore
 import com.litter.android.state.SavedSshCredential
@@ -108,6 +109,7 @@ import uniffi.codex_mobile_client.AppServerSnapshot
 import uniffi.codex_mobile_client.RemoteAgentAvailability
 import uniffi.codex_mobile_client.AppSlingshotEnvironment
 import uniffi.codex_mobile_client.SshBridgeTransport
+import uniffi.codex_mobile_client.decodeSshHostKeyChallenge
 
 private data class SshBridgeAgentContext(
     val server: SavedServer,
@@ -148,6 +150,7 @@ fun DiscoveryScreen(
     var authorizedSlingshotConnect by remember { mutableStateOf<Pair<AppSlingshotEnvironment, String>?>(null) }
     var wakingServerId by remember { mutableStateOf<String?>(null) }
     var connectError by remember { mutableStateOf<String?>(null) }
+    val lifecycleController = remember { AppLifecycleController() }
     val slingshotStepUpLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -185,7 +188,11 @@ fun DiscoveryScreen(
         } else if (serverSnapshot.health == AppServerHealth.DISCONNECTED) {
             serverSnapshot.connectionProgress?.terminalMessage?.let { message ->
                 pendingAutoNavigateServerId = null
-                connectError = message
+                if (decodeSshHostKeyChallenge(message)?.isChanged == true) {
+                    appModel.recordSshHostKeyChange(pendingServerId, message)
+                } else {
+                    connectError = message
+                }
             }
         }
     }
@@ -672,7 +679,18 @@ fun DiscoveryScreen(
                             "os" to server.os,
                         ),
                     )
-                    e.message ?: context.getString(R.string.discovery_ssh_connect_failed)
+                    // The probe session is the first trust-store check in the
+                    // guided flow, so a changed host key surfaces here first.
+                    // Route it to the shared confirm dialog instead of the raw
+                    // marker text.
+                    val message = e.message
+                    if (message != null && decodeSshHostKeyChallenge(message)?.isChanged == true) {
+                        appModel.recordSshHostKeyChange(server.id, message)
+                        sshServer = null
+                        null
+                    } else {
+                        message ?: context.getString(R.string.discovery_ssh_connect_failed)
+                    }
                 }
             },
         )
@@ -709,7 +727,7 @@ fun DiscoveryScreen(
                         host = agentContext.host,
                         stateRoot = sshBridgeStateRoot(context, agentContext.host),
                         runtimeKinds = selectedKinds,
-                        transport = SshBridgeTransport.EPHEMERAL,
+                        transport = if (agentContext.server.detachedTransport) SshBridgeTransport.DETACHED else SshBridgeTransport.EPHEMERAL,
                     )
                     val server = agentContext.server.copy(
                         id = result.serverId,
@@ -738,8 +756,35 @@ fun DiscoveryScreen(
                             "host" to agentContext.host,
                         ),
                     )
-                    e.message ?: context.getString(R.string.discovery_ssh_agents_failed)
+                    val message = e.message
+                    if (message != null && decodeSshHostKeyChallenge(message)?.isChanged == true) {
+                        appModel.recordSshHostKeyChange(agentContext.server.id, message)
+                        sshAgentContext = null
+                        null
+                    } else {
+                        message ?: context.getString(R.string.discovery_ssh_agents_failed)
+                    }
                 }
+            },
+        )
+    }
+
+    appModel.sshHostKeyChangeChallenge?.let { challenge ->
+        AlertDialog(
+            onDismissRequest = appModel::clearSshHostKeyChange,
+            title = { Text("SSH Host Identity Changed") },
+            text = {
+                Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: ${challenge.fingerprint}")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        lifecycleController.replaceSshHostKey(appModel, challenge.serverId, challenge.fingerprint)
+                    }
+                }) { Text("Replace Stored Identity") }
+            },
+            dismissButton = {
+                TextButton(onClick = appModel::clearSshHostKeyChange) { Text("Cancel") }
             },
         )
     }
@@ -1409,6 +1454,7 @@ internal fun SSHLoginDialog(
     onDismiss: () -> Unit,
     onConnect: suspend (SavedSshCredential, Boolean) -> String?,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var username by remember(server.id) { mutableStateOf(initialCredential?.username ?: "") }
     var authMethod by remember(server.id) { mutableStateOf(initialCredential?.method ?: SshAuthMethod.PASSWORD) }
@@ -1420,6 +1466,7 @@ internal fun SSHLoginDialog(
     var unlockMacosKeychain by remember(server.id) {
         mutableStateOf(initialCredential?.unlockMacosKeychain ?: false)
     }
+    var detachedTransport by remember(server.id) { mutableStateOf(server.detachedTransport) }
     var isConnecting by remember(server.id) { mutableStateOf(false) }
     var errorMessage by remember(server.id) { mutableStateOf<String?>(null) }
     val hostDisplay = if (server.resolvedSshPort == 22) {
@@ -1564,6 +1611,31 @@ internal fun SSHLoginDialog(
                         color = LitterTheme.textSecondary,
                         fontSize = 12.sp,
                     )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Switch(
+                        checked = detachedTransport,
+                        onCheckedChange = {
+                            detachedTransport = it
+                            SavedServerStore.updateDetachedTransport(context, server.id, it)
+                        },
+                        enabled = !isConnecting,
+                    )
+                    Column {
+                        Text(
+                            text = "Detached sessions",
+                            color = LitterTheme.textPrimary,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            text = "Agent sessions survive app close on this server. They keep running on the host and re-attach when you return.",
+                            color = LitterTheme.textSecondary,
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
                 if (errorMessage != null) {
                     Text(

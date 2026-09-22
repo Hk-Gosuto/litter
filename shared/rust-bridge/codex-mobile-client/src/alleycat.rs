@@ -85,6 +85,7 @@ pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntime
     let canonical = match candidate {
         "codex" => Some("codex"),
         "pi" | "pi.dev" | "pidev" => Some("pi"),
+        "omp" | "oh-my-pi" | "oh_my_pi" | "oh my pi" => Some("omp"),
         "amp" | "ampcode" | "amp-code" | "amp_code" => Some("amp"),
         "opencode" | "open-code" | "open_code" => Some("opencode"),
         "claude" | "claude-code" | "claude_code" => Some("claude"),
@@ -92,6 +93,7 @@ pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntime
         "hermes" => Some("hermes"),
         _ if display_name == "codex" => Some("codex"),
         _ if display_name == "pi" || display_name == "pi.dev" => Some("pi"),
+        _ if display_name == "omp" || display_name == "oh my pi" => Some("omp"),
         _ if display_name == "amp" || display_name == "amp code" => Some("amp"),
         _ if display_name == "opencode" || display_name == "open code" => Some("opencode"),
         _ if display_name == "claude" || display_name == "claude code" => Some("claude"),
@@ -450,11 +452,7 @@ pub fn parse_pair_payload(json: &str) -> Result<ParsedPairPayload, AlleycatError
     if wire.token.trim().is_empty() {
         return Err(AlleycatError::InvalidPayload("empty token".into()));
     }
-    let relay = wire
-        .relay
-        .as_deref()
-        .map(normalize_relay_url)
-        .transpose()?;
+    let relay = wire.relay.as_deref().map(normalize_relay_url).transpose()?;
     Ok(ParsedPairPayload {
         version: wire.v,
         node_id: wire.node_id,
@@ -465,33 +463,31 @@ pub fn parse_pair_payload(json: &str) -> Result<ParsedPairPayload, AlleycatError
 }
 
 fn normalize_relay_url(relay: &str) -> Result<String, AlleycatError> {
-    let mut parsed = url::Url::parse(relay).map_err(|error| {
-        AlleycatError::InvalidPayload(format!("invalid relay URL: {error}"))
-    })?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| AlleycatError::InvalidPayload("relay URL has no host".into()))?
-        .to_string();
-    let normalized_host = host.trim_end_matches('.').to_string();
-    if normalized_host.is_empty() {
-        return Err(AlleycatError::InvalidPayload(
-            "relay URL has an empty host".into(),
-        ));
+    let mut parsed = url::Url::parse(relay)
+        .map_err(|error| AlleycatError::InvalidPayload(format!("invalid relay URL: {error}")))?;
+    match parsed.host() {
+        Some(url::Host::Domain(host)) if host.trim_end_matches('.').is_empty() => {
+            return Err(AlleycatError::InvalidPayload(
+                "relay URL has an empty host".into(),
+            ));
+        }
+        // Iroh discovery uses fully qualified names. An undotted alias is a
+        // different RelayUrl and opens a second connection to the same relay,
+        // which evicts the first connection for this endpoint identity.
+        Some(url::Host::Domain(host)) if !host.ends_with('.') => {
+            let host = format!("{host}.");
+            parsed.set_host(Some(&host)).map_err(|error| {
+                AlleycatError::InvalidPayload(format!("invalid relay URL host: {error}"))
+            })?;
+        }
+        None => {
+            return Err(AlleycatError::InvalidPayload(
+                "relay URL has no host".into(),
+            ));
+        }
+        _ => {}
     }
-    if normalized_host != host {
-        parsed.set_host(Some(&normalized_host)).map_err(|error| {
-            AlleycatError::InvalidPayload(format!("invalid relay URL host: {error}"))
-        })?;
-    }
-    let normalized = if normalized_host == host {
-        relay.to_string()
-    } else {
-        parsed.to_string()
-    };
-    RelayUrl::from_str(&normalized).map_err(|error| {
-        AlleycatError::InvalidPayload(format!("invalid relay URL: {error}"))
-    })?;
-    Ok(normalized)
+    Ok(parsed.to_string())
 }
 
 fn normalize_optional_host_name(host_name: Option<String>) -> Option<String> {
@@ -708,7 +704,8 @@ async fn open_stream_on(
         .map_err(|error| AlleycatError::InvalidPayload(format!("invalid node_id: {error}")))?;
     let mut addr = EndpointAddr::new(id);
     if let Some(relay) = params.relay.as_deref() {
-        let relay = RelayUrl::from_str(relay).map_err(|error| {
+        // Normalize here as well: saved pairings may predate URL normalization.
+        let relay = RelayUrl::from_str(&normalize_relay_url(relay)?).map_err(|error| {
             AlleycatError::InvalidPayload(format!("invalid relay URL: {error}"))
         })?;
         addr = addr.with_relay_url(relay);
@@ -981,7 +978,7 @@ mod tests {
         assert_eq!(parsed.version, 1);
         assert_eq!(parsed.node_id, key.public().to_string());
         assert_eq!(parsed.token, "deadbeef");
-        assert_eq!(parsed.relay.as_deref(), Some("https://relay.example.com"));
+        assert_eq!(parsed.relay.as_deref(), Some("https://relay.example.com./"));
         assert_eq!(parsed.host_name.as_deref(), Some("studio.local"));
     }
 
@@ -997,17 +994,44 @@ mod tests {
     }
 
     #[test]
-    fn parse_pair_payload_normalizes_trailing_dot_in_relay_host() {
+    fn parse_pair_payload_preserves_discovered_relay_identity() {
         let key = iroh::SecretKey::generate();
         let json = format!(
             r#"{{"v":1,"node_id":"{}","token":"deadbeef","relay":"https://relay.example.com./"}}"#,
             key.public()
         );
         let parsed = parse_pair_payload(&json).expect("parse");
+        assert_eq!(parsed.relay.as_deref(), Some("https://relay.example.com./"));
+    }
+
+    #[test]
+    fn saved_relay_aliases_match_iroh_discovery() {
+        for host in [
+            "euc1-1.relay.n0.iroh.link",
+            "euc1-1.relay.n0.iroh-canary.iroh.link",
+        ] {
+            let discovered = RelayUrl::from_str(&format!("https://{host}./")).unwrap();
+            for saved in [
+                format!("https://{host}"),
+                format!("https://{host}/"),
+                discovered.to_string(),
+            ] {
+                let normalized = normalize_relay_url(&saved).unwrap();
+                assert_eq!(RelayUrl::from_str(&normalized).unwrap(), discovered);
+            }
+        }
+    }
+
+    #[test]
+    fn relay_normalization_preserves_ip_addresses_and_ports() {
+        for relay in ["https://127.0.0.1:3340/", "https://[::1]:3340/"] {
+            assert_eq!(normalize_relay_url(relay).unwrap(), relay);
+        }
         assert_eq!(
-            parsed.relay.as_deref(),
-            Some("https://relay.example.com/")
+            normalize_relay_url("https://relay.example.com:3340/path").unwrap(),
+            "https://relay.example.com.:3340/path"
         );
+        assert!(normalize_relay_url("file:///relay").is_err());
     }
 
     #[test]
@@ -1025,6 +1049,10 @@ mod tests {
             Some("codex".to_string())
         );
         assert_eq!(agent_runtime_kind("pi.dev", "Pi"), Some("pi".to_string()));
+        assert_eq!(
+            agent_runtime_kind("oh-my-pi", "Oh My Pi"),
+            Some("omp".to_string())
+        );
         assert_eq!(agent_runtime_kind("amp", "Amp"), Some("amp".to_string()));
         assert_eq!(
             agent_runtime_kind("open-code", "opencode"),

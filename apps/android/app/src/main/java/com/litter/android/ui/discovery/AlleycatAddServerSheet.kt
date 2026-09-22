@@ -703,7 +703,7 @@ fun alleycatWireStorageValue(wire: AppAlleycatAgentWire): String = when (wire) {
     AppAlleycatAgentWire.JSONL -> "jsonl"
 }
 
-private const val PAIR_COMMAND = "npx kittylitter"
+private const val PAIR_COMMAND = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.10/kittylitter-npm-package.tar.gz"
 
 @Composable
 private fun QrScannerScreen(

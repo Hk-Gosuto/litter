@@ -177,6 +177,7 @@ CODEX_PATCH_FINGERPRINT := $(shell cat $(PATCH_FILES) 2>/dev/null | shasum -a 25
 STAMP_SYNC := $(STAMPS)/sync-codex-$(CODEX_COMMIT)-$(CODEX_PATCH_FINGERPRINT)
 STAMP_BINDINGS_S := $(STAMPS)/bindings-swift
 STAMP_BINDINGS_K := $(STAMPS)/bindings-kotlin
+MATERIAL_SCHEMES_OUTPUT := $(ANDROID_DIR)/app/src/main/java/com/litter/android/ui/LitterMaterialSchemes.generated.kt
 STAMP_XCGEN := $(STAMPS)/xcgen
 UNIFFI_BINDINGS_HASH_SCRIPT := $(ROOT)/tools/scripts/uniffi-bindings-input-hash.sh
 
@@ -228,7 +229,7 @@ $(shell mkdir -p $(STAMPS))
 	android-alpine-fs proot-android \
 	ghostty-ios ghostty-android \
 	alleycat-main \
-	bindings bindings-swift bindings-kotlin \
+	bindings bindings-swift bindings-kotlin material-schemes \
 	sync ensure-codex-patched patch unpatch sync-ghostty unpatch-ghostty xcgen alpine-fs \
 	ios-build ios-build-sim ios-build-sim-fast ios-build-device ios-build-device-fast \
 	watch watch-sim watch-sim-run watch-device watch-typecheck watch-register \
@@ -434,7 +435,7 @@ android-device-run: android-fast
 	ANDROID_REINSTALL_ON_SIGNATURE_MISMATCH='$(ANDROID_REINSTALL_ON_SIGNATURE_MISMATCH)' \
 	./tools/scripts/run-android.sh
 
-android-release: android-alpine-fs proot-android
+android-release: $(MATERIAL_SCHEMES_OUTPUT) android-alpine-fs proot-android
 	@$(MAKE) rust-android ANDROID_RUST_PROFILE=release ANDROID_ABIS="$(ANDROID_RELEASE_ABIS)"
 	@echo "==> Building Android release..."
 	@cd $(ANDROID_DIR) && $(ANDROID_ENV) ANDROID_ABIS="$(ANDROID_RELEASE_ABIS)" ./gradlew :app:assembleRelease
@@ -617,6 +618,23 @@ $(STAMP_BINDINGS_K): $(STAMP_SYNC) $(BOUNDARY_SOURCES) | alleycat-main ensure-co
 	@cd $(RUST_DIR) && $(DEV_CARGO_ENV) ./generate-bindings.sh --kotlin-only
 	@touch $@
 
+# Regenerate the full Material3 ColorScheme roles for every Litter theme from
+# the shared theme JSONs using the official Material color-utilities (the
+# engine behind the Material Theme Builder). Inputs are the theme JSONs and
+# the generator; the emitted Kotlin file is consumed by LitterAppTheme.
+MATERIAL_SCHEME_SOURCES := $(wildcard $(IOS_DIR)/Sources/Litter/Resources/Themes/*.json) \
+	$(ROOT)/tools/scripts/generate-material-schemes.mjs \
+	$(ROOT)/tools/scripts/register-esm.mjs \
+	$(ROOT)/tools/scripts/esm-resolver.mjs \
+	$(ROOT)/tools/scripts/generate-material-schemes.sh \
+	$(ROOT)/tools/scripts/package.json \
+	$(ROOT)/tools/scripts/package-lock.json
+
+material-schemes: $(MATERIAL_SCHEMES_OUTPUT)
+$(MATERIAL_SCHEMES_OUTPUT): $(MATERIAL_SCHEME_SOURCES)
+	@echo "==> Generating Material3 scheme roles..."
+	@$(ROOT)/tools/scripts/generate-material-schemes.sh
+
 xcgen: $(STAMP_XCGEN)
 $(STAMP_XCGEN): $(IOS_DIR)/project.yml $(IOS_SCRIPTS)/regenerate-project.sh $(IOS_PROJECT_INPUTS)
 	@echo "==> Regenerating Xcode project..."
@@ -782,7 +800,7 @@ watch-sim-run: watch-sim
 	xcrun simctl install $$WATCH_UDID "$$APP_PATH" ; \
 	xcrun simctl launch $$WATCH_UDID com.sigkitten.litter.watch
 
-android-debug: $(STAMP_BINDINGS_K)
+android-debug: $(MATERIAL_SCHEMES_OUTPUT) $(STAMP_BINDINGS_K)
 	@echo "==> Building Android debug..."
 	@cd $(ANDROID_DIR) && $(ANDROID_ENV) ./gradlew :app:assembleDebug
 
@@ -832,7 +850,7 @@ test-ios: rust-ios-sim-fast xcgen
 		-configuration Debug \
 		-destination 'platform=iOS Simulator,name=$(IOS_SIM_DEVICE)'
 
-test-android: bindings-kotlin
+test-android: $(MATERIAL_SCHEMES_OUTPUT) $(STAMP_BINDINGS_K)
 	@echo "==> Running Android tests..."
 	@cd $(ANDROID_DIR) && $(ANDROID_ENV) ./gradlew :app:testDebugUnitTest
 

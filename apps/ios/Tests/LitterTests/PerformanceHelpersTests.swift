@@ -3,42 +3,48 @@ import XCTest
 
 @MainActor
 final class PerformanceHelpersTests: XCTestCase {
-    func testScrollViewportStateOnlyChangesAtRenderingThresholds() {
-        let nearBottom = ConversationScrollViewportState.resolve(
-            distanceFromBottom: 8,
-            nearBottomDistance: 12,
-            scrollToBottomDistance: 48
-        )
-        let middle = ConversationScrollViewportState.resolve(
-            distanceFromBottom: 30,
-            nearBottomDistance: 12,
-            scrollToBottomDistance: 48
-        )
-        let farFromBottom = ConversationScrollViewportState.resolve(
-            distanceFromBottom: 72,
-            nearBottomDistance: 12,
-            scrollToBottomDistance: 48
-        )
+    func testLargeConversationAutomaticallyCollapsesOlderTurns() {
+        let threshold = ConversationTurnCollapsePolicy.automaticItemThreshold
 
-        XCTAssertEqual(nearBottom, ConversationScrollViewportState(
-            isNearBottom: true,
-            showsScrollToBottom: false
-        ))
-        XCTAssertEqual(middle, ConversationScrollViewportState(
-            isNearBottom: false,
-            showsScrollToBottom: false
-        ))
-        XCTAssertEqual(farFromBottom, ConversationScrollViewportState(
-            isNearBottom: false,
-            showsScrollToBottom: true
-        ))
         XCTAssertEqual(
-            middle,
-            ConversationScrollViewportState.resolve(
-                distanceFromBottom: 47,
-                nearBottomDistance: 12,
-                scrollToBottomDistance: 48
-            )
+            ConversationTurnCollapsePolicy.expandedRecentTurnCount(
+                preferenceEnabled: false,
+                itemCount: threshold - 1
+            ),
+            .max
+        )
+        XCTAssertEqual(
+            ConversationTurnCollapsePolicy.expandedRecentTurnCount(
+                preferenceEnabled: false,
+                itemCount: threshold
+            ),
+            1
+        )
+        XCTAssertEqual(
+            ConversationTurnCollapsePolicy.expandedRecentTurnCount(
+                preferenceEnabled: true,
+                itemCount: 1
+            ),
+            1
+        )
+    }
+
+    func testInfiniteScrollPrefetchesBeforeTheVisibleCacheEdge() {
+        let orderedIDs = (0..<20).map { "turn-\($0)" }
+
+        XCTAssertEqual(
+            ConversationInfiniteScrollPolicy.earliestVisibleIndex(
+                visibleIDs: ["turn-8", "turn-9", "turn-10"],
+                orderedIDs: orderedIDs
+            ),
+            8
+        )
+        XCTAssertEqual(
+            ConversationInfiniteScrollPolicy.earliestVisibleIndex(
+                visibleIDs: ["turn-4", "turn-5", "turn-6"],
+                orderedIDs: orderedIDs
+            ),
+            4
         )
     }
 
@@ -234,6 +240,59 @@ final class PerformanceHelpersTests: XCTestCase {
         XCTAssertEqual(merged[0].items.count, 1)
         XCTAssertEqual(merged[1].items.count, 1)
         XCTAssertEqual(merged[2].items.count, 1)
+    }
+
+    func testExplorationMergeKeepsItsIdentityWhenOlderTurnsArePrepended() {
+        let baseTime = Date(timeIntervalSince1970: 500)
+        let olderTurn = TranscriptTurn.build(
+            from: [makeExplorationItem(
+                command: "pwd",
+                actionKind: .read,
+                path: "/tmp",
+                turnId: "turn-0",
+                turnIndex: 0,
+                timestamp: baseTime
+            )],
+            threadStatus: .ready,
+            expandedRecentTurnCount: 1
+        )[0]
+        let firstLoadedTurn = TranscriptTurn.build(
+            from: [makeExplorationItem(
+                command: "cat reducer.rs",
+                actionKind: .read,
+                path: "/tmp/reducer.rs",
+                turnId: "turn-1",
+                turnIndex: 1,
+                timestamp: baseTime.addingTimeInterval(1)
+            )],
+            threadStatus: .ready,
+            expandedRecentTurnCount: 1
+        )[0]
+        let newestTurn = TranscriptTurn.build(
+            from: [makeExplorationItem(
+                command: "rg pendingSteers",
+                actionKind: .search,
+                path: "/tmp/reducer.rs",
+                query: "pendingSteers",
+                turnId: "turn-2",
+                turnIndex: 2,
+                timestamp: baseTime.addingTimeInterval(2)
+            )],
+            threadStatus: .ready,
+            expandedRecentTurnCount: 1
+        )[0]
+
+        let beforePrepend = TranscriptTurn.mergeConsecutiveExplorationTurnsForRendering([
+            firstLoadedTurn,
+            newestTurn,
+        ])
+        let afterPrepend = TranscriptTurn.mergeConsecutiveExplorationTurnsForRendering([
+            olderTurn,
+            firstLoadedTurn,
+            newestTurn,
+        ])
+
+        XCTAssertEqual(beforePrepend.first?.id, afterPrepend.first?.id)
     }
 
     func testMessageRenderCacheReusesStableAssistantRevisionKey() {

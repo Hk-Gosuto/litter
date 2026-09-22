@@ -50,6 +50,7 @@
 		0F7F71135A48FD54EAF3C257 /* brand_logo.png in Resources */ = {isa = PBXBuildFile; fileRef = 17BD69B0550C63596995AC18 /* brand_logo.png */; };
 		0FA2D55FE17D4AD9A910FB74 /* gruvbox-light-hard.json in Resources */ = {isa = PBXBuildFile; fileRef = 9AF7E00FF3D6A3D37B161855 /* gruvbox-light-hard.json */; };
 		0FEE6C68E9A49D3AAB2859FD /* LitterComplicationEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4578B3ADA4BFFC01A6910404 /* LitterComplicationEntry.swift */; };
+		104D7ACC2AC0056957BA1C60 /* HarnessSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA8E4A2207A671D10A81CB6 /* HarnessSettingsView.swift */; };
 		1101AAA61DF5B949EE2BB0AF /* StreamingRendererCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ECDF838BCE5FEBFE5B80DCC /* StreamingRendererCoordinator.swift */; };
 		1129DC9B38650FC49541690E /* BerkeleyMono-Bold.otf in Resources */ = {isa = PBXBuildFile; fileRef = 3BD63CCD80D9E1F66879EF97 /* BerkeleyMono-Bold.otf */; };
 		123438277614AD5D2F7CDBC4 /* OpenAIApiKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3374916FC10F81E9D1C0FCE5 /* OpenAIApiKeyStore.swift */; };
@@ -235,6 +236,7 @@
 		56F93B9C3848A3D983526A2F /* CodexVoiceCallAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACB2B7BC833F0EB556D8401A /* CodexVoiceCallAttributes.swift */; };
 		5784473E9D446D638DE2EEB2 /* CodexVoiceCallAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACB2B7BC833F0EB556D8401A /* CodexVoiceCallAttributes.swift */; };
 		57F6703288282A1CC4A0B216 /* SavedThreadsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1E4447C779CA8B66B950F7 /* SavedThreadsStore.swift */; };
+		58547E503761BE6E1C2086C9 /* HexColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A6C1D1C48E7406BAD30F901 /* HexColorTests.swift */; };
 		5895E5C25C200FC3FF747049 /* slack-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 5DF2C84DD77E7A8282AE9831 /* slack-dark.json */; };
 		5935F15B5E258E3222780528 /* github-light-high-contrast.json in Resources */ = {isa = PBXBuildFile; fileRef = 70AB8E0BCCF3384EE9B4A0BF /* github-light-high-contrast.json */; };
 		595604C3346A5A3C0B4DBBEC /* SessionLaunchSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB2EAAADB209274FFFB94CC0 /* SessionLaunchSupport.swift */; };
@@ -437,6 +439,7 @@
 		A5D2556BF0AC3D6805FF91FF /* BrandLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = C361CBF40ED3D35C44D46880 /* BrandLogo.swift */; };
 		A6F78ABD673579D6716690B2 /* one-dark-pro-D.json in Resources */ = {isa = PBXBuildFile; fileRef = 289E852E220BF379FBFA6BCD /* one-dark-pro-D.json */; };
 		A6FF1F7811A4B6626BD440F5 /* ConversationComposerModalCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED83627330437842851BBC07 /* ConversationComposerModalCoordinator.swift */; };
+		A74B16DA5906267A04FE1E52 /* MessageLinkSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28B205ADFD09D04AB4A1A8E6 /* MessageLinkSupportTests.swift */; };
 		A75F1D5012868217B30EEEB6 /* laserwave.json in Resources */ = {isa = PBXBuildFile; fileRef = 9AB673AF3C45AA3144F784F4 /* laserwave.json */; };
 		A77B4456D03F50B2EC91C0E6 /* houston.json in Resources */ = {isa = PBXBuildFile; fileRef = 89172C83E4194291FF873A88 /* houston.json */; };
 		A7D11865D9592D058A51D3FB /* poimandres.json in Resources */ = {isa = PBXBuildFile; fileRef = 6F877B8FA83A8228C4515FB4 /* poimandres.json */; };
@@ -545,6 +548,7 @@
 		CFA5E4B56537F480AFECC903 /* DirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 318F2F8563E91AB97950F5DA /* DirectoryPickerView.swift */; };
 		CFB261D6AD3FA1F74A2AC301 /* studio-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 956AADB9A19C381E7C4E56D7 /* studio-light.json */; };
 		D07B503DB96496A43AE6FC20 /* VideoWallpaperProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554F4A83699FF91F38D1E4CE /* VideoWallpaperProcessor.swift */; };
+		D080F3E283D4389B6A988CC6 /* HarnessSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA8E4A2207A671D10A81CB6 /* HarnessSettingsView.swift */; };
 		D11EFBC1C0D250134F354DC5 /* AlleycatCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4658068D198E8F82A23FF04 /* AlleycatCredentialStore.swift */; };
 		D14830D3F4040B9E9895A46D /* TranscriptScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E08E63A195E01B3163642D /* TranscriptScreen.swift */; };
 		D1C2C119E9801D3921F44146 /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 87C57BE485A2C3DCC39C7368 /* Nuke */; };
@@ -596,6 +600,7 @@
 		E129D3CADE431D97BE90BF70 /* ServerPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D220AD4FC96E2D24A533485 /* ServerPill.swift */; };
 		E1C1DBC137D5562B08F5E88D /* kanagawa-lotus.json in Resources */ = {isa = PBXBuildFile; fileRef = D2608C1F271D28BFEFBA5EFB /* kanagawa-lotus.json */; };
 		E1EEBECB89F39C947D704B6F /* InlineHandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 832D667C7B0B93EFED3577EE /* InlineHandoffView.swift */; };
+		E21627B0742DBE674DC230C4 /* MessageLinkUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E724333261AD4653114210E9 /* MessageLinkUITests.swift */; };
 		E2D03F494483EBB561B47785 /* RollingMetricText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D8203E9494F06515FC30E3D /* RollingMetricText.swift */; };
 		E34A60A9F5EC77C53120D390 /* LitterPlatform.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1388480E7FFD4489CE617C6 /* LitterPlatform.swift */; };
 		E376969CF8444E7949C3F673 /* night-owl.json in Resources */ = {isa = PBXBuildFile; fileRef = 14B7D7A9258301037FB7DBC0 /* night-owl.json */; };
@@ -803,6 +808,7 @@
 		25F1267B79425E5A42068216 /* ConversationComposerPopupOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationComposerPopupOverlayView.swift; sourceTree = "<group>"; };
 		283C843BD2011350B42F6807 /* WatchCompanionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCompanionBridge.swift; sourceTree = "<group>"; };
 		289E852E220BF379FBFA6BCD /* one-dark-pro-D.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "one-dark-pro-D.json"; sourceTree = "<group>"; };
+		28B205ADFD09D04AB4A1A8E6 /* MessageLinkSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageLinkSupportTests.swift; sourceTree = "<group>"; };
 		2A7F3CC664EDAC7714BA817B /* QuickReplySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickReplySheet.swift; sourceTree = "<group>"; };
 		2BC9B404D9E32D4734566A7D /* LitterWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LitterWatch.entitlements; sourceTree = "<group>"; };
 		2C66EB395895F19874D3B933 /* AgentRuntimePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntimePresentation.swift; sourceTree = "<group>"; };
@@ -959,6 +965,7 @@
 		88B886829FDF299DFFCC1A86 /* everforest-light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "everforest-light.json"; sourceTree = "<group>"; };
 		89172C83E4194291FF873A88 /* houston.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = houston.json; sourceTree = "<group>"; };
 		892D583790A9BD90CFD89701 /* LockScreenCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenCardView.swift; sourceTree = "<group>"; };
+		8A6C1D1C48E7406BAD30F901 /* HexColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HexColorTests.swift; sourceTree = "<group>"; };
 		8BE99A02238FD8184F77DD49 /* WallpaperAdjustView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperAdjustView.swift; sourceTree = "<group>"; };
 		8D9B7168247D5201C4795A69 /* AlleycatPairingModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlleycatPairingModeTests.swift; sourceTree = "<group>"; };
 		8F98D2E0622F1A4DADC1E888 /* cat_transmission_01.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cat_transmission_01.png; sourceTree = "<group>"; };
@@ -1016,6 +1023,7 @@
 		ACD06DF72574CDDF16E1E41B /* BerkeleyMono-Oblique.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BerkeleyMono-Oblique.otf"; sourceTree = "<group>"; };
 		ADE3C405C5BF7CFDD59604A0 /* absolutely-light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "absolutely-light.json"; sourceTree = "<group>"; };
 		AE86DDCDD1BEC770EAE330A9 /* cat_transmission_03.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cat_transmission_03.png; sourceTree = "<group>"; };
+		AEA8E4A2207A671D10A81CB6 /* HarnessSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessSettingsView.swift; sourceTree = "<group>"; };
 		AEFDEDEF73BC5E33C2F2E3B1 /* AppSpecificTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSpecificTypes.swift; sourceTree = "<group>"; };
 		AF409B64E0082FC6B68379EA /* dracula-soft.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "dracula-soft.json"; sourceTree = "<group>"; };
 		B0648D501D363553E86BAE63 /* BerkeleyMono-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BerkeleyMono-Regular.otf"; sourceTree = "<group>"; };
@@ -1108,6 +1116,7 @@
 		E518CD2A67CEB8B41545D0D2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E603FBE2AAD5D7C19649F986 /* NewThreadHeroView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewThreadHeroView.swift; sourceTree = "<group>"; };
 		E6E494F6BC6E1280CD7E4DD4 /* LitterUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LitterUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E724333261AD4653114210E9 /* MessageLinkUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageLinkUITests.swift; sourceTree = "<group>"; };
 		E744000053715A5866060B15 /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSupport.swift; sourceTree = "<group>"; };
 		E7B233BBDF2CFAC604E4A1DD /* AppSnapshotRecord+Runtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppSnapshotRecord+Runtime.swift"; sourceTree = "<group>"; };
 		E7B2873F09522FAE2FFFFC9B /* ThreadSearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadSearchResultsView.swift; sourceTree = "<group>"; };
@@ -1185,6 +1194,7 @@
 			isa = PBXGroup;
 			children = (
 				46D841AF0FFB0241834F88D0 /* LitterUITests.swift */,
+				E724333261AD4653114210E9 /* MessageLinkUITests.swift */,
 			);
 			name = LitterUITests;
 			path = Tests/LitterUITests;
@@ -1233,10 +1243,12 @@
 				77969543FA36FEA8B621A3B9 /* ConversationDisplayPreferenceTests.swift */,
 				B0C1A0569B4424123A37B0DA /* ConversationPlanSemanticsTests.swift */,
 				B66383694E80CDCBCF582C67 /* ConversationScreenModelTests.swift */,
+				8A6C1D1C48E7406BAD30F901 /* HexColorTests.swift */,
 				018779F7529B6CAAC3A2B896 /* HomeDashboardSupportTests.swift */,
 				F5F26ED2D3C223D3FD12ACB9 /* InteractionTimingTests.swift */,
 				73F04FAE655DA80B0585F866 /* LitterAppearanceModeTests.swift */,
 				3299D7A71DE1AC05363FDE27 /* MessageContentBridgeTests.swift */,
+				28B205ADFD09D04AB4A1A8E6 /* MessageLinkSupportTests.swift */,
 				119E33CEA4127BD72EADC968 /* PathDisplayTests.swift */,
 				BE04FF38C9E336A47C7E161B /* PerformanceHelpersTests.swift */,
 				5031DC5854F61EEB5F5091F4 /* PerformanceMeasurementTests.swift */,
@@ -1668,6 +1680,7 @@
 				77D950991BD0F0199209EB68 /* ExperimentalFeaturesView.swift */,
 				C0C2B3DB9D57EA3A2A8608C6 /* FormattedText.swift */,
 				0894A8F2B3DA66F879AEA4EE /* GhosttyTerminalView.swift */,
+				AEA8E4A2207A671D10A81CB6 /* HarnessSettingsView.swift */,
 				817117A5E16EBD02388DBBE1 /* HeaderView.swift */,
 				6C2A455B0E2E7C8B6EE59A93 /* HomeBottomBar.swift */,
 				6A12222458304DD9CA8D4593 /* HomeComposerView.swift */,
@@ -2262,10 +2275,12 @@
 				2F28DA245F84E87318A4D7E4 /* ConversationDisplayPreferenceTests.swift in Sources */,
 				9C44ABDBA2399DD2C0B1E9E2 /* ConversationPlanSemanticsTests.swift in Sources */,
 				F1535DE46C8E5A530A8C131E /* ConversationScreenModelTests.swift in Sources */,
+				58547E503761BE6E1C2086C9 /* HexColorTests.swift in Sources */,
 				6EF7AFD103A68CDEA1A94612 /* HomeDashboardSupportTests.swift in Sources */,
 				7881749EF05190C237EFF36B /* InteractionTimingTests.swift in Sources */,
 				4BEFD1E7129A6B33D965029D /* LitterAppearanceModeTests.swift in Sources */,
 				68EE71DC41AA028AFE7118ED /* MessageContentBridgeTests.swift in Sources */,
+				A74B16DA5906267A04FE1E52 /* MessageLinkSupportTests.swift in Sources */,
 				333B502373DE386E9BDCE871 /* PathDisplayTests.swift in Sources */,
 				8EC17845C1FE8B8550984B57 /* PerServerComplicationTests.swift in Sources */,
 				ECD39F196866971BFDF7E17D /* PerformanceHelpersTests.swift in Sources */,
@@ -2382,6 +2397,7 @@
 				9C135E21A7D18E46E9E7B064 /* GhosttyBridge.m in Sources */,
 				224410A7740CDA9CF18FC1A4 /* GhosttyRendererBackendBridge.swift in Sources */,
 				BA1027048577556040076C7C /* GhosttyTerminalView.swift in Sources */,
+				D080F3E283D4389B6A988CC6 /* HarnessSettingsView.swift in Sources */,
 				CD03B7391871A06D022D42BA /* HeaderView.swift in Sources */,
 				B115856D13BD0B2380256374 /* HomeAnchor.swift in Sources */,
 				40F262594905BCA726B1DF88 /* HomeBottomBar.swift in Sources */,
@@ -2570,6 +2586,7 @@
 				81EDE80D456A85034D7F2AD5 /* GhosttyBridge.m in Sources */,
 				503463B52E06A546E127F063 /* GhosttyRendererBackendBridge.swift in Sources */,
 				2DF4732DBDB57688B178041E /* GhosttyTerminalView.swift in Sources */,
+				104D7ACC2AC0056957BA1C60 /* HarnessSettingsView.swift in Sources */,
 				8B506726FBE5E741B48A1C07 /* HeaderView.swift in Sources */,
 				52830FCFF8417E724A15555F /* HomeAnchor.swift in Sources */,
 				65023FCDB8DC6F4A4617F3CB /* HomeBottomBar.swift in Sources */,
@@ -2673,6 +2690,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7F7580E318B61556359A4EC1 /* LitterUITests.swift in Sources */,
+				E21627B0742DBE674DC230C4 /* MessageLinkUITests.swift in Sources */,
 				05A1BF5FB8220D9D48C611D0 /* SnapshotHelper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2894,7 +2912,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 210000001;
+				CURRENT_PROJECT_VERSION = 210020001;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = TZ447KHNZL;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -2911,7 +2929,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim";
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client";
@@ -3038,7 +3056,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 210000001;
+				CURRENT_PROJECT_VERSION = 210020001;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = TZ447KHNZL;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3061,7 +3079,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim";
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.2;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -3133,7 +3151,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 210000001;
+				CURRENT_PROJECT_VERSION = 210020001;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = TZ447KHNZL;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -3150,7 +3168,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim";
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client";

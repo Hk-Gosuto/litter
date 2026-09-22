@@ -612,12 +612,13 @@ impl ServerSession {
         }
 
         if let Some(ref working_dir) = in_process.working_directory
-            && let Err(e) = std::env::set_current_dir(working_dir) {
-                return Err(TransportError::ConnectionFailed(format!(
-                    "failed to set working directory {:?}: {e}",
-                    working_dir
-                )));
-            }
+            && let Err(e) = std::env::set_current_dir(working_dir)
+        {
+            return Err(TransportError::ConnectionFailed(format!(
+                "failed to set working directory {:?}: {e}",
+                working_dir
+            )));
+        }
 
         let mut cli_overrides = vec![
             ("features.goals".to_string(), true.into()),
@@ -649,7 +650,12 @@ impl ServerSession {
             .await
             .map_err(|e| TransportError::ConnectionFailed(format!("config build failed: {e}")))?;
 
-        let auth_manager = AuthManager::shared_from_config(&base_config, false).await;
+        let auth_manager = AuthManager::shared_from_config(&base_config, false)
+            .await
+            .map_err(|e| {
+                TransportError::ConnectionFailed(format!("auth initialization failed: {e}"))
+            })?;
+
         let cloud_config_bundle = cloud_config_bundle_loader(
             auth_manager.clone(),
             base_config.chatgpt_base_url.clone(),
@@ -699,7 +705,7 @@ impl ServerSession {
                     experimental_api: true,
                     request_attestation: false,
                     opt_out_notification_methods: None,
-                    mcp_server_openai_form_elicitation: false,
+                    ..Default::default()
                 }),
             },
             channel_capacity: in_process.channel_capacity,
@@ -1174,8 +1180,8 @@ pub(crate) fn remote_connect_args(config: &ServerConfig) -> (String, RemoteAppSe
         client_name: "Litter".to_string(),
         client_version: "1.0".to_string(),
         experimental_api: true,
-        mcp_server_openai_form_elicitation: false,
         opt_out_notification_methods: Vec::new(),
+        mcp_server_openai_form_elicitation: false,
         channel_capacity: 256,
     };
 
@@ -1752,7 +1758,7 @@ fn route_app_server_event(
             info!("remote event notification {}", notification);
             let _ = event_tx.send(ServerEvent::Notification {
                 runtime_kind,
-                notification: notification.clone(),
+                notification: (**notification).clone(),
             });
         }
         AppServerEvent::ServerRequest(request) => {
@@ -1760,7 +1766,7 @@ fn route_app_server_event(
             append_android_debug_log(&format!("server_request={request:?}"));
             let _ = event_tx.send(ServerEvent::Request {
                 runtime_kind,
-                request: request.clone(),
+                request: (**request).clone(),
             });
         }
         AppServerEvent::Lagged { skipped } => {
@@ -1784,13 +1790,13 @@ fn route_in_process_event(
         InProcessServerEvent::ServerNotification(notification) => {
             let _ = event_tx.send(ServerEvent::Notification {
                 runtime_kind: "codex".to_string(),
-                notification,
+                notification: *notification,
             });
         }
         InProcessServerEvent::ServerRequest(request) => {
             let _ = event_tx.send(ServerEvent::Request {
                 runtime_kind: "codex".to_string(),
-                request,
+                request: *request,
             });
         }
         InProcessServerEvent::Lagged { skipped } => {
@@ -1963,8 +1969,8 @@ mod tests {
             client_name: "LitterTest".to_string(),
             client_version: "0".to_string(),
             experimental_api: true,
-            mcp_server_openai_form_elicitation: false,
             opt_out_notification_methods: Vec::new(),
+            mcp_server_openai_form_elicitation: false,
             channel_capacity: 16,
         }
     }

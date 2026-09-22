@@ -37,6 +37,7 @@ use codex_app_server_protocol as upstream;
 mod dynamic_tools;
 mod event_loop;
 pub(crate) mod minigame;
+mod model_catalog;
 mod store_listener;
 #[cfg(test)]
 mod tests;
@@ -78,9 +79,15 @@ pub struct MobileClient {
     /// session token so cold launches can reconnect without another browser
     /// step-up while the token remains valid.
     pub(crate) slingshot_credentials_directory: Arc<StdMutex<Option<String>>>,
+    /// Directory where small local app preferences live. Used by Rust-only
+    /// helpers that need process-restart persistence without expanding the
+    /// public preferences record.
+    pub(crate) mobile_preferences_directory: Arc<StdMutex<Option<String>>>,
     direct_resumed_threads: Arc<StdMutex<HashSet<ThreadKey>>>,
     resume_locks: Arc<StdMutex<HashMap<ThreadKey, Weak<tokio::sync::Mutex<()>>>>>,
     thread_runtime_routes: Arc<StdMutex<HashMap<ThreadKey, AgentRuntimeKind>>>,
+    model_catalog_refreshes: StdMutex<HashMap<String, model_catalog::ModelCatalogRefresh>>,
+    model_catalog_locks: StdMutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
     /// Single shared iroh `Endpoint` for all alleycat operations. iroh is
     /// designed for one-per-app reuse: `Endpoint::connect(&self, ...)`
     /// takes `&self` so it can be called many times to open new
@@ -115,6 +122,8 @@ pub struct MobileClient {
     /// session exits or the caller explicitly closes it.
     pub(crate) terminal_sessions:
         Arc<StdMutex<HashMap<String, Arc<crate::terminal::TerminalSession>>>>,
+    /// Platform-owned SSH host-key pins shared by server and terminal flows.
+    pub(crate) ssh_trust_store: Arc<StdMutex<Option<Arc<crate::terminal::TerminalSshTrustStore>>>>,
 }
 
 /// State for a single in-flight guided SSH connect.
@@ -403,6 +412,15 @@ fn mcp_elicitation_response_json(
             RpcError::Deserialization(format!("deserialize MCP elicitation params: {error}"))
         })?;
     let response = match &params.request {
+        upstream::McpServerElicitationRequest::UserVerification { .. }
+        | upstream::McpServerElicitationRequest::OpenAiForm { .. }
+        | upstream::McpServerElicitationRequest::OpenAiElicitationForm { .. } => {
+            upstream::McpServerElicitationRequestResponse {
+                action: upstream::McpServerElicitationAction::Cancel,
+                content: None,
+                meta: None,
+            }
+        }
         upstream::McpServerElicitationRequest::Form {
             requested_schema, ..
         } if requested_schema.properties.is_empty() => {
@@ -426,14 +444,6 @@ fn mcp_elicitation_response_json(
                 action: upstream::McpServerElicitationAction::Accept,
                 content: Some(serde_json::Value::Object(content)),
                 meta: None,
-            }
-        }
-        upstream::McpServerElicitationRequest::OpenAiForm { .. } => {
-            let (action, meta) = mcp_approval_action_response(answers);
-            upstream::McpServerElicitationRequestResponse {
-                action,
-                content: None,
-                meta,
             }
         }
         upstream::McpServerElicitationRequest::Url { .. } => {
@@ -682,7 +692,9 @@ fn missing_runtime_kinds(
         .cloned()
         .collect::<HashSet<_>>();
     let mut missing = requested_runtime_kinds
-        .iter().filter(|&kind| !existing.contains(kind)).cloned()
+        .iter()
+        .filter(|&kind| !existing.contains(kind))
+        .cloned()
         .collect::<Vec<_>>();
     missing.sort();
     missing
@@ -759,9 +771,11 @@ impl MobileClient {
         let event_processor = Arc::new(EventProcessor::new());
         let app_store = Arc::new(AppStoreReducer::new());
         let sessions = Arc::new(RwLock::new(HashMap::new()));
+        let mobile_preferences_directory = Arc::new(StdMutex::new(None));
         spawn_store_listener(
             Arc::clone(&app_store),
             Arc::clone(&sessions),
+            Arc::clone(&mobile_preferences_directory),
             event_processor.subscribe(),
         );
         Self {
@@ -774,15 +788,26 @@ impl MobileClient {
             recorder: Arc::new(crate::recorder::MessageRecorder::new()),
             widget_waiters: Arc::new(StdMutex::new(HashMap::new())),
             saved_apps_directory: Arc::new(StdMutex::new(None)),
+            mobile_preferences_directory,
             slingshot_credentials_directory: Arc::new(StdMutex::new(None)),
             direct_resumed_threads: Arc::new(StdMutex::new(HashSet::new())),
             resume_locks: Arc::new(StdMutex::new(HashMap::new())),
             thread_runtime_routes: Arc::new(StdMutex::new(HashMap::new())),
+            model_catalog_refreshes: StdMutex::new(HashMap::new()),
+            model_catalog_locks: StdMutex::new(HashMap::new()),
             alleycat_endpoint: Arc::new(tokio::sync::OnceCell::new()),
             alleycat_secret_key: Arc::new(StdMutex::new(None)),
             ssh_bootstrap_flows: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             alleycat_restart_targets: Arc::new(StdMutex::new(HashMap::new())),
             terminal_sessions: Arc::new(StdMutex::new(HashMap::new())),
+            ssh_trust_store: Arc::new(StdMutex::new(None)),
+        }
+    }
+
+    pub fn set_ssh_trust_store(&self, store: Arc<crate::terminal::TerminalSshTrustStore>) {
+        match self.ssh_trust_store.lock() {
+            Ok(mut guard) => *guard = Some(store),
+            Err(error) => *error.into_inner() = Some(store),
         }
     }
 
@@ -971,6 +996,62 @@ impl MobileClient {
         }
     }
 
+    pub(crate) fn set_mobile_preferences_directory(&self, directory: String) {
+        let mut guard = self
+            .mobile_preferences_directory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = if directory.is_empty() {
+            None
+        } else {
+            Some(directory)
+        };
+    }
+
+    fn mobile_preferences_directory(&self) -> Option<String> {
+        self.mobile_preferences_directory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn persisted_thread_collaboration_mode(&self, key: &ThreadKey) -> Option<AppModeKind> {
+        let directory = self.mobile_preferences_directory()?;
+        crate::thread_modes::read_mode(&directory, key)
+    }
+
+    fn persist_thread_collaboration_mode(&self, key: &ThreadKey, mode: AppModeKind) {
+        let Some(directory) = self.mobile_preferences_directory() else {
+            return;
+        };
+        crate::thread_modes::set_mode(&directory, key, mode);
+    }
+
+    pub(crate) fn apply_persisted_thread_collaboration_mode(&self, thread: &mut ThreadSnapshot) {
+        if let Some(mode) = self.persisted_thread_collaboration_mode(&thread.key) {
+            thread.collaboration_mode = mode;
+        }
+    }
+
+    pub(crate) fn apply_persisted_thread_modes_to_infos(
+        &self,
+        server_id: &str,
+        threads: &[ThreadInfo],
+    ) {
+        if self.mobile_preferences_directory().is_none() {
+            return;
+        }
+        for info in threads {
+            let key = ThreadKey {
+                server_id: server_id.to_string(),
+                thread_id: info.id.clone(),
+            };
+            if let Some(mode) = self.persisted_thread_collaboration_mode(&key) {
+                self.app_store.set_thread_collaboration_mode(&key, mode);
+            }
+        }
+    }
+
     fn direct_resumed_threads(&self) -> std::sync::MutexGuard<'_, HashSet<ThreadKey>> {
         match self.direct_resumed_threads.lock() {
             Ok(guard) => guard,
@@ -1144,6 +1225,21 @@ impl MobileClient {
         runtime_kind: AgentRuntimeKind,
         request: &mut upstream::ClientRequest,
     ) {
+        if runtime_kind == "codex" {
+            let config = match request {
+                upstream::ClientRequest::ThreadStart { params, .. } => Some(&mut params.config),
+                upstream::ClientRequest::ThreadResume { params, .. } => Some(&mut params.config),
+                upstream::ClientRequest::ThreadFork { params, .. } => Some(&mut params.config),
+                _ => None,
+            };
+            if let Some(config) = config {
+                // Background mobile work must not execute desktop login hooks,
+                // either for each tool command or while capturing a shell snapshot.
+                let config = config.get_or_insert_with(Default::default);
+                config.insert("allow_login_shell".into(), serde_json::json!(false));
+                config.insert("features.shell_snapshot".into(), serde_json::json!(false));
+            }
+        }
         let supports_permission_overrides =
             self.runtime_supports_thread_permission_overrides(&runtime_kind);
         let defaults_to_full_access = runtime_kind == "pi" || runtime_kind == "local-studio";
@@ -1741,13 +1837,18 @@ impl MobileClient {
         }
         // Cache metadata so platforms can render labels/icons/capability
         // flags from anywhere in the app, not just at probe time.
-        self.agent_metadata
-            .upsert_all(agents.iter().map(|agent| crate::store::AppAgentMetadata {
+        // Reconciled against the built-in catalog first so a host can't
+        // erase what litter already knows, and so `supports_ssh_bridge`
+        // keeps meaning "litter can launch this over SSH" rather than
+        // "the alleycat host could".
+        self.agent_metadata.upsert_all(agents.iter().map(|agent| {
+            crate::store::agent_catalog::reconcile_probe_metadata(crate::store::AppAgentMetadata {
                 name: agent.name.clone(),
                 display_name: agent.display_name.clone(),
                 presentation: agent.presentation.clone().map(Into::into),
                 capabilities: agent.capabilities.clone().map(Into::into),
-            }));
+            })
+        }));
         Ok(agents)
     }
 
@@ -2209,14 +2310,55 @@ impl MobileClient {
         // so resume can rebuild the full SSH transport.
         self.replace_existing_session(server_id.as_str()).await;
 
+        let normalized_host = crate::terminal::normalize_host(&ssh_credentials.host);
+        let trust_store = self
+            .ssh_trust_store
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
+        let pinned_fingerprint = trust_store
+            .as_ref()
+            .and_then(|store| store.pinned(normalized_host.clone(), ssh_credentials.port));
+        let policy_pin = pinned_fingerprint.clone();
+        let observed_fingerprint = Arc::new(tokio::sync::Mutex::new(None::<String>));
+        let callback_observed = Arc::clone(&observed_fingerprint);
         let ssh_client = Arc::new(
             SshClient::connect(
                 ssh_credentials.clone(),
-                Box::new(move |_fingerprint| Box::pin(async move { accept_unknown_host })),
+                Box::new(move |fingerprint| {
+                    let expected = policy_pin.clone();
+                    let observed = Arc::clone(&callback_observed);
+                    let fingerprint = fingerprint.to_string();
+                    Box::pin(async move {
+                        *observed.lock().await = Some(fingerprint.clone());
+                        match expected {
+                            Some(expected) => expected == fingerprint,
+                            None => accept_unknown_host,
+                        }
+                    })
+                }),
             )
             .await
-            .map_err(map_ssh_transport_error)?,
+            .map_err(|error| match error {
+                crate::ssh::SshError::HostKeyVerification { fingerprint } => {
+                    let marker = if pinned_fingerprint.is_some() {
+                        "host-key-changed"
+                    } else {
+                        "unknown-host"
+                    };
+                    TransportError::ConnectionFailed(format!("{marker}:{fingerprint}"))
+                }
+                other => map_ssh_transport_error(other),
+            })?,
         );
+        if let (Some(store), None, true) = (
+            trust_store.as_ref(),
+            pinned_fingerprint.as_ref(),
+            accept_unknown_host,
+        ) && let Some(fingerprint) = observed_fingerprint.lock().await.clone()
+        {
+            store.pin(normalized_host.clone(), ssh_credentials.port, fingerprint);
+        }
         info!(
             "MobileClient: SSH transport established server_id={} host={} ssh_port={}",
             config.server_id,
@@ -2532,18 +2674,6 @@ impl MobileClient {
         Ok(())
     }
 
-    /// Return the configs of all currently connected servers.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn connected_servers(&self) -> Vec<ServerConfig> {
-        self.sessions_read()
-            .values()
-            .map(|s| s.config().clone())
-            .collect()
-    }
-
-    // ── Threads ───────────────────────────────────────────────────────
-
     pub async fn sync_server_account(&self, server_id: &str) -> Result<(), RpcError> {
         self.get_session(server_id)?;
         let response = self
@@ -2794,10 +2924,8 @@ impl MobileClient {
             {
                 Ok(()) => {
                     self.note_thread_runtime(key.clone(), runtime_kind.clone());
-                    let post_resume_active = self
-                        .app_store
-                        .thread_snapshot(&key)
-                        .is_some_and(|thread| {
+                    let post_resume_active =
+                        self.app_store.thread_snapshot(&key).is_some_and(|thread| {
                             thread.active_turn_id.is_some()
                                 || matches!(thread.info.status, ThreadSummaryStatus::Active)
                         });
@@ -2965,6 +3093,7 @@ impl MobileClient {
         }
         reconcile_active_turn(existing.as_ref(), &mut snapshot, &turns);
         snapshot.is_resumed = true;
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         self.mark_direct_resumed_thread(key.clone());
         Ok(())
@@ -3183,7 +3312,12 @@ impl MobileClient {
             )
             .await
             .map_err(RpcError::Deserialization)?;
-        upsert_thread_snapshot_from_app_server_read_response(&self.app_store, server_id, response)
+        upsert_thread_snapshot_from_app_server_read_response(
+            &self.app_store,
+            server_id,
+            response,
+            false,
+        )
     }
 
     pub async fn thread_unsubscribe(
@@ -3231,7 +3365,15 @@ impl MobileClient {
         };
         self.app_store
             .dismiss_plan_implementation_prompt(&thread_key);
-        let thread_snapshot = self.snapshot_thread(&thread_key).ok();
+        let mut thread_snapshot = self.snapshot_thread(&thread_key).ok();
+        if let Some(thread) = thread_snapshot.as_mut()
+            && thread.collaboration_mode != AppModeKind::Plan
+            && self.persisted_thread_collaboration_mode(&thread_key) == Some(AppModeKind::Plan)
+        {
+            thread.collaboration_mode = AppModeKind::Plan;
+            self.app_store
+                .set_thread_collaboration_mode(&thread_key, AppModeKind::Plan);
+        }
         if let Some(thread) = thread_snapshot.as_ref()
             && thread.collaboration_mode == AppModeKind::Plan
             && params.collaboration_mode.is_none()
@@ -3260,6 +3402,7 @@ impl MobileClient {
         let has_active_turn = thread_snapshot
             .as_ref()
             .is_some_and(|thread| thread.active_turn_id.is_some());
+        let direct_params = params.clone();
         // Stage an optimistic local overlay so the user sees their message
         // immediately, before the server echoes it back.
         let optimistic_overlay_id = if !has_active_turn {
@@ -3268,13 +3411,6 @@ impl MobileClient {
         } else {
             None
         };
-        // Newer app servers echo this id as UserMessage.client_id. Hydration
-        // then uses the same stable id as the optimistic overlay, so event
-        // ordering cannot make the submitted user message disappear.
-        if let Some(overlay_id) = optimistic_overlay_id.as_ref() {
-            params.client_user_message_id = Some(overlay_id.clone());
-        }
-        let direct_params = params.clone();
         let queued_draft = has_active_turn
             .then(|| {
                 queued_follow_up_draft_from_inputs(&params.input, AppQueuedFollowUpKind::Message)
@@ -3307,11 +3443,10 @@ impl MobileClient {
                         request_id: upstream::RequestId::Integer(crate::next_request_id()),
                         params: upstream::TurnSteerParams {
                             thread_id: params.thread_id.clone(),
-                            client_user_message_id: None,
                             input: direct_params.input.clone(),
                             responsesapi_client_metadata: None,
-                            additional_context: None,
                             expected_turn_id: active_turn_id,
+                            ..Default::default()
                         },
                     },
                 )
@@ -3386,13 +3521,10 @@ impl MobileClient {
             .iter()
             .any(|draft| draft.preview.id == preview_id)
         {
-            // A successful first tap removes the queued preview immediately.
-            // Treat a repeated tap as an idempotent no-op.
-            return Ok(());
+            return Err(RpcError::Deserialization(format!(
+                "queued follow-up not found: {preview_id}"
+            )));
         }
-        let active_turn_id = thread.active_turn_id.ok_or_else(|| {
-            RpcError::Deserialization("no active turn available to steer".to_string())
-        })?;
 
         // Atomically flip the draft's kind to PendingSteer. If it's already
         // pending (concurrent/duplicate tap), drop this request so we don't
@@ -3404,6 +3536,10 @@ impl MobileClient {
         else {
             return Ok(());
         };
+
+        let active_turn_id = thread.active_turn_id.ok_or_else(|| {
+            RpcError::Deserialization("no active turn available to steer".to_string())
+        })?;
 
         let direct_command_id = self.app_store.begin_server_mutating_command(
             &key.server_id,
@@ -3417,11 +3553,10 @@ impl MobileClient {
                     request_id: upstream::RequestId::Integer(crate::next_request_id()),
                     params: upstream::TurnSteerParams {
                         thread_id: key.thread_id.clone(),
-                        client_user_message_id: None,
                         input: draft.inputs,
                         responsesapi_client_metadata: None,
-                        additional_context: None,
                         expected_turn_id: active_turn_id,
+                        ..Default::default()
                     },
                 },
             )
@@ -3429,17 +3564,11 @@ impl MobileClient {
         {
             self.app_store
                 .finish_server_mutating_command_failure(&key.server_id, &direct_command_id);
-            self.app_store
-                .finish_steer_queued_follow_up(key, preview_id, false);
             return Err(RpcError::Deserialization(error));
         }
         self.app_store
             .finish_server_mutating_command_success(&key.server_id, &direct_command_id);
-        // The server accepted the steer, so it is no longer queued. Keeping
-        // PendingSteer visible until TurnCompleted makes the composer claim a
-        // message is still waiting even while its response is already streaming.
-        self.app_store
-            .finish_steer_queued_follow_up(key, preview_id, true);
+        // Keep draft visible as PendingSteer; TurnCompleted will clean it up.
         Ok(())
     }
 
@@ -3503,6 +3632,7 @@ impl MobileClient {
             .map_err(RpcError::Deserialization)?;
             copy_thread_runtime_fields(&current, &mut snapshot);
             reconcile_active_turn(Some(&current), &mut snapshot, &turns);
+            self.apply_persisted_thread_collaboration_mode(&mut snapshot);
             self.app_store.upsert_thread_snapshot(snapshot);
         }
 
@@ -3590,6 +3720,7 @@ impl MobileClient {
             .map_err(RpcError::Deserialization)?;
         }
 
+        self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
         self.set_active_thread(Some(next_key.clone()));
         Ok(next_key)
@@ -3768,7 +3899,7 @@ impl MobileClient {
                 {
                     Ok(response) => {
                         if let Err(error) = upsert_thread_snapshot_from_app_server_read_response(
-                            &app_store, &server_id, response,
+                            &app_store, &server_id, response, true,
                         ) {
                             warn!(
                                 "MobileClient: failed to reconcile thread after user input for server={} thread={}: {}",
@@ -3927,6 +4058,7 @@ impl MobileClient {
     ) -> Result<(), RpcError> {
         self.get_session(&key.server_id)?;
         self.app_store.set_thread_collaboration_mode(key, mode);
+        self.persist_thread_collaboration_mode(key, mode);
         Ok(())
     }
 
@@ -3939,6 +4071,7 @@ impl MobileClient {
         let thread = self.snapshot_thread(key).ok();
         self.app_store
             .set_thread_collaboration_mode(key, AppModeKind::Default);
+        self.persist_thread_collaboration_mode(key, AppModeKind::Default);
         let collaboration_mode = thread
             .as_ref()
             .and_then(|t| collaboration_mode_from_thread(t, AppModeKind::Default, None, None));
@@ -3946,13 +4079,11 @@ impl MobileClient {
             &key.server_id,
             upstream::TurnStartParams {
                 thread_id: key.thread_id.clone(),
-                client_user_message_id: None,
                 input: vec![upstream::UserInput::Text {
                     text: "Implement the plan.".to_string(),
                     text_elements: Vec::new(),
                 }],
                 responsesapi_client_metadata: None,
-                additional_context: None,
                 cwd: None,
                 runtime_workspace_roots: None,
                 approval_policy: None,
@@ -3967,7 +4098,7 @@ impl MobileClient {
                 personality: None,
                 output_schema: None,
                 collaboration_mode,
-                multi_agent_mode: None,
+                ..Default::default()
             },
         )
         .await
@@ -3976,7 +4107,6 @@ impl MobileClient {
     pub fn set_voice_handoff_thread(&self, key: Option<ThreadKey>) {
         self.app_store.set_voice_handoff_thread(key);
     }
-
 }
 
 /// Listener that feeds session output bytes into the reducer's ring

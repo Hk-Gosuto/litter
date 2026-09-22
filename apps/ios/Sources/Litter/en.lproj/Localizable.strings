@@ -564,6 +564,9 @@
 "Couldn't reach this folder: %@" = "Couldn't reach this folder: %@";
 "Date" = "Date";
 "Declined" = "Declined";
+"Interrupted" = "Interrupted";
+"Persistent" = "Persistent";
+"Run Kittylitter on the host you want to connect to, then scan its QR code or paste the JSON it prints. The scanner includes an installation command you can copy." = "Run Kittylitter on the host you want to connect to, then scan its QR code or paste the JSON it prints. The scanner includes an installation command you can copy.";
 "Details are open by default" = "Details are open by default";
 "Details are removed from the transcript" = "Details are removed from the transcript";
 "Details stay behind a disclosure" = "Details stay behind a disclosure";

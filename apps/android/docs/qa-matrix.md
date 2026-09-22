@@ -34,25 +34,14 @@ Current automated checks:
 | Connect local/on-device | Success (`ServerConfig.local`) |
 | Connect remote server | Success |
 | Manual or saved SSH server | Prompts for SSH credentials, connects through SSH port forwarding, and never attempts `ws://host:22` directly |
+| SSH changed identity (saved server and terminal) | Both platforms decode the shared Rust challenge. Verify hostname and IPv6 targets: Cancel preserves the old pin; Replace stores only SHA256 fingerprint and retries successfully. Device acceptance pending. |
+| SSH changed identity (guided connect) | Both platforms route a changed host key from guided connect (probe, bootstrap, and SSH bridge paths) to the confirm modal instead of raw marker text; Replace syncs saved servers first so re-pinning works for servers saved this session. A changed key on a never-saved discovery target shows the confirm modal but Replace cannot reconnect it until the server is saved (tracked follow-up). Device acceptance pending. |
 | Local transport drop | Reconnect and one-time reinitialize before the next non-initialize RPC |
 | Remote transport drop | Reconnect behavior via Rust `AppStore` updates and resumed RPC notifications |
+| Saved Alleycat relay identity | Shared Rust canonicalizes DNS relay URLs, including older saved pairings. Android 17 ARM64 16K emulator: relay-only cold restarts produced duplicate-endpoint eviction on 2/2 baseline runs; candidate Rust produced 0/3 evictions and connected in 5.5s, 2.4s, and 2.2s. Controlled native-library replacement retained the signed baseline shell and pairing; final signed-artifact and physical-device acceptance remain separate gates. |
 | Thread start/resume fallback sandbox | `workspace-write` with `danger-full-access` fallback when Linux sandboxing is unavailable |
 | Thread turn pagination (v0.125+ remote) | Conversation opens with the last 5 turns; "Load earlier messages" fetches older 5-turn pages via `thread/turns/list` |
 | Thread turn pagination fallback (v0.124 remote) | Capability flips off via response inspection; embedded turns load fully; "Load earlier" is hidden |
-
-## App Language (iOS + Android)
-
-English and Simplified Chinese are supported from the top-level Settings
-screen. The initial selection follows the device language and an explicit
-choice persists across relaunches.
-
-| Check | iOS | Android |
-|---|---|---|
-| Switch to Simplified Chinese | Settings updates immediately through the SwiftUI locale environment | Selection persists and the Activity recreates with a `zh-CN` configuration |
-| Switch back to English | Settings and directory/session surfaces update immediately | Activity recreates with an `en` configuration |
-| Relaunch | The selected `AppLanguage` is restored from `UserDefaults` | The selected language tag is restored from `SharedPreferences` before `MainActivity.onCreate` |
-| First launch | Chinese device locales select Simplified Chinese; all others select English | Same |
-| Localized surfaces | Top-level Settings, session list actions, and directory picker | Same |
 
 ## Terminal UX Matrix
 
@@ -145,11 +134,19 @@ disconnects and re-establishes the chosen transport.
 
 ### Session Sidebar
 
-**Unreachable — do not QA until re-wired.** Android's `SessionsScreen` (search,
-server filter, forks filter, lineage chips) is still compiled but `Route.Sessions`
-is never constructed, so no user path opens it. iOS has no sidebar either; the
-home dashboard replaced it. Treat this section as a parked feature, not a
-shipping surface.
+The legacy Android `Route.Sessions` and `SessionsScreen` are no longer present
+in the current navigation tree. PR #330 intentionally exposes the existing
+All Sessions browser and its bounded Load more action on iOS only: Android
+needs a new reachable browser, not a link to the removed screen. Shared Rust
+hydration limits and protection against pruning other runtimes apply to both
+platforms.
+
+Android follow-up acceptance: add a home entry point that browses sessions
+across connected servers, loads older results, filters them, and resumes and
+pins the selected session. Verify more than 200 sessions per runtime, mixed
+Codex/Claude servers, empty results, load failures, and continued live updates
+when a CLI-created session is opened. Until then, do not report Android
+browser parity as complete.
 
 ### Thread List Consistency
 
@@ -296,6 +293,7 @@ Replaces the prior WebSocket + base64-PCM audio pump with a platform-native WebR
 | Known non-blockers | Per-frame input/output meter animation no longer drives — requires `RTCRtpReceiver.stats` polling to restore (follow-up) | Same flat meter behavior; speaker toggle currently stubbed to a boolean — follow-up to honor runtime routing |
 | Regression: custom AEC path | Retired — `codex-ios-audio` crate + `AecBridge.swift` / `VoiceSessionAudioCodec.swift` were deleted; libwebrtc AEC3 handles echo cancellation natively | Retired — `AecBridge.kt` deleted; `JavaAudioDeviceModule` enables the hardware AEC + NS |
 | Regression: SSH-tunneled codex server | RPC still flows through SSH; WebRTC peer goes direct to OpenAI edge from device. If client runs in fully air-gapped network, realtime voice will not establish | Same |
+| Theme hex colors preserve CSS alpha | `litterHexRGBA` parses #RGB/#RGBA/#RRGGBB/#RRGGBBAA with alpha last; swatch/index colors keep the alpha byte; theme tokens strip alpha at decode (`ThemeDefinition.sanitizeHex`) so app colors stay opaque (`HexColorTests`) | `colorFromHex` moves the alpha byte to the ARGB front instead of dropping it; theme tokens strip alpha via `tokenColorFromHex` to match iOS and the generated Material schemes (`ThemeColorTest`) |
 
 ## English / Simplified Chinese localization
 
@@ -308,3 +306,55 @@ Replaces the prior WebSocket + base64-PCM audio pump with a platform-native WebR
 | Background surfaces | Firebase turn notifications, the active-turn widget, and the pet overlay menu use the persisted app language even when launched outside the main activity. |
 | Format strings | English and `values-zh-rCN` contain identical keys and positional format placeholders. Dynamic server/model/path/error values remain unchanged. |
 | Language change during work | Start a turn, switch language, and verify the active session remains intact after Activity recreation; newly posted notifications and refreshed widget content use the new language. |
+
+## Message link menus (iOS PR #322)
+
+This PR updates iOS's Hairball renderer and native context menu. Android's
+Markwon renderer needs a separate parity verification: bare HTTP/HTTPS URLs
+must be tappable, existing Markdown links must remain valid, and code must
+remain literal. The per-link copy action is an Android follow-up; verify URL
+deduplication, the five-link cap, and distinct labels for ports, queries, and
+fragments when adding it. No Android execution was covered by this iOS change.
+
+## 2.1.1 stability candidate
+
+- Shared SSH setup now discovers tool directories without executing login/rc
+  scripts. Regression fixture verifies no shell startup side effects; Nix
+  path discovery remains covered. Real SSH and Kittylitter device acceptance
+  is pending.
+- Android Ghostty selects epoll directly to avoid seccomp's fatal io_uring
+  probe (#354). Terminal open/input/close/reopen acceptance on Android hardware
+  is pending; compilation alone does not close this gate.
+- Android Ghostty now bundles GLAD and explicitly links EGL/GLESv3. Verify the
+  native library actually loads: the older 2.1.0 APK fell back to text output
+  after an unresolved `imgl3wProcs` symbol, masking native renderer failures.
+- Android 17 / ARM64 / 16 KB emulator: libraries load, opening and reopening
+  Terminal does not trigger SIGSYS, and basic command input/output passes via
+  both Run and the keyboard action. Native surface creation fails on OpenGL ES
+  3.1. The fallback is line-oriented and does not provide full ANSI screen
+  semantics. Physical-device and native-renderer acceptance remain pending.
+- Home server/session projections are memoized by their actual inputs rather
+  than the entire snapshot, avoiding repeated sorting on unrelated deltas.
+- Conversation rows use stable turn identities when earlier pages are inserted,
+  matching iOS. Verify the visible row and expansion state survive pagination.
+- Both platforms set Codex thread start/resume/fork configuration to disable
+  login-shell tools and shell snapshots; shared Rust regression tests cover the
+  three operations and preservation of unrelated settings and other runtimes.
+- App Store/Play release acceptance is tracked separately from build success.
+
+## Harness catalog and settings refresh (2.1.2)
+
+Implemented on both iOS and Android through shared Rust. Device acceptance is pending for this revision.
+
+| Check | Required result on both platforms |
+|---|---|
+| Cold model picker | Native catalog available before creating a thread; custom and plugin IDs preserved |
+| Refresh/reconnect | Catalog expires after 60 seconds, incomplete refresh retries after 5 seconds; failed runtime retains prior choices; old connection cannot publish into replacement |
+| Reasoning selection | Native supported values only; persistent and custom values round-trip |
+| OMP isolation | Separate runtime, model catalog, and config.yml; Pi settings are unchanged |
+| Harness settings | Searchable lazy list, typed edits, native source/scope, enforced read-only constraints, authoritative save read-back |
+| SSH settings | Claude/Pi/OMP values read and written on the remote host with credential fields preserved and redacted |
+| Streaming | Unchanged server/runtime projections do not invalidate the settings list |
+| Host execution | Discovery and settings launch headless processes without terminal windows or Dock helpers |
+
+Validation for the 2.1.2 candidate: shared Rust library tests passed (823 passed, 3 existing manual/live tests ignored). The final `a5aaa9f6` Android library built successfully; all 58 unit tests and six settings/navigation instrumentation tests passed on Android 17. These cover unset strings/booleans/enums, managed policy, and MainActivity Settings → Harnesses navigation. Logo/splash animation state stays in draw/layer scopes using the standard Compose infinite-animation clock. The focused iOS harness settings UI test also passed against the ABI-compatible simulator library, including authoritative fixture readback and read-only controls. Final iOS artifact/input validation and store release remain pending.

@@ -179,7 +179,7 @@ struct HeaderView: View {
         case .connected:
             if server.isLocal {
                 switch server.account {
-                case .chatgpt?, .apiKey?, .amazonBedrock?:
+                case .chatgpt?, .apiKey?:
                     return LitterTheme.success
                 case nil:
                     return LitterTheme.danger
@@ -230,9 +230,8 @@ struct HeaderView: View {
                 runtime: thread.agentRuntimeKind
             )
         }),
-           !model.supportedReasoningEfforts.isEmpty,
-           !model.defaultReasoningEffort.wireValue.isEmpty {
-            return model.defaultReasoningEffort.wireValue
+           let effort = model.supportedDefaultReasoningEffort {
+            return effort.wireValue
         }
 
         return "default"
@@ -504,11 +503,11 @@ func modelMatchesSelection(
 }
 
 private func defaultReasoningEffortSelection(for model: ModelInfo) -> String {
-    model.supportedReasoningEfforts.isEmpty ? "" : model.defaultReasoningEffort.wireValue
+    model.supportedDefaultReasoningEffort?.wireValue ?? ""
 }
 
 /// Allowlist of model "mode" names the runtime advertises (e.g. Amp's
-/// `smart` / `rush` / `deep`). Pulled from `capabilities.visible_modes`
+/// `low` / `medium` / `high` / `ultra`). Pulled from `capabilities.visible_modes`
 /// in the alleycat manifest so the rule is per-agent, not Amp-hardcoded.
 /// Memoized per run-loop turn by `AgentMetadataMemo` — this is called
 /// once per model per filtering pass.
@@ -663,10 +662,7 @@ private func modelCatalogNotice(
 }
 
 private func isVisibleModelOption(_ model: ModelInfo) -> Bool {
-    guard let modes = visibleModeNames(for: model.agentRuntimeKind) else {
-        return true
-    }
-    return modes.contains(modeName(for: model))
+    !model.hidden
 }
 
 /// One pass of the model-list derivations the pickers need. Previously
@@ -686,9 +682,8 @@ private struct ModelSelectorDerivation {
 /// agent-directory fingerprint. `models` is passed straight through from
 /// the server snapshot, so repeated body passes hand over the same
 /// `Array` buffer and the equality check short-circuits in O(1). The
-/// fingerprint dependency is what keeps this honest: `isVisibleModelOption`
-/// and the bucket ordering both read agent metadata, so a probe response
-/// must rebuild the derivation.
+/// fingerprint dependency tracks bucket ordering, which reads agent
+/// metadata, so a probe response must rebuild the derivation.
 @MainActor
 private final class ModelSelectorDerivationCache {
     private var cachedModels: [ModelInfo] = []

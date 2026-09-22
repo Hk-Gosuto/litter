@@ -66,31 +66,20 @@ struct LitterMarkdownView: View {
 
     @ViewBuilder
     private func renderedMarkdown(selectionEnabled: Bool) -> some View {
-        let view = MarkdownView(markdown, processors: [LatexTransformer()])
+        let view = MarkdownView(markdown, processors: [LatexTransformer(), AutoLinkTransformer()])
         switch style {
         case .content:
             view.litterContentMarkdown(
                 bodySize: bodySize, codeSize: codeSize,
                 selectionEnabled: selectionEnabled
             )
-            .environment(\.openURL, externalBrowserAction)
+            .environment(\.openURL, .externalBrowser)
         case .system:
             view.litterSystemMarkdown(
                 bodySize: bodySize, codeSize: codeSize,
                 selectionEnabled: selectionEnabled
             )
-            .environment(\.openURL, externalBrowserAction)
-        }
-    }
-
-    private var externalBrowserAction: OpenURLAction {
-        OpenURLAction { url in
-            guard let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https" else {
-                return .systemAction
-            }
-            UIApplication.shared.open(url)
-            return .handled
+            .environment(\.openURL, .externalBrowser)
         }
     }
 }
@@ -122,30 +111,10 @@ struct UserBubble: View, Equatable {
         HStack(alignment: .top, spacing: 0) {
             Spacer(minLength: compact ? 30 : 60)
             VStack(alignment: .trailing, spacing: compact ? 4 : 8) {
-                ForEach(images) { img in
-                    if let request = UserBubble.imageRequest(for: img) {
-                        LazyImage(request: request) { state in
-                            if let image = state.image {
-                                if let ui = state.imageContainer?.image {
-                                    image
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(maxWidth: 200, maxHeight: 200)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                        .draggable(Image(uiImage: ui)) {
-                                            Image(uiImage: ui)
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(width: 120)
-                                        }
-                                } else {
-                                    image
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(maxWidth: 200, maxHeight: 200)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                }
-                            }
+                ForEach(Array(images.chunked(into: 3).enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 6) {
+                        ForEach(row) { img in
+                            bubbleImage(img)
                         }
                     }
                 }
@@ -170,15 +139,40 @@ struct UserBubble: View, Equatable {
                             .accessibilityLabel(expandedLongText ? "Show less user message" : "Show more user message")
                         }
                     }
+                    .padding(.horizontal, compact ? 12 : 18)
+                    .padding(.vertical, compact ? 8 : 14)
+                    .modifier(GlassRectModifier(cornerRadius: compact ? 14 : 18, tint: LitterTheme.accent.opacity(0.3)))
                 }
             }
-            .padding(.horizontal, compact ? 12 : 18)
-            .padding(.vertical, compact ? 8 : 14)
-            .modifier(GlassRectModifier(cornerRadius: compact ? 14 : 18, tint: LitterTheme.accent.opacity(0.3)))
         }
         .padding(.bottom, 14)
         .onChange(of: text) { _, _ in
             expandedLongText = false
+        }
+    }
+
+    @ViewBuilder
+    private func bubbleImage(_ img: ChatImage) -> some View {
+        if let request = UserBubble.imageRequest(for: img) {
+            LazyImage(request: request) { state in
+                if let image = state.image {
+                    let thumb = image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 100, height: 100)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    if let ui = state.imageContainer?.image {
+                        thumb.draggable(Image(uiImage: ui)) {
+                            Image(uiImage: ui)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 120)
+                        }
+                    } else {
+                        thumb
+                    }
+                }
+            }
         }
     }
 
@@ -402,7 +396,6 @@ struct StreamingAssistantBubble: View {
     let text: String
     var isStreaming: Bool = false
     var label: String? = nil
-    var onSnapshotRendered: (() -> Void)? = nil
     private let contentFontSize: CGFloat
 
     /// Renderer is resolved once during init. For streaming items, this
@@ -416,15 +409,13 @@ struct StreamingAssistantBubble: View {
         text: String,
         isStreaming: Bool = false,
         label: String? = nil,
-        bodySize: CGFloat = LitterFont.conversationBodyPointSize,
-        onSnapshotRendered: (() -> Void)? = nil
+        bodySize: CGFloat = LitterFont.conversationBodyPointSize
     ) {
         self.itemId = itemId
         self.text = text
         self.isStreaming = isStreaming
         self.label = label
         self.contentFontSize = bodySize
-        self.onSnapshotRendered = onSnapshotRendered
 
         let coord = StreamingRendererCoordinator.shared
         if isStreaming {
@@ -448,9 +439,6 @@ struct StreamingAssistantBubble: View {
             } else {
                 streamingMarkdownBody
             }
-        }
-        .onChange(of: text) {
-            onSnapshotRendered?()
         }
     }
 
@@ -720,7 +708,7 @@ private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdow
         tightItemSpacing: 4
     )
 
-    theme.link = LinkStyle(color: LitterTheme.accent, underline: false)
+    theme.link = LinkStyle(color: LitterTheme.linkColor, underline: true)
 
     theme.thematicBreak = ThematicBreakStyle(
         color: LitterTheme.border,
@@ -794,7 +782,7 @@ private func litterSystemTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdown
         tightItemSpacing: 3
     )
 
-    theme.link = LinkStyle(color: LitterTheme.accent, underline: false)
+    theme.link = LinkStyle(color: LitterTheme.linkColor, underline: true)
 
     theme.thematicBreak = ThematicBreakStyle(
         color: LitterTheme.border,
@@ -962,6 +950,13 @@ private struct MessageTextContextMenu: ViewModifier {
                     MessageTextSelectionPresenter.present(text: text)
                 } label: {
                     Label("Select Text", systemImage: "character.cursor.ibeam")
+                }
+                ForEach(MessageLinks.links(in: text), id: \.absoluteString) { url in
+                    Button {
+                        UIPasteboard.general.string = url.absoluteString
+                    } label: {
+                        Label(MessageLinks.copyTitle(for: url), systemImage: "link")
+                    }
                 }
             }
         }

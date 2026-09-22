@@ -4,25 +4,21 @@ import Observation
 
 extension Color {
     init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let r = Double((int >> 16) & 0xFF) / 255
-        let g = Double((int >> 8) & 0xFF) / 255
-        let b = Double(int & 0xFF) / 255
-        self.init(red: r, green: g, blue: b)
+        if let rgba = litterHexRGBA(hex) {
+            self.init(red: rgba.red, green: rgba.green, blue: rgba.blue, opacity: rgba.alpha)
+        } else {
+            self.init(red: 0, green: 0, blue: 0)
+        }
     }
 }
 
 extension UIColor {
     convenience init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let r = CGFloat((int >> 16) & 0xFF) / 255
-        let g = CGFloat((int >> 8) & 0xFF) / 255
-        let b = CGFloat(int & 0xFF) / 255
-        self.init(red: r, green: g, blue: b, alpha: 1)
+        if let rgba = litterHexRGBA(hex) {
+            self.init(red: rgba.red, green: rgba.green, blue: rgba.blue, alpha: rgba.alpha)
+        } else {
+            self.init(red: 0, green: 0, blue: 0, alpha: 1)
+        }
     }
 }
 
@@ -50,6 +46,24 @@ enum LitterTheme {
 
     static var accent: Color        { adaptive(light: light.accent, dark: dark.accent) }
     static var accentStrong: Color   { adaptive(light: light.accentStrong, dark: dark.accentStrong) }
+    static var linkColor: Color {
+        adaptive(
+            light: chromaticHex(light.accent, fallback: "#0A66C2"),
+            dark: chromaticHex(dark.accent, fallback: "#6CB2FF")
+        )
+    }
+
+    private static func chromaticHex(_ hexColor: String, fallback: String) -> String {
+        let hex = hexColor.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let r = Double((int >> 16) & 0xFF)
+        let g = Double((int >> 8) & 0xFF)
+        let b = Double(int & 0xFF)
+        let maxChannel = max(r, g, b)
+        let saturation = maxChannel == 0 ? 0 : (maxChannel - min(r, g, b)) / maxChannel
+        return saturation < 0.15 ? fallback : hexColor
+    }
     static var textPrimary: Color    { adaptive(light: light.textPrimary, dark: dark.textPrimary) }
     static var textSecondary: Color  { adaptive(light: light.textSecondary, dark: dark.textSecondary) }
     static var textMuted: Color      { adaptive(light: light.textMuted, dark: dark.textMuted) }
@@ -593,5 +607,64 @@ extension View {
         } else {
             self.matchedGeometryEffect(id: id, in: namespace)
         }
+    }
+}
+
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
+    }
+}
+
+extension URL {
+    var isWebLink: Bool {
+        let scheme = scheme?.lowercased()
+        return scheme == "http" || scheme == "https"
+    }
+}
+
+extension OpenURLAction {
+    static var externalBrowser: OpenURLAction {
+        OpenURLAction { url in
+            guard url.isWebLink else { return .systemAction }
+            UIApplication.shared.open(url)
+            return .handled
+        }
+    }
+}
+
+enum MessageLinks {
+    static let detector: NSDataDetector? =
+        try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    static func links(in text: String, limit: Int = 5) -> [URL] {
+        guard text.contains("://") || text.lowercased().contains("www."),
+              let detector else { return [] }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        var seen = Set<String>()
+        var links: [URL] = []
+        for match in detector.matches(in: text, options: [], range: range) {
+            guard let url = match.url,
+                  url.isWebLink,
+                  seen.insert(url.absoluteString).inserted else { continue }
+            links.append(url)
+            if links.count >= limit { break }
+        }
+        return links
+    }
+
+    static func copyTitle(for url: URL) -> String {
+        let display = url.host.map { host in
+            let port = url.port.map { ":\($0)" } ?? ""
+            let path = url.path.count > 1 ? url.path : ""
+            let query = url.query.map { "?\($0)" } ?? ""
+            let fragment = url.fragment.map { "#\($0)" } ?? ""
+            return "\(host)\(port)\(path)\(query)\(fragment)"
+        } ?? url.absoluteString
+        let trimmed = display.count > 40 ? String(display.prefix(40)) + "…" : display
+        return "Copy \(trimmed)"
     }
 }

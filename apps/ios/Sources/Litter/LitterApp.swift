@@ -654,7 +654,7 @@ private struct HomeNavigationView: View {
     let bottomInset: CGFloat
 
     private enum HomeNavigationRoute: Hashable {
-        case sessions(serverId: String, title: String)
+        case sessions(serverId: String?, title: String)
         case conversation(ThreadKey)
         case realtimeVoice(ThreadKey)
         case conversationInfo(ThreadKey)
@@ -764,10 +764,11 @@ private struct HomeNavigationView: View {
                 case let .sessions(serverId, title):
                     SessionsScreen(
                         onOpenConversation: { key in
+                            homeDashboardModel.pinThread(key)
                             openConversation(key)
                         },
-                        onInfo: {
-                            navigationPath.append(.serverInfo(serverId: serverId))
+                        onInfo: serverId.map { id in
+                            { navigationPath.append(.serverInfo(serverId: id)) }
                         }
                     )
                         .navigationTitle(title)
@@ -1023,6 +1024,23 @@ private struct HomeNavigationView: View {
             Button("OK", role: .cancel) { actionErrorMessage = nil }
         } message: {
             Text(actionErrorMessage ?? AppLanguage.localizedString("Unknown error"))
+        }
+        .alert("SSH Host Identity Changed", isPresented: Binding(
+            get: { appModel.sshHostKeyChangeChallenge != nil },
+            set: { if !$0 { appModel.clearSshHostKeyChange() } }
+        )) {
+            Button("Replace Stored Identity", role: .destructive) {
+                guard let challenge = appModel.sshHostKeyChangeChallenge else { return }
+                Task {
+                    await AppRuntimeController.shared.replaceSshHostKey(
+                        serverId: challenge.serverId,
+                        fingerprint: challenge.fingerprint
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) { appModel.clearSshHostKeyChange() }
+        } message: {
+            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(appModel.sshHostKeyChangeChallenge?.fingerprint ?? "unknown")")
         }
     }
 
@@ -1437,6 +1455,7 @@ private struct HomeNavigationView: View {
             onShowSettings: { appState.showSettings = true },
             onShowApps: savedAppsStore.apps.isEmpty ? nil : { navigationPath.append(.appsList) },
             onShowTerminal: terminalLauncher,
+            onBrowseSessions: { showSessions(for: homeDashboardModel.selectedServerId) },
             onPinThread: pinThread,
             onUnpinThread: unpinThread,
             onHideThread: hideThread,
@@ -1483,6 +1502,7 @@ private struct HomeNavigationView: View {
             onShowSettings: { appState.showSettings = true },
             onShowApps: savedAppsStore.apps.isEmpty ? nil : { navigationPath.append(.appsList) },
             onShowTerminal: terminalLauncher,
+            onBrowseSessions: { showSessions(for: homeDashboardModel.selectedServerId) },
             onPinThread: pinThread,
             onUnpinThread: unpinThread,
             onHideThread: hideThread,
@@ -1861,7 +1881,7 @@ private struct HomeNavigationView: View {
         }
     }
 
-    private func showSessions(for serverId: String) {
+    private func showSessions(for serverId: String?) {
         appState.sessionsSelectedServerFilterId = serverId
         appState.sessionsShowOnlyForks = false
         appState.showModelSelector = false
@@ -1880,7 +1900,8 @@ private struct HomeNavigationView: View {
         } else if case .realtimeVoice = navigationPath.last {
             navigationPath.removeLast()
         }
-        navigationPath.append(.sessions(serverId: serverId, title: serverTitle(for: serverId)))
+        let title = serverId.map(serverTitle(for:)) ?? "All Sessions"
+        navigationPath.append(.sessions(serverId: serverId, title: title))
     }
 
     private func serverTitle(for serverId: String) -> String {
@@ -1934,7 +1955,6 @@ private struct ConversationDestinationScreen: View {
                     thread: conversationThread,
                     activeThreadKey: resolvedThreadKey,
                     transcript: screenModel.transcript,
-                    followScrollToken: screenModel.followScrollToken,
                     pinnedContextItems: screenModel.pinnedContextItems,
                     composer: screenModel.composer,
                     supportsTurnPagination: screenModel.composer.supportsTurnPagination,
@@ -2071,7 +2091,6 @@ private struct ReplayDestinationScreen: View {
                     thread: thread,
                     activeThreadKey: key,
                     transcript: screenModel.transcript,
-                    followScrollToken: screenModel.followScrollToken,
                     pinnedContextItems: screenModel.pinnedContextItems,
                     composer: screenModel.composer,
                     supportsTurnPagination: screenModel.composer.supportsTurnPagination,

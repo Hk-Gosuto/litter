@@ -9,52 +9,12 @@ private let conversationViewSignpostLog = OSLog(
     category: "ConversationView"
 )
 
-enum ConversationStreamingViewportPolicy {
-    static func shouldMaintainBottomAnchor(
-        isStreaming: Bool,
-        isNearBottom: Bool,
-        autoFollowStreaming: Bool,
-        userIsDraggingScroll: Bool
-    ) -> Bool {
-        guard !userIsDraggingScroll else { return false }
-        if isStreaming {
-            return autoFollowStreaming
-        }
-        return isNearBottom
-    }
-
-    static func isStreaming(_ threadStatus: ConversationStatus) -> Bool {
-        if case .thinking = threadStatus {
-            return true
-        }
-        return false
-    }
-}
-
-struct ConversationScrollViewportState: Equatable {
-    let isNearBottom: Bool
-    let showsScrollToBottom: Bool
-
-    static func resolve(
-        distanceFromBottom: CGFloat,
-        nearBottomDistance: CGFloat,
-        scrollToBottomDistance: CGFloat
-    ) -> ConversationScrollViewportState {
-        let distance = max(0, distanceFromBottom)
-        return ConversationScrollViewportState(
-            isNearBottom: distance <= nearBottomDistance,
-            showsScrollToBottom: distance > scrollToBottomDistance
-        )
-    }
-}
-
 struct ConversationView: View {
     @Environment(AppState.self) private var appState
     @Environment(AppModel.self) private var appModel
     let thread: AppThreadSnapshot
     let activeThreadKey: ThreadKey
     let transcript: ConversationTranscriptSnapshot
-    let followScrollToken: Int
     let pinnedContextItems: [ConversationItem]
     let composer: ConversationComposerSnapshot
     var supportsTurnPagination: Bool
@@ -112,7 +72,7 @@ struct ConversationView: View {
         guard !supported.isEmpty else { return nil }
         return supported.contains(trimmed)
             ? trimmed
-            : selectedModel.defaultReasoningEffort.wireValue
+            : selectedModel.supportedDefaultReasoningEffort?.wireValue
     }
 
     private var pendingSelectedModel: ModelInfo? {
@@ -128,7 +88,6 @@ struct ConversationView: View {
             threadStatus: threadStatus,
             threadHasServerData: thread.hasPreviewOrTitle,
             transcriptRenderDigest: transcript.renderDigest,
-            followScrollToken: followScrollToken,
             sendScrollToken: localSendScrollToken,
             activeThreadKey: activeThreadKey,
             agentDirectoryVersion: agentDirectoryVersion,
@@ -144,7 +103,7 @@ struct ConversationView: View {
             onForkFromUserItem: forkFromMessage,
             onOpenConversation: onOpenConversation,
             onLoadOlderTurns: { key in
-                Task { await appModel.loadOlderTurns(threadId: key) }
+                await appModel.loadOlderTurns(threadId: key)
             }
         )
         .overlay(alignment: .bottomLeading) {
@@ -610,13 +569,17 @@ struct RateLimitBadgeView: View, Equatable {
 }
 
 
+private struct ConversationScrollLayout: Equatable {
+    let contentHeight: CGFloat
+    let viewportHeight: CGFloat
+}
+
 private struct ConversationMessageList: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let items: [ConversationItem]
     let threadStatus: ConversationStatus
     let threadHasServerData: Bool
     let transcriptRenderDigest: Int
-    let followScrollToken: Int
     let sendScrollToken: Int
     let activeThreadKey: ThreadKey
     let agentDirectoryVersion: UInt64
@@ -631,11 +594,11 @@ private struct ConversationMessageList: View {
     let onEditUserItem: (ConversationItem) -> Void
     let onForkFromUserItem: (ConversationItem) -> Void
     var onOpenConversation: ((ThreadKey) -> Void)? = nil
-    let onLoadOlderTurns: (ThreadKey) -> Void
+    let onLoadOlderTurns: (ThreadKey) async -> Bool
     @State private var isNearBottom = true
-    @State private var autoFollowStreaming = true
-    @State private var userIsDraggingScroll = false
-    @State private var showsScrollToBottom = false
+    @State private var isFollowingBottom = true
+    @State private var scrollPosition = ScrollPosition()
+    @State private var showScrollToBottomButton = false
     @State private var waitingForDataExpired = false
     @State private var pinchBaseStep: Int?
     @State private var pinchAppliedDelta = 0
@@ -646,20 +609,26 @@ private struct ConversationMessageList: View {
     @State private var expandedTurnIDs: Set<String> = []
     @State private var pendingAnimatedTurns: [TranscriptTurn]?
     @State private var turnInsertionAnimationInFlight = false
-    @State private var followLayoutScrollScheduled = false
-    @State private var initialBottomScrollThreadScopeID: String?
-    @State private var programmaticBottomScrollSettling = false
-    @State private var programmaticBottomScrollGeneration = 0
-    @State private var pendingTranscriptSync = false
+    @State private var visibleTurnIDs: [String] = []
+    @State private var requestedOlderTurnsCursor: String?
+    @State private var requestedOlderTurnsThreadKey: ThreadKey?
+    @State private var showOlderPageLoader = false
     @AppStorage("collapseTurns") private var collapseTurns = false
     private static let latestButtonShowDistance: CGFloat = 48
     private static let nearBottomRestoreDistance: CGFloat = 12
-    private static let bottomScrollSettleDuration: TimeInterval = 0.3
-    private static let bottomAnchorID = "conversation-message-list-bottom"
-    private static let scrollCoordinateSpaceName = "conversation-message-list-scroll"
+
+    private var shouldCollapseTurns: Bool {
+        ConversationTurnCollapsePolicy.shouldCollapse(
+            preferenceEnabled: collapseTurns,
+            itemCount: items.count
+        )
+    }
 
     private var expandedRecentTurnCount: Int {
-        return collapseTurns ? 1 : .max
+        ConversationTurnCollapsePolicy.expandedRecentTurnCount(
+            preferenceEnabled: collapseTurns,
+            itemCount: items.count
+        )
     }
 
     private var sourceTurns: [TranscriptTurn] {
@@ -683,7 +652,7 @@ private struct ConversationMessageList: View {
     }
 
     private var shouldShowScrollToBottom: Bool {
-        !items.isEmpty && showsScrollToBottom
+        !items.isEmpty && showScrollToBottomButton
     }
 
     private var activeThreadScopeID: String {
@@ -716,45 +685,30 @@ private struct ConversationMessageList: View {
     var body: some View {
         let _ = PerfTracker.event("ConversationMessageList.body")
         let turns = mergedRenderableTurns
-        ScrollViewReader { proxy in
-            GeometryReader { viewport in
+        let lastTurnID = turns.last?.id
+        GeometryReader { viewport in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         LazyVStack(alignment: .leading, spacing: 10) {
-                            if !initialTurnsLoaded && hasOlderTurns && !turns.isEmpty {
-                                ConversationLoadingIndicator(label: "Loading earlier messages...")
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                            } else if hasOlderTurns {
-                                Button {
-                                    onLoadOlderTurns(activeThreadKey)
-                                } label: {
-                                    Text("Load earlier messages")
-                                        .litterFont(.caption, weight: .semibold)
-                                        .foregroundColor(LitterTheme.accent)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 8)
-                                }
-                                .buttonStyle(.plain)
-                            }
                             ForEach(turns) { turn in
+                                let isLastTurn = turn.id == lastTurnID
                                 ConversationTurnRow(
                                     turn: turn,
                                     isExpanded: isTurnExpanded(turn),
                                     canCollapse: turn.isCollapsedByDefault,
+                                    isLastTurn: isLastTurn,
+                                    viewportHeight: viewport.size.height,
+                                    showTypingIndicator: isLastTurn && {
+                                        if case .thinking = threadStatus { return true }
+                                        return false
+                                    }(),
                                     serverId: activeThreadKey.serverId,
                                     originThreadId: activeThreadKey.threadId,
                                     agentDirectoryVersion: agentDirectoryVersion,
                                     messageActionsDisabled: messageActionsDisabled,
                                     onToggleExpansion: {
                                         toggleTurnExpansion(turn)
-                                    },
-                                    onStreamingSnapshotRendered: {
-                                        requestFollowScrollAfterLayout(proxy)
-                                    },
-                                    onLiveContentLayoutChanged: {
-                                        requestFollowScrollAfterLayout(proxy)
                                     },
                                     resolveTargetLabel: resolveTargetLabel,
                                     resolveThreadKey: resolveThreadKey,
@@ -767,7 +721,9 @@ private struct ConversationMessageList: View {
                                 .equatable()
                                 .turnDebugOverlay(turnId: turn.id)
                             }
+
                         }
+                        .scrollTargetLayout()
                         .frame(maxWidth: LitterPlatform.isRegularSurface(horizontalSizeClass: horizontalSizeClass) ? 760 : .infinity)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.horizontal, 16)
@@ -783,30 +739,34 @@ private struct ConversationMessageList: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, 40)
                         }
-
-                        Color.clear
-                            .frame(height: isStreaming ? 36 : 1)
-                            .id(Self.bottomAnchorID)
-                            .padding(.horizontal, 16)
                     }
                     .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .top)
                 }
                 .id(activeThreadScopeID)
                 .scrollIndicators(.hidden)
                 .scrollDismissesKeyboard(.interactively)
-                .coordinateSpace(name: Self.scrollCoordinateSpaceName)
-                .onScrollGeometryChange(for: ConversationScrollViewportState.self) { geometry in
-                    ConversationScrollViewportState.resolve(
-                        distanceFromBottom: geometry.contentSize.height - geometry.visibleRect.maxY,
-                        nearBottomDistance: Self.nearBottomRestoreDistance,
-                        scrollToBottomDistance: Self.latestButtonShowDistance
-                    )
-                } action: { _, viewportState in
-                    updateScrollViewportState(viewportState)
+                .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { turnIDs in
+                    visibleTurnIDs = turnIDs
+                    prefetchOlderTurnsIfNeeded(visibleTurnIDs: turnIDs, turns: turns)
                 }
-                // Keep the chat initially bottom-aligned, but don't let keyboard-driven
-                // viewport size changes force a fresh bottom jump with stale lazy heights.
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                } action: { _, distance in
+                    updateDistanceFromBottom(distance)
+                }
+                .onScrollGeometryChange(for: ConversationScrollLayout.self) { geometry in
+                    ConversationScrollLayout(
+                        contentHeight: geometry.contentSize.height,
+                        viewportHeight: geometry.containerSize.height
+                    )
+                } action: { oldLayout, newLayout in
+                    // Keyboard/composer resizing can hide the last message even
+                    // when the transcript's content height does not change.
+                    guard newLayout != oldLayout, isFollowingBottom else { return }
+                    followBottom()
+                }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .scrollPosition($scrollPosition)
                 .simultaneousGesture(
                     MagnificationGesture(minimumScaleDelta: 0.03)
                         .onChanged { scale in handlePinchChanged(scale: scale) }
@@ -815,121 +775,87 @@ private struct ConversationMessageList: View {
                 .onScrollPhaseChange { _, newPhase in
                     switch newPhase {
                     case .tracking, .interacting:
-                        programmaticBottomScrollSettling = false
-                        userIsDraggingScroll = true
-                        if isStreaming {
-                            autoFollowStreaming = false
-                            StreamingRendererCoordinator.shared.setViewportScrolling(true)
-                        }
+                        isFollowingBottom = false
                     case .decelerating:
-                        userIsDraggingScroll = true
+                        break
                     default:
-                        userIsDraggingScroll = false
-                        StreamingRendererCoordinator.shared.setViewportScrolling(false)
-                        if pendingTranscriptSync {
-                            pendingTranscriptSync = false
-                            syncTranscriptTurns()
-                        }
-                        if isNearBottom { autoFollowStreaming = true }
+                        if isNearBottom { isFollowingBottom = true }
                     }
                 }
                 .onAppear {
-                    autoFollowStreaming = true
+                    isFollowingBottom = true
                     syncTranscriptTurns()
-                    requestInitialBottomScrollIfNeeded(proxy)
                 }
                 .onChange(of: activeThreadKey) {
-                    autoFollowStreaming = true
+                    scrollPosition = ScrollPosition()
+                    isFollowingBottom = true
                     isNearBottom = true
-                    showsScrollToBottom = false
-                    initialBottomScrollThreadScopeID = nil
+                    showScrollToBottomButton = false
                     waitingForDataExpired = false
+                    visibleTurnIDs = []
+                    requestedOlderTurnsCursor = nil
+                    requestedOlderTurnsThreadKey = nil
+                    showOlderPageLoader = false
                     syncTranscriptTurns(resetExpansion: true)
                     StreamingRendererCoordinator.shared.reset()
-                    requestInitialBottomScrollIfNeeded(proxy)
                 }
                 .task(id: activeThreadKey) {
                     try? await Task.sleep(for: .seconds(1))
                     waitingForDataExpired = true
                 }
                 .onChange(of: items) { _, _ in
-                    if isStreaming && userIsDraggingScroll {
-                        pendingTranscriptSync = true
-                        return
-                    }
                     syncTranscriptTurns()
-                    requestInitialBottomScrollIfNeeded(proxy)
+                }
+                .onChange(of: olderTurnsCursor) { oldCursor, newCursor in
+                    guard oldCursor != newCursor else { return }
+                    requestedOlderTurnsCursor = nil
+                    requestedOlderTurnsThreadKey = nil
+                    showOlderPageLoader = false
+                    DispatchQueue.main.async {
+                        prefetchOlderTurnsIfNeeded(
+                            visibleTurnIDs: visibleTurnIDs,
+                            turns: mergedRenderableTurns
+                        )
+                    }
                 }
                 .onChange(of: collapseTurns) {
                     syncTranscriptTurns(resetExpansion: true)
                 }
-                .onChange(of: followScrollToken) {
-                    guard isStreaming, autoFollowStreaming, !userIsDraggingScroll else { return }
-                    scrollToBottom(proxy)
-                }
                 .onChange(of: sendScrollToken) {
-                    autoFollowStreaming = true
+                    isFollowingBottom = true
                     isNearBottom = true
-                    showsScrollToBottom = false
-                    scrollToBottom(proxy)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
-                            scrollToBottom(proxy)
-                        }
-                    }
+                    followBottom()
                 }
                 .onChange(of: threadStatus) { oldStatus, _ in
-                    pendingTranscriptSync = false
                     syncTranscriptTurns()
                     // When streaming ends, finish active renderers so they
                     // switch to static rendering (no re-animation on view rebuild).
                     let wasStreaming = { if case .thinking = oldStatus { return true }; return false }()
-                    if !wasStreaming && isStreaming && userIsDraggingScroll {
-                        StreamingRendererCoordinator.shared.setViewportScrolling(true)
-                    }
                     if wasStreaming && !isStreaming {
                         StreamingRendererCoordinator.shared.finishActive()
                     }
-                    if wasStreaming && !isStreaming && autoFollowStreaming {
-                        scrollToBottom(proxy)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            scrollToBottom(proxy)
-                        }
-                    }
-                }
-                .onDisappear {
-                    StreamingRendererCoordinator.shared.setViewportScrolling(false)
-                }
-
-                if isStreaming {
-                    TypingIndicator()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                        .allowsHitTesting(false)
                 }
 
                 if shouldShowScrollToBottom {
                     ScrollToBottomIndicator {
-                        autoFollowStreaming = true
+                        isFollowingBottom = true
                         isNearBottom = true
-                        showsScrollToBottom = false
-                        // Jump without animation first so LazyVStack realizes
-                        // content near the bottom, then do an animated corrective
-                        // scroll once layout has settled.  This avoids the
-                        // overshoot caused by stale estimated heights.
-                        scrollToBottom(proxy)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
-                                scrollToBottom(proxy)
-                            }
-                        }
+                        followBottom()
                     }
                     .padding(.trailing, 14)
                     .padding(.bottom, 10)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-            }
+
+                if showOlderPageLoader, hasOlderTurns {
+                    ConversationLoadingIndicator(label: "Loading earlier messages...")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, topInset + 8)
+                        .allowsHitTesting(false)
+                }
             }
         }
     }
@@ -949,66 +875,75 @@ private struct ConversationMessageList: View {
         }
     }
 
-    private func requestFollowScrollAfterLayout(_ proxy: ScrollViewProxy) {
-        guard !followLayoutScrollScheduled else { return }
-        followLayoutScrollScheduled = true
-        DispatchQueue.main.async {
-            followLayoutScrollScheduled = false
-            guard isStreaming, autoFollowStreaming, !userIsDraggingScroll else { return }
-            scrollToBottom(proxy)
+    private func updateDistanceFromBottom(_ distance: CGFloat) {
+        // `clampedDistance` is intentionally not stored: it changed on every
+        // scroll frame, keyboard move and composer-height change, and the only
+        // consumers are the two guarded booleans below. Writing it to @State
+        // invalidated `ConversationMessageList.body` (rebuilding the whole turn
+        // `ForEach`) for a value nothing read.
+        let clampedDistance = max(0, distance)
+        let nextShowButton = clampedDistance > Self.latestButtonShowDistance
+        if nextShowButton != showScrollToBottomButton { showScrollToBottomButton = nextShowButton }
+        let nextIsNearBottom = clampedDistance <= Self.nearBottomRestoreDistance
+        if nextIsNearBottom != isNearBottom { isNearBottom = nextIsNearBottom }
+    }
+
+    private func followBottom() {
+        withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
+            scrollPosition.scrollTo(edge: .bottom)
         }
     }
 
-    private func requestInitialBottomScrollIfNeeded(_ proxy: ScrollViewProxy) {
-        guard !items.isEmpty else { return }
-        let threadScopeID = activeThreadScopeID
-        guard initialBottomScrollThreadScopeID != threadScopeID else { return }
-        initialBottomScrollThreadScopeID = threadScopeID
-        // Wait for the hydrated markdown's first layout before anchoring the
-        // restored session at its newest reply. A second pass catches rich
-        // blocks whose measured height arrives on the following frame.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-            guard activeThreadScopeID == threadScopeID else { return }
-            scrollToBottom(proxy)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                guard activeThreadScopeID == threadScopeID else { return }
-                scrollToBottom(proxy)
+
+    private func prefetchOlderTurnsIfNeeded(
+        visibleTurnIDs: [String],
+        turns: [TranscriptTurn]
+    ) {
+        guard let earliestVisibleIndex = ConversationInfiniteScrollPolicy.earliestVisibleIndex(
+            visibleIDs: visibleTurnIDs,
+            orderedIDs: turns.map(\.id)
+        ), earliestVisibleIndex <= ConversationInfiniteScrollPolicy.olderPrefetchDistance else { return }
+
+        requestOlderTurnsPage(showLoaderIfCacheExhausted: earliestVisibleIndex == 0)
+    }
+
+    private func requestOlderTurnsPage(showLoaderIfCacheExhausted: Bool) {
+        guard initialTurnsLoaded,
+              let cursor = olderTurnsCursor,
+              !cursor.isEmpty else { return }
+        let requestKey = activeThreadKey
+
+        if requestedOlderTurnsCursor == cursor,
+           requestedOlderTurnsThreadKey == requestKey {
+            if showLoaderIfCacheExhausted {
+                scheduleOlderPageLoader(for: cursor, threadKey: requestKey)
             }
+            return
+        }
+
+        requestedOlderTurnsCursor = cursor
+        requestedOlderTurnsThreadKey = requestKey
+        if showLoaderIfCacheExhausted {
+            scheduleOlderPageLoader(for: cursor, threadKey: requestKey)
+        }
+
+        Task {
+            let didLoad = await onLoadOlderTurns(requestKey)
+            guard !didLoad,
+                  requestedOlderTurnsCursor == cursor,
+                  requestedOlderTurnsThreadKey == requestKey else { return }
+            requestedOlderTurnsCursor = nil
+            requestedOlderTurnsThreadKey = nil
+            showOlderPageLoader = false
         }
     }
 
-    private func updateScrollViewportState(_ viewportState: ConversationScrollViewportState) {
-        if programmaticBottomScrollSettling {
-            if viewportState.isNearBottom {
-                programmaticBottomScrollSettling = false
-            } else {
-                return
-            }
-        }
-
-        if viewportState.isNearBottom != isNearBottom {
-            isNearBottom = viewportState.isNearBottom
-        }
-        if viewportState.showsScrollToBottom != showsScrollToBottom {
-            showsScrollToBottom = viewportState.showsScrollToBottom
-        }
-        if viewportState.isNearBottom {
-            autoFollowStreaming = true
-        } else if isStreaming && userIsDraggingScroll {
-            autoFollowStreaming = false
-        }
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        isNearBottom = true
-        showsScrollToBottom = false
-        programmaticBottomScrollGeneration &+= 1
-        let generation = programmaticBottomScrollGeneration
-        programmaticBottomScrollSettling = true
-        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.bottomScrollSettleDuration) {
-            guard programmaticBottomScrollGeneration == generation else { return }
-            programmaticBottomScrollSettling = false
+    private func scheduleOlderPageLoader(for cursor: String, threadKey: ThreadKey) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard requestedOlderTurnsCursor == cursor,
+                  requestedOlderTurnsThreadKey == threadKey else { return }
+            showOlderPageLoader = true
         }
     }
 
@@ -1115,7 +1050,7 @@ private struct ConversationMessageList: View {
         to nextTurns: [TranscriptTurn],
         resetExpansion: Bool
     ) -> Bool {
-        guard collapseTurns,
+        guard shouldCollapseTurns,
               !resetExpansion,
               !currentTurns.isEmpty,
               nextTurns.count == currentTurns.count + 1,
@@ -1193,14 +1128,15 @@ private struct ConversationTurnRow: View, Equatable {
     let turn: TranscriptTurn
     let isExpanded: Bool
     let canCollapse: Bool
+    let isLastTurn: Bool
+    let viewportHeight: CGFloat
+    let showTypingIndicator: Bool
     let serverId: String
     let originThreadId: String?
     let agentDirectoryVersion: UInt64
     @Environment(\.textScale) private var textScale
     let messageActionsDisabled: Bool
     let onToggleExpansion: () -> Void
-    let onStreamingSnapshotRendered: (() -> Void)?
-    let onLiveContentLayoutChanged: (() -> Void)?
     let resolveTargetLabel: (String) -> String?
     let resolveThreadKey: (String) -> ThreadKey?
     let resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
@@ -1215,6 +1151,9 @@ private struct ConversationTurnRow: View, Equatable {
             lhs.turn.isLive == rhs.turn.isLive &&
             lhs.isExpanded == rhs.isExpanded &&
             lhs.canCollapse == rhs.canCollapse &&
+            lhs.isLastTurn == rhs.isLastTurn &&
+            lhs.viewportHeight == rhs.viewportHeight &&
+            lhs.showTypingIndicator == rhs.showTypingIndicator &&
             lhs.serverId == rhs.serverId &&
             lhs.originThreadId == rhs.originThreadId &&
             lhs.agentDirectoryVersion == rhs.agentDirectoryVersion &&
@@ -1238,8 +1177,6 @@ private struct ConversationTurnRow: View, Equatable {
                 originThreadId: originThreadId,
                 agentDirectoryVersion: agentDirectoryVersion,
                 messageActionsDisabled: messageActionsDisabled,
-                onStreamingSnapshotRendered: onStreamingSnapshotRendered,
-                onLiveContentLayoutChanged: onLiveContentLayoutChanged,
                 resolveTargetLabel: resolveTargetLabel,
                 resolveThreadKey: resolveThreadKey,
                 resolveLiveStatus: resolveLiveStatus,
@@ -1248,6 +1185,10 @@ private struct ConversationTurnRow: View, Equatable {
                 onForkFromUserItem: onForkFromUserItem,
                 onOpenConversation: onOpenConversation
             )
+
+            TypingIndicator()
+                .opacity(showTypingIndicator ? 1 : 0)
+                .animation(nil, value: showTypingIndicator)
 
             if canCollapse {
                 Button("Show Less", systemImage: "chevron.up", action: onToggleExpansion)
@@ -1421,21 +1362,27 @@ private struct ScrollToBottomIndicator: View {
     @State private var bob = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.down")
-                    .litterFont(.caption, weight: .bold)
-                    .offset(y: bob ? 1.5 : -1.5)
-                    .animation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true), value: bob)
-                Text("Latest")
-                    .litterFont(.caption, weight: .semibold)
-            }
-            .foregroundColor(LitterTheme.textPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .modifier(GlassCapsuleModifier())
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down")
+                .litterFont(.caption, weight: .bold)
+                .offset(y: bob ? 1.5 : -1.5)
+                .animation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true), value: bob)
+            Text("Latest")
+                .litterFont(.caption, weight: .semibold)
         }
+        .foregroundColor(LitterTheme.textPrimary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .modifier(GlassCapsuleModifier())
         .contentShape(Capsule())
+        // A normal Button tap can be consumed merely to stop an actively
+        // decelerating ScrollView. Give this overlay first refusal so Latest
+        // executes on that same tap, even while momentum is still active.
+        .highPriorityGesture(TapGesture().onEnded(action))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Latest")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { action() }
         .onAppear {
             bob = true
         }
@@ -1678,7 +1625,8 @@ private struct ConversationInputBar: View {
                 isComposerFocused: $isComposerFocused,
                 composerSelectionRange: composerSelection.binding
             )
-            .overlay(alignment: .bottom) {
+            .environment(\.skillMentionHighlightNames, recognizedSkillNames)
+            .overlay(alignment: .top) {
                 ConversationComposerPopupOverlayView(
                     state: popupState,
                     onApplySlashSuggestion: applySlashSuggestion,
@@ -1686,6 +1634,7 @@ private struct ConversationInputBar: View {
                     onApplySkillSuggestion: applySkillSuggestion,
                     onApplyPluginSuggestion: applyPluginSuggestion
                 )
+                .alignmentGuide(.top) { $0[.bottom] }
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -2639,6 +2588,10 @@ private struct ConversationInputBar: View {
         }
     }
 
+    private var recognizedSkillNames: Set<String> {
+        Set(skills.map { $0.name.lowercased() })
+    }
+
     private var skillSuggestions: [SkillMetadata] {
         guard let token = activeDollarToken else { return [] }
         return filterSkillSuggestions(token.value)
@@ -2778,6 +2731,10 @@ private func collaborationModeEffortLabel(_ effort: ReasoningEffort) -> String {
         return AppLanguage.localizedString("Max")
     case .ultra:
         return AppLanguage.localizedString("Ultra")
+    case .persistent:
+        return AppLanguage.localizedString("Persistent")
+    case .custom(let value):
+        return value
     }
 }
 
@@ -2847,6 +2804,7 @@ enum ComposerSlashCommand: CaseIterable {
 enum ComposerApprovalOption: CaseIterable, Identifiable {
     case `default`
     case untrusted
+    case onFailure
     case onRequest
     case never
 
@@ -2856,6 +2814,7 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
         switch self {
         case .default: return AppLanguage.localizedString("Default")
         case .untrusted: return AppLanguage.localizedString("Untrusted")
+        case .onFailure: return AppLanguage.localizedString("On failure")
         case .onRequest: return AppLanguage.localizedString("On request")
         case .never: return AppLanguage.localizedString("Never")
         }
@@ -2865,6 +2824,7 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
         switch self {
         case .default: return AppLanguage.localizedString("Use the thread or server default")
         case .untrusted: return AppLanguage.localizedString("Always ask before taking action")
+        case .onFailure: return AppLanguage.localizedString("Ask only when a command fails")
         case .onRequest: return AppLanguage.localizedString("Ask when escalation is requested")
         case .never: return AppLanguage.localizedString("Run without asking for approval")
         }
@@ -2874,6 +2834,7 @@ enum ComposerApprovalOption: CaseIterable, Identifiable {
         switch self {
         case .default: return "inherit"
         case .untrusted: return "untrusted"
+        case .onFailure: return "on-failure"
         case .onRequest: return "on-request"
         case .never: return "never"
         }
@@ -2976,17 +2937,13 @@ private func fuzzyScore(candidate: String, query: String) -> Int? {
     return queryIndex == normalizedQuery.endIndex ? score : nil
 }
 
-private let kDollarSign: UInt8 = 0x24
-private let kUnderscore: UInt8 = 0x5F
-private let kHyphen: UInt8 = 0x2D
-
 private func isMentionNameByte(_ byte: UInt8) -> Bool {
     switch byte {
     case 0x61...0x7A, // a-z
         0x41...0x5A,  // A-Z
         0x30...0x39,  // 0-9
-        kUnderscore,
-        kHyphen:
+        0x5F,         // _
+        0x2D:         // -
         return true
     default:
         return false
@@ -2999,40 +2956,7 @@ private func isMentionQueryValid(_ query: String) -> Bool {
 }
 
 private func extractMentionNames(_ text: String) -> [String] {
-    let bytes = Array(text.utf8)
-    guard !bytes.isEmpty else { return [] }
-
-    var mentions: [String] = []
-    var index = 0
-    while index < bytes.count {
-        guard bytes[index] == kDollarSign else {
-            index += 1
-            continue
-        }
-
-        if index > 0, isMentionNameByte(bytes[index - 1]) {
-            index += 1
-            continue
-        }
-
-        let nameStart = index + 1
-        guard nameStart < bytes.count, isMentionNameByte(bytes[nameStart]) else {
-            index += 1
-            continue
-        }
-
-        var nameEnd = nameStart + 1
-        while nameEnd < bytes.count, isMentionNameByte(bytes[nameEnd]) {
-            nameEnd += 1
-        }
-
-        if let name = String(bytes: bytes[nameStart..<nameEnd], encoding: .utf8) {
-            mentions.append(name)
-        }
-        index = nameEnd
-    }
-
-    return mentions
+    SkillMentionTokens.names(in: text)
 }
 
 func currentPrefixedToken(
