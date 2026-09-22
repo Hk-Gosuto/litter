@@ -1337,6 +1337,8 @@ private struct HomeNavigationView: View {
         hasSeededInitialConversationRoute = true
         appState.showModelSelector = false
         guard navigationPath.last != .conversation(key) else { return }
+        // Opened here, closed by `ConversationView` on its first render.
+        PerfTracker.beginInterval("OpenThread", key: PerfTracker.intervalKey(key))
         navigationPath.append(.conversation(key))
     }
 

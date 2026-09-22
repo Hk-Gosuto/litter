@@ -71,6 +71,7 @@ import com.sigkitten.litter.android.R
 import com.litter.android.state.contextPercent
 import com.litter.android.state.hasActiveTurn
 import com.litter.android.state.isActiveStatus
+import com.litter.android.state.PerfTrace
 import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.ChatWallpaperBackground
 import com.litter.android.ui.ConversationPrefs
@@ -121,6 +122,9 @@ fun ConversationScreen(
         }
     }
     LaunchedEffect(Unit) {
+        // Closes the interval opened by `navigateToConversation`, so the
+        // `perf` log reports "tap → conversation composed" as one duration.
+        PerfTrace.endInterval("OpenThread", PerfTrace.intervalKey(threadKey))
         // Trigger a lightweight parse to JIT-warm the Rust MessageParser
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             appModel.parser.extractRenderBlocksTyped("")
