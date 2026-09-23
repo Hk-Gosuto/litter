@@ -807,8 +807,17 @@ private struct ConversationMessageList: View {
                     try? await Task.sleep(for: .seconds(1))
                     waitingForDataExpired = true
                 }
-                .onChange(of: items) { _, _ in
+                .onChange(of: items) { oldItems, newItems in
                     syncTranscriptTurns()
+                    // The send action can request the bottom position while the
+                    // transcript is still empty. ScrollPosition then resolves
+                    // that request against the pre-message layout and keeps the
+                    // first turn at a stale offset until the user drags. Give
+                    // the first content insertion two post-layout passes to
+                    // settle, while keeping the user's manual scroll choice.
+                    if oldItems.isEmpty, !newItems.isEmpty, isFollowingBottom {
+                        requestDeferredBottomFollowAfterFirstItem()
+                    }
                 }
                 .onChange(of: olderTurnsCursor) { oldCursor, newCursor in
                     guard oldCursor != newCursor else { return }
@@ -892,9 +901,29 @@ private struct ConversationMessageList: View {
         if nextIsNearBottom != isNearBottom { isNearBottom = nextIsNearBottom }
     }
 
-    private func followBottom() {
+    private func followBottom(animated: Bool = true) {
+        guard animated else {
+            scrollPosition.scrollTo(edge: .bottom)
+            return
+        }
         withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
             scrollPosition.scrollTo(edge: .bottom)
+        }
+    }
+
+    private func requestDeferredBottomFollowAfterFirstItem() {
+        let threadScopeID = activeThreadScopeID
+        DispatchQueue.main.async {
+            guard threadScopeID == activeThreadScopeID, isFollowingBottom else { return }
+            followBottom(animated: false)
+
+            // Markdown and live content can finish measuring one frame later.
+            // A second pass catches that height without affecting a thread the
+            // user may have navigated to in the meantime.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                guard threadScopeID == activeThreadScopeID, isFollowingBottom else { return }
+                followBottom()
+            }
         }
     }
 
