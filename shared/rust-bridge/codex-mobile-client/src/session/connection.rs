@@ -57,7 +57,6 @@ pub(crate) enum SshReconnectMode {
     AppServerProxy {
         codex_path: String,
         remote_shell: RemoteShell,
-        socket_path: Arc<StdMutex<String>>,
     },
     WebSocketTunnel {
         local_port: u16,
@@ -78,12 +77,6 @@ impl SshReconnectTransport {
             SshBootstrapTransport::AppServerProxy => SshReconnectMode::AppServerProxy {
                 codex_path: bootstrap.codex_path.clone(),
                 remote_shell: bootstrap.shell,
-                socket_path: Arc::new(StdMutex::new(
-                    bootstrap
-                        .socket_path
-                        .clone()
-                        .expect("SSH proxy requires its own socket"),
-                )),
             },
             SshBootstrapTransport::WebSocketTunnel => SshReconnectMode::WebSocketTunnel {
                 local_port: bootstrap.tunnel_local_port,
@@ -1217,9 +1210,8 @@ pub(crate) async fn connect_remote_client_over_app_server_proxy(
     args: &RemoteAppServerConnectArgs,
     codex_path: &str,
     remote_shell: RemoteShell,
-    socket_path: &str,
 ) -> Result<AppServerClient, TransportError> {
-    let label = format!("app-server-proxy:{socket_path}");
+    let label = "app-server-proxy:managed".to_string();
     let mut proxy_args = args.clone();
     // The SSH exec proxy supplies the connected byte stream. The WebSocket
     // client still needs a syntactically valid URI for the HTTP Upgrade
@@ -1235,7 +1227,7 @@ pub(crate) async fn connect_remote_client_over_app_server_proxy(
         auth_token: preserved_auth_token,
     };
     let stream = ssh_client
-        .open_app_server_proxy_stream(codex_path, remote_shell, Some(socket_path))
+        .open_app_server_proxy_stream(codex_path, remote_shell, None)
         .await
         .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
     Ok(AppServerClient::Remote(
@@ -1433,14 +1425,12 @@ async fn rebootstrap_app_server_proxy_over_ssh(
     transport: &SshReconnectTransport,
     codex_path: &str,
     remote_shell: RemoteShell,
-    socket_path: &Arc<StdMutex<String>>,
     websocket_url: &str,
 ) -> bool {
     let bootstrap = match transport
         .ssh_client
         .bootstrap_codex_app_server_proxy_with_binary_and_shell(
             &crate::ssh::RemoteCodexBinary::Codex(codex_path.to_string()),
-            transport.working_dir.as_deref(),
             remote_shell,
         )
         .await
@@ -1455,27 +1445,12 @@ async fn rebootstrap_app_server_proxy_over_ssh(
         }
     };
 
-    let Some(next_socket_path) = bootstrap.socket_path else {
-        warn!("remote reconnect app-server proxy bootstrap omitted its socket path");
-        return false;
-    };
-    match socket_path.lock() {
-        Ok(mut guard) => *guard = next_socket_path,
-        Err(error) => *error.into_inner() = next_socket_path,
-    }
     update_ssh_reconnect_pid(transport, bootstrap.pid);
     info!(
         "remote reconnect app-server proxy bootstrap completed: {} pid={:?}",
         websocket_url, bootstrap.pid
     );
     true
-}
-
-fn ssh_reconnect_proxy_socket_path(socket_path: &Arc<StdMutex<String>>) -> String {
-    match socket_path.lock() {
-        Ok(guard) => guard.clone(),
-        Err(error) => error.into_inner().clone(),
-    }
 }
 
 #[async_trait::async_trait]
@@ -1489,13 +1464,11 @@ impl RemoteTransport for SshReconnectTransport {
             SshReconnectMode::AppServerProxy {
                 codex_path,
                 remote_shell,
-                socket_path,
             } => match connect_remote_client_over_app_server_proxy(
                 &self.ssh_client,
                 args,
                 codex_path,
                 *remote_shell,
-                &ssh_reconnect_proxy_socket_path(socket_path),
             )
             .await
             {
@@ -1508,7 +1481,6 @@ impl RemoteTransport for SshReconnectTransport {
                         self,
                         codex_path,
                         *remote_shell,
-                        socket_path,
                         websocket_url,
                     )
                     .await
@@ -1518,7 +1490,6 @@ impl RemoteTransport for SshReconnectTransport {
                             args,
                             codex_path,
                             *remote_shell,
-                            &ssh_reconnect_proxy_socket_path(socket_path),
                         )
                         .await
                         {

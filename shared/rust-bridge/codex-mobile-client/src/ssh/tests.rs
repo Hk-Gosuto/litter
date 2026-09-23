@@ -1,4 +1,5 @@
 use super::probes::format_process_logs;
+use super::bootstrap::managed_daemon_status_running;
 use super::*;
 
 #[test]
@@ -47,13 +48,17 @@ fn test_server_launch_command_for_codex() {
 }
 
 #[test]
-fn test_litter_unix_server_uses_explicit_socket() {
-    let command = server_launch_command(
-        &RemoteCodexBinary::Codex("/usr/local/bin/codex".into()),
-        "unix:///tmp/litter-codex.abcdef/app-server.sock",
-        RemoteShell::Posix,
-    );
-    assert!(command.contains("--listen 'unix:///tmp/litter-codex.abcdef/app-server.sock'"));
+fn managed_daemon_status_requires_a_managed_backend() {
+    assert!(managed_daemon_status_running(
+        r#"{"status":"running","backend":"pid","appServerVersion":"0.156.1"}"#
+    ));
+    assert!(!managed_daemon_status_running(
+        r#"{"status":"running","appServerVersion":"0.156.1"}"#
+    ));
+    assert!(!managed_daemon_status_running(
+        r#"{"status":"stopped","backend":"pid"}"#
+    ));
+    assert!(!managed_daemon_status_running("not json"));
 }
 
 #[test]
@@ -180,7 +185,6 @@ fn test_bootstrap_result_clone() {
         tunnel_local_port: 12345,
         server_version: Some("1.0.0".into()),
         pid: Some(42),
-        socket_path: None,
         codex_path: "/usr/local/bin/codex".into(),
         shell: RemoteShell::Posix,
         transport: SshBootstrapTransport::WebSocketTunnel,
