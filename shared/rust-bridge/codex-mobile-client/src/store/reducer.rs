@@ -3435,7 +3435,14 @@ fn render_user_input(inputs: &[upstream::UserInput]) -> (String, Vec<String>) {
                     text_parts.push(trimmed);
                 }
             }
-            upstream::UserInput::Image { url, .. } => images.push(url.clone()),
+            upstream::UserInput::Image {
+                image: upstream::ImageReference::Inline { url },
+                ..
+            } => images.push(url.clone()),
+            upstream::UserInput::Image {
+                image: upstream::ImageReference::File { .. },
+                ..
+            } => {}
             upstream::UserInput::LocalImage { path, .. } => {
                 images.push(format!("file://{}", path.display()));
             }

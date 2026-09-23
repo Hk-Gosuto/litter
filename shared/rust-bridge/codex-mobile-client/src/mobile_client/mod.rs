@@ -1389,15 +1389,15 @@ impl MobileClient {
         .map_err(RpcClientError::Rpc)
     }
 
-    pub(crate) async fn server_thread_rollback(
+    pub(crate) async fn server_thread_revert(
         &self,
         server_id: &str,
-        params: upstream::ThreadRollbackParams,
-    ) -> Result<upstream::ThreadRollbackResponse, crate::RpcClientError> {
+        params: upstream::ThreadRevertParams,
+    ) -> Result<upstream::ThreadRevertResponse, crate::RpcClientError> {
         use crate::{RpcClientError, next_request_id};
         self.request_typed_for_server(
             server_id,
-            upstream::ClientRequest::ThreadRollback {
+            upstream::ClientRequest::ThreadRevert {
                 request_id: upstream::RequestId::Integer(next_request_id()),
                 params,
             },
@@ -3596,7 +3596,7 @@ impl MobileClient {
         Ok(())
     }
 
-    /// Roll back the current thread to a selected user turn and return the
+    /// Revert the current thread to before a selected user turn and return the
     /// message text that should be restored into the composer for editing.
     pub async fn edit_message(
         &self,
@@ -3606,34 +3606,31 @@ impl MobileClient {
         self.get_session(&key.server_id)?;
         let current = self.snapshot_thread(key)?;
         ensure_thread_is_editable(&current)?;
-        let rollback_depth = rollback_depth_for_turn(&current, selected_turn_index as usize)?;
+        let before_turn_id =
+            revert_before_turn_id_for_turn(&current, selected_turn_index as usize)?;
         let prefill_text = user_boundary_text_for_turn(&current, selected_turn_index as usize)?;
 
-        if rollback_depth > 0 {
-            let response = self
-                .server_thread_rollback(
-                    &key.server_id,
-                    upstream::ThreadRollbackParams {
-                        thread_id: key.thread_id.clone(),
-                        num_turns: rollback_depth,
-                    },
-                )
-                .await
-                .map_err(|e| RpcError::Deserialization(e.to_string()))?;
-            let turns = response.thread.turns.clone();
-            let mut snapshot = thread_snapshot_from_upstream_thread_with_overrides(
+        let response = self
+            .server_thread_revert(
                 &key.server_id,
-                response.thread,
-                current.model.clone(),
-                current.reasoning_effort.clone(),
-                current.effective_approval_policy.clone(),
-                current.effective_sandbox_policy.clone(),
+                upstream::ThreadRevertParams {
+                    thread_id: key.thread_id.clone(),
+                    before_turn_id,
+                },
             )
+            .await
+            .map_err(|e| RpcError::Deserialization(e.to_string()))?;
+        let turns_cursor = response.turns_backwards_cursor.clone();
+        self.apply_thread_revert_response(&key.server_id, &key.thread_id, &response)
             .map_err(RpcError::Deserialization)?;
-            copy_thread_runtime_fields(&current, &mut snapshot);
-            reconcile_active_turn(Some(&current), &mut snapshot, &turns);
-            self.apply_persisted_thread_collaboration_mode(&mut snapshot);
-            self.app_store.upsert_thread_snapshot(snapshot);
+        if let Some(cursor) = turns_cursor {
+            self.load_thread_turns_page(
+                &key.server_id,
+                &key.thread_id,
+                Some(cursor),
+                Some(100),
+            )
+            .await?;
         }
 
         self.set_active_thread(Some(key.clone()));
@@ -3655,7 +3652,8 @@ impl MobileClient {
         self.get_session(&key.server_id)?;
         let source = self.snapshot_thread(key)?;
         ensure_thread_is_editable(&source)?;
-        let rollback_depth = rollback_depth_for_turn(&source, selected_turn_index as usize)?;
+        let before_turn_id =
+            revert_before_turn_id_for_turn(&source, selected_turn_index as usize)?;
 
         let developer_instructions =
             crate::local_runtime_instructions::splice_local_runtime_developer_instructions(
@@ -3697,31 +3695,36 @@ impl MobileClient {
         )
         .map_err(RpcError::Deserialization)?;
         let next_key = snapshot.key.clone();
-
-        if rollback_depth > 0 {
-            let rollback_response = self
-                .server_thread_rollback(
-                    &key.server_id,
-                    upstream::ThreadRollbackParams {
-                        thread_id: next_key.thread_id.clone(),
-                        num_turns: rollback_depth,
-                    },
-                )
-                .await
-                .map_err(|e| RpcError::Deserialization(e.to_string()))?;
-            snapshot = thread_snapshot_from_upstream_thread_with_overrides(
-                &key.server_id,
-                rollback_response.thread,
-                fork_model,
-                fork_reasoning,
-                snapshot.effective_approval_policy.clone(),
-                snapshot.effective_sandbox_policy.clone(),
-            )
-            .map_err(RpcError::Deserialization)?;
-        }
-
         self.apply_persisted_thread_collaboration_mode(&mut snapshot);
         self.app_store.upsert_thread_snapshot(snapshot);
+
+        let revert_response = self
+            .server_thread_revert(
+                &key.server_id,
+                upstream::ThreadRevertParams {
+                    thread_id: next_key.thread_id.clone(),
+                    before_turn_id,
+                },
+            )
+            .await
+            .map_err(|e| RpcError::Deserialization(e.to_string()))?;
+        let turns_cursor = revert_response.turns_backwards_cursor.clone();
+        self.apply_thread_revert_response(
+            &key.server_id,
+            &next_key.thread_id,
+            &revert_response,
+        )
+        .map_err(RpcError::Deserialization)?;
+        if let Some(cursor) = turns_cursor {
+            self.load_thread_turns_page(
+                &key.server_id,
+                &next_key.thread_id,
+                Some(cursor),
+                Some(100),
+            )
+            .await?;
+        }
+
         self.set_active_thread(Some(next_key.clone()));
         Ok(next_key)
     }

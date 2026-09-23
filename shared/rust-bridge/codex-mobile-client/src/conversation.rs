@@ -17,8 +17,8 @@ use base64::Engine;
 use codex_app_server_protocol::{
     CollabAgentStatus, CollabAgentTool, CollabAgentToolCallStatus, CommandAction,
     CommandExecutionStatus, DynamicToolCallOutputContentItem, DynamicToolCallStatus,
-    FileUpdateChange, McpToolCallResult, McpToolCallStatus, PatchApplyStatus, PatchChangeKind,
-    ThreadItem, Turn, UserInput,
+    FileUpdateChange, ImageReference, McpToolCallResult, McpToolCallStatus, PatchApplyStatus,
+    PatchChangeKind, ThreadItem, Turn, UserInput,
 };
 use codex_shell_command::parse_command::extract_shell_command;
 use serde::Serialize;
@@ -1284,8 +1284,11 @@ fn render_user_input(inputs: &[UserInput]) -> (String, Vec<String>) {
                     text_parts.push(trimmed);
                 }
             }
-            UserInput::Image { url, .. } => {
-                images.push(url.clone());
+            UserInput::Image { image, .. } => match image {
+                ImageReference::Inline { url } => images.push(url.clone()),
+                ImageReference::File { file_id } => {
+                    text_parts.push(format!("[Image attachment] {file_id}"));
+                }
             }
             UserInput::LocalImage { path, .. } => {
                 images.push(format!("file://{}", path.display()));
@@ -2140,6 +2143,7 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t1",
             vec![ThreadItem::CommandExecution {
+                model_context: None,
                 plugin_id: None,
                 script_path: None,
                 id: "c1".into(),
@@ -2198,6 +2202,7 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t1",
             vec![ThreadItem::CommandExecution {
+                model_context: None,
                 plugin_id: None,
                 script_path: None,
                 id: "c1".into(),
@@ -2328,6 +2333,7 @@ diff --git a/parser.rs b/parser.rs\n\
                     status: McpToolCallStatus::Completed,
                     arguments: serde_json::json!({ "path": "/tmp/file.txt" }),
                     mcp_app_resource_uri: None,
+                    mcp_app_ui: None,
                     result: Some(Box::new(codex_app_server_protocol::McpToolCallResult {
                         content: vec![serde_json::json!("contents")],
                         structured_content: None,
@@ -2494,6 +2500,7 @@ diff --git a/parser.rs b/parser.rs\n\
                         "element_index": "634"
                     }),
                     mcp_app_resource_uri: None,
+                    mcp_app_ui: None,
                     result: Some(Box::new(codex_app_server_protocol::McpToolCallResult {
                         content: vec![
                             serde_json::json!({
@@ -2523,6 +2530,7 @@ diff --git a/parser.rs b/parser.rs\n\
                     status: McpToolCallStatus::Completed,
                     arguments: serde_json::json!({ "path": "/tmp/file.txt" }),
                     mcp_app_resource_uri: None,
+                    mcp_app_ui: None,
                     result: None,
                     error: None,
                     duration_ms: None,
@@ -2676,6 +2684,7 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t-command-truncate",
             vec![ThreadItem::CommandExecution {
+                model_context: None,
                 plugin_id: None,
                 script_path: None,
                 id: "cmd-1".into(),

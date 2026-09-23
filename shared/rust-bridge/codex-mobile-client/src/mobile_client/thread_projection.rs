@@ -177,7 +177,9 @@ pub(super) fn queued_follow_up_inputs_from_json_value(
         .flatten()
         .filter_map(serde_json::Value::as_str)
         .map(|url| upstream::UserInput::Image {
-            url: url.to_string(),
+            image: upstream::ImageReference::Inline {
+                url: url.to_string(),
+            },
             detail: None,
         });
     inputs.extend(remote_images);
@@ -264,9 +266,14 @@ pub(super) fn queued_follow_up_message_json_from_inputs(
                 }
                 text_elements = current_elements.clone();
             }
-            upstream::UserInput::Image { url, .. } => {
-                remote_image_urls.push(url.clone());
-            }
+            upstream::UserInput::Image {
+                image: upstream::ImageReference::Inline { url },
+                ..
+            } => remote_image_urls.push(url.clone()),
+            upstream::UserInput::Image {
+                image: upstream::ImageReference::File { .. },
+                ..
+            } => {}
             upstream::UserInput::LocalImage { path, .. } => {
                 let placeholder = format!("[Image #{}]", local_images.len() + 1);
                 local_images.push(serde_json::json!({
@@ -384,28 +391,29 @@ pub(super) fn ensure_thread_is_editable(snapshot: &ThreadSnapshot) -> Result<(),
     Ok(())
 }
 
-pub(super) fn rollback_depth_for_turn(
+pub(super) fn revert_before_turn_id_for_turn(
     snapshot: &ThreadSnapshot,
     selected_turn_index: usize,
-) -> Result<u32, RpcError> {
-    let user_turn_indices = snapshot
+) -> Result<String, RpcError> {
+    let item = snapshot
         .items
         .iter()
-        .enumerate()
-        .filter_map(|(idx, item)| {
+        .filter(|item| {
             matches!(
                 item.content,
                 crate::conversation_uniffi::HydratedConversationItemContent::User(_)
             )
-            .then_some(idx)
         })
-        .collect::<Vec<_>>();
-    let item_index = *user_turn_indices.get(selected_turn_index).ok_or_else(|| {
-        RpcError::Deserialization(format!("unknown user turn index {}", selected_turn_index))
-    })?;
-    let turns_after = snapshot.items.len().saturating_sub(item_index + 1);
-    u32::try_from(turns_after)
-        .map_err(|_| RpcError::Deserialization("rollback depth overflow".to_string()))
+        .nth(selected_turn_index)
+        .ok_or_else(|| {
+            RpcError::Deserialization(format!("unknown user turn index {selected_turn_index}"))
+        })?;
+    item.source_turn_id.clone().ok_or_else(|| {
+        RpcError::Deserialization(
+            "selected user message has no upstream turn id; refresh the thread and retry"
+                .to_string(),
+        )
+    })
 }
 
 pub(super) fn user_boundary_text_for_turn(

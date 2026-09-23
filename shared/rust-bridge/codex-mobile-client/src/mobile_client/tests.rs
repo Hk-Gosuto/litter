@@ -2394,6 +2394,7 @@ mod mobile_client_tests {
             .start_turn(
                 server_id,
                 upstream::TurnStartParams {
+                    disabled_plugin_ids: None,
                     additional_context: None,
                     client_user_message_id: None,
                     cyber_access_program: None,

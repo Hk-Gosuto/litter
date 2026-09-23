@@ -1,44 +1,52 @@
 diff --git a/codex-rs/utils/absolute-path/src/lib.rs b/codex-rs/utils/absolute-path/src/lib.rs
+index 5918990fd..de9f53e04 100644
 --- a/codex-rs/utils/absolute-path/src/lib.rs
 +++ b/codex-rs/utils/absolute-path/src/lib.rs
-@@ -373,6 +373,32 @@
-     }
+@@ -179,6 +179,15 @@ fn is_windows_drive_absolute_path(path: &str) -> bool {
+         && matches!(bytes[2], b'\\' | b'/')
  }
  
-+/// True when `path` looks absolute on _some_ platform even if `Path::is_absolute`
-+/// returns `false` on the current one. This lets a POSIX mobile client consume
-+/// Windows paths from a cross-platform RPC server (and vice versa) without
-+/// mangling them through `path_absolutize::Absolutize` — which would happily
-+/// join a Windows path onto a POSIX cwd.
++/// True when `path` is absolute on another supported platform even if
++/// `Path::is_absolute` returns false on the current host.
 +fn looks_cross_platform_absolute(path: &Path) -> bool {
-+    let Some(s) = path.to_str() else {
++    let Some(path) = path.to_str() else {
 +        return false;
 +    };
-+    let bytes = s.as_bytes();
-+    if bytes.starts_with(b"/") {
-+        return true;
-+    }
-+    if bytes.starts_with(b"\\\\") {
-+        return true;
-+    }
-+    if bytes.len() >= 3
-+        && bytes[0].is_ascii_alphabetic()
-+        && bytes[1] == b':'
-+        && (bytes[2] == b'\\' || bytes[2] == b'/')
-+    {
-+        return true;
-+    }
-+    false
++    path.starts_with('/') || path.starts_with(r"\\") || is_windows_drive_absolute_path(path)
 +}
 +
- impl<'de> Deserialize<'de> for AbsolutePathBuf {
-     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-     where
-@@ -384,6 +410,7 @@
-             None if path.is_absolute() => {
-                 Self::from_absolute_path(path).map_err(SerdeError::custom)
-             }
+ /// Canonicalize a path when possible, but preserve the logical absolute path
+ /// whenever canonicalization would rewrite it through a nested symlink.
+ ///
+@@ -340,7 +349,7 @@ impl AbsolutePathBufGuard {
+     /// before home expansion or namespace normalization. Does not look up cwd.
+     pub fn deserialization_base(path: &Path) -> Result<Option<PathBuf>, &'static str> {
+         let base = ABSOLUTE_PATH_BASE.with(|cell| cell.borrow().clone());
+-        if base.is_none() && !path.is_absolute() {
++        if base.is_none() && !path.is_absolute() && !looks_cross_platform_absolute(path) {
+             return Err("AbsolutePathBuf deserialized without a base path");
+         }
+         Ok(base)
+@@ -399,6 +408,7 @@ impl<'de> Deserialize<'de> for AbsolutePathBuf {
+             .as_deref()
+         {
+             Some(base) => Ok(Self::resolve_path_against_base(path, base)),
 +            None if looks_cross_platform_absolute(&path) => Ok(Self(path)),
-             None => Err(SerdeError::custom(
-                 "AbsolutePathBuf deserialized without a base path",
-             )),
+             None => Self::from_absolute_path(path).map_err(SerdeError::custom),
+         }
+     }
+@@ -425,6 +435,14 @@ mod tests {
+         assert_eq!(abs_path_buf.as_path(), absolute_path.as_path());
+     }
+ 
++    #[cfg(not(target_os = "windows"))]
++    #[test]
++    fn deserialize_windows_absolute_path_without_guard() {
++        let path = serde_json::from_str::<AbsolutePathBuf>(r#""C:\\Users\\alice\\repo""#)
++            .expect("cross-platform absolute path should deserialize");
++        assert_eq!(path.as_path(), Path::new(r"C:\Users\alice\repo"));
++    }
++
+     #[cfg(unix)]
+     #[test]
+     fn from_absolute_path_does_not_read_current_dir_when_path_is_absolute() {

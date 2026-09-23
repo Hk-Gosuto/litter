@@ -369,7 +369,7 @@ impl MobileClient {
             upstream::ClientRequest::ThreadRead { params, .. } => Some(params.thread_id.as_str()),
             upstream::ClientRequest::ThreadResume { params, .. } => Some(params.thread_id.as_str()),
             upstream::ClientRequest::ThreadFork { params, .. } => Some(params.thread_id.as_str()),
-            upstream::ClientRequest::ThreadRollback { params, .. } => {
+            upstream::ClientRequest::ThreadRevert { params, .. } => {
                 Some(params.thread_id.as_str())
             }
             upstream::ClientRequest::ThreadUnsubscribe { params, .. } => {
@@ -1230,7 +1230,7 @@ pub(crate) fn client_request_wire_method(request: &upstream::ClientRequest) -> &
         upstream::ClientRequest::ThreadRead { .. } => "thread/read",
         upstream::ClientRequest::ThreadResume { .. } => "thread/resume",
         upstream::ClientRequest::ThreadFork { .. } => "thread/fork",
-        upstream::ClientRequest::ThreadRollback { .. } => "thread/rollback",
+        upstream::ClientRequest::ThreadRevert { .. } => "thread/revert",
         upstream::ClientRequest::ThreadTurnsList { .. } => "thread/turns/list",
         upstream::ClientRequest::TurnStart { .. } => "turn/start",
         upstream::ClientRequest::TurnSteer { .. } => "turn/steer",
@@ -1765,6 +1765,7 @@ mod tests {
     #[test]
     fn deserialize_typed_response_resolves_read_action_paths_against_command_cwd() {
         let command_item = ThreadItem::CommandExecution {
+            model_context: None,
             plugin_id: None,
             script_path: None,
             id: "cmd-1".into(),

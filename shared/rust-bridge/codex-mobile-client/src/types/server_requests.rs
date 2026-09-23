@@ -164,7 +164,10 @@ fn user_input_into_upstream(value: AppUserInput) -> Result<upstream::UserInput, 
                 .map(text_element_into_upstream)
                 .collect::<Result<Vec<_>, _>>()?,
         },
-        AppUserInput::Image { url } => upstream::UserInput::Image { url, detail: None },
+        AppUserInput::Image { url } => upstream::UserInput::Image {
+            image: upstream::ImageReference::Inline { url },
+            detail: None,
+        },
         AppUserInput::LocalImage { path } => upstream::UserInput::LocalImage {
             path: path_buf_from_mobile(path),
             detail: None,

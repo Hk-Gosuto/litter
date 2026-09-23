@@ -27,9 +27,9 @@ immediately after `ios-exec-hook.patch` because it builds on that hook surface.
 
 Consumed by `shared/rust-bridge/codex-mobile-client/src/ish_exec.rs`.
 
-## Upstream 0.155.1 changes
+## Upstream 0.157.0-alpha.8 changes
 
-Validated patch base: `rust-v0.155.1` (`be2951ea`). The former mobile code-mode stub is retired: upstream code-mode now uses a remote gRPC provider and no longer embeds V8. The reasoning-effort patch is retired because upstream now defines Max, Ultra, Persistent, and Custom values.
+Validated patch base: `rust-v0.157.0-alpha.8` (`ebd427050`). The former mobile code-mode stub is retired: upstream code-mode now uses a remote gRPC provider and no longer embeds V8. The reasoning-effort patch is retired because upstream now defines Max, Ultra, Persistent, and Custom values.
 
 ## `mobile-crypto-compat.patch`
 Pins clatter 3.0 to upstream commit `9a8d15c4f80d5911ca0403aa22e0de99ea59df08`. This moves its ML-KEM implementation to the stable KEM API shared by the mobile SSH dependency; clatter 2.x requires an incompatible prerelease of the same KEM package.
