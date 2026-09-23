@@ -45,6 +45,8 @@ pub struct SshBootstrapResult {
     pub tunnel_local_port: u16,
     pub server_version: Option<String>,
     pub pid: Option<u32>,
+    /// Litter-owned Unix socket; absent for the TCP fallback.
+    pub(crate) socket_path: Option<String>,
     pub(crate) codex_path: String,
     pub(crate) shell: RemoteShell,
     pub(crate) transport: SshBootstrapTransport,

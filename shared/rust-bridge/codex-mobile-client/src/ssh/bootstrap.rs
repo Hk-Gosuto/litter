@@ -3,9 +3,8 @@
 //! The flow:
 //!   1. Resolve a user-installed `codex` binary on the remote.
 //!   2. On POSIX remotes with `codex app-server proxy`, prefer the upstream
-//!      Unix-socket app-server transport: probe an existing socket, otherwise
-//!      launch a Litter-owned `codex app-server --listen unix://`, then
-//!      connect each client via `codex app-server proxy`.
+//!      Unix-socket app-server transport: launch a Litter-owned server on a
+//!      private socket, then connect via `codex app-server proxy --sock`.
 //!   3. Fallback: try `PORT_CANDIDATES` consecutive remote ports starting at
 //!      `DEFAULT_REMOTE_PORT`. If a port is already listening and answers a
 //!      websocket probe, reuse it. Otherwise launch a new server.
@@ -127,45 +126,14 @@ impl SshClient {
             });
         }
 
-        // Do not invoke `codex app-server daemon start` here. That command
-        // owns the user's global daemon lifecycle and may install or switch
-        // the standalone Codex package as a side effect. Litter must leave
-        // the host CLI and its managed daemon untouched; if a daemon already
-        // exists, the probe below can reuse it, otherwise we launch a
-        // Litter-owned process and track its PID for cleanup.
-        if self
-            .probe_app_server_proxy(codex_binary, shell)
-            .await
-            .is_ok()
-        {
-            let version = self
-                .read_server_version_shell(codex_binary.path(), shell)
-                .await;
-            info!(
-                "ssh app-server proxy bootstrap reused existing socket binary={} version={}",
-                codex_binary.path(),
-                version.clone().unwrap_or_else(|| "<unknown>".to_string())
-            );
-            append_bridge_info_log(&format!(
-                "ssh_app_server_proxy_reuse_success version={}",
-                version.clone().unwrap_or_else(|| "<unknown>".to_string())
-            ));
-            return Ok(SshBootstrapResult {
-                server_port: 0,
-                tunnel_local_port: 0,
-                server_version: version,
-                pid: None,
-                codex_path: codex_binary.path().to_string(),
-                shell,
-                transport: SshBootstrapTransport::AppServerProxy,
-            });
-        }
-
+        // A bare `unix://` binds Codex's global daemon socket. Keep Litter's
+        // server separate so a suspended app cannot strand an unmanaged
+        // listener that also breaks the host CLI's daemon restart.
         self.log_macos_keychain_unlock_for_bootstrap(shell).await?;
-        let (pid, log_path) = self
+        let (pid, log_path, socket_path) = self
             .launch_codex_app_server_unix(codex_binary, working_dir, shell)
             .await?;
-        self.wait_for_app_server_proxy_ready(codex_binary, shell, pid, &log_path)
+        self.wait_for_app_server_proxy_ready(codex_binary, shell, pid, &log_path, &socket_path)
             .await
             .map_err(|stderr| SshError::ExecFailed {
                 exit_code: 1,
@@ -190,6 +158,7 @@ impl SshClient {
             tunnel_local_port: 0,
             server_version: version,
             pid,
+            socket_path: Some(socket_path),
             codex_path: codex_binary.path().to_string(),
             shell,
             transport: SshBootstrapTransport::AppServerProxy,
@@ -221,20 +190,35 @@ impl SshClient {
         codex_binary: &RemoteCodexBinary,
         working_dir: Option<&str>,
         shell: RemoteShell,
-    ) -> Result<(Option<u32>, String), SshError> {
+    ) -> Result<(Option<u32>, String, String), SshError> {
         let cd_prefix = match (shell, working_dir) {
             (RemoteShell::Posix, Some(dir)) => format!("cd {} && ", shell_quote(dir)),
             (RemoteShell::PowerShell, Some(dir)) => format!("Set-Location {}; ", ps_quote(dir)),
             _ => String::new(),
         };
-        let log_path = "/tmp/codex-mobile-app-server-unix.log".to_string();
+        let directory = self
+            .exec_shell("mktemp -d /tmp/litter-codex.XXXXXX", shell)
+            .await?;
+        let directory_path = directory.stdout.trim();
+        if directory.exit_code != 0 || !directory_path.starts_with("/tmp/litter-codex.") {
+            return Err(SshError::ExecFailed {
+                exit_code: directory.exit_code,
+                stderr: format!(
+                    "failed to create private app-server directory: {}",
+                    directory.stderr.trim()
+                ),
+            });
+        }
+        let socket_path = format!("{directory_path}/app-server.sock");
+        let log_path = format!("{directory_path}/app-server.log");
         let launch_cmd = match shell {
             RemoteShell::Posix => format!(
                 "{profile_init} {cd_prefix}nohup {launch} \
                  </dev/null >{log} 2>&1 & echo $!",
                 profile_init = PROFILE_INIT,
                 cd_prefix = cd_prefix,
-                launch = server_launch_command(codex_binary, "unix://", shell),
+                launch =
+                    server_launch_command(codex_binary, &format!("unix://{socket_path}"), shell),
                 log = shell_quote(&log_path),
             ),
             RemoteShell::PowerShell => {
@@ -259,7 +243,7 @@ impl SshClient {
             launch_result.stdout.trim(),
             launch_result.stderr.trim()
         ));
-        Ok((pid, log_path))
+        Ok((pid, log_path, socket_path))
     }
 
     async fn wait_for_app_server_proxy_ready(
@@ -268,10 +252,11 @@ impl SshClient {
         shell: RemoteShell,
         pid: Option<u32>,
         stdout_log_path: &str,
+        socket_path: &str,
     ) -> Result<(), String> {
         let mut last_error = String::new();
         for attempt in 0..TUNNEL_HEALTH_ATTEMPTS {
-            match self.probe_app_server_proxy(codex_binary, shell).await {
+            match self.probe_app_server_proxy(codex_binary, shell, socket_path).await {
                 Ok(()) => {
                     append_bridge_info_log(&format!(
                         "ssh_app_server_proxy_probe_success attempt={}",
@@ -318,9 +303,10 @@ impl SshClient {
         &self,
         codex_binary: &RemoteCodexBinary,
         shell: RemoteShell,
+        socket_path: &str,
     ) -> Result<(), String> {
         let stream = self
-            .open_app_server_proxy_stream(codex_binary.path(), shell, None)
+            .open_app_server_proxy_stream(codex_binary.path(), shell, Some(socket_path))
             .await
             .map_err(|error| error.to_string())?;
         let (mut websocket, _) = tokio::time::timeout(
@@ -402,6 +388,7 @@ impl SshClient {
                             tunnel_local_port: local_port,
                             server_version: version,
                             pid: None,
+                            socket_path: None,
                             codex_path: codex_binary.path().to_string(),
                             shell,
                             transport: SshBootstrapTransport::WebSocketTunnel,
@@ -676,6 +663,7 @@ impl SshClient {
                 tunnel_local_port: local_port,
                 server_version: version,
                 pid,
+                socket_path: None,
                 codex_path: codex_binary.path().to_string(),
                 shell,
                 transport: SshBootstrapTransport::WebSocketTunnel,

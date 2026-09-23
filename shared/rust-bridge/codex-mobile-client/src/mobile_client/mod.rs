@@ -2478,6 +2478,10 @@ impl MobileClient {
                     &connect_args,
                     &bootstrap.codex_path,
                     bootstrap.shell,
+                    bootstrap
+                        .socket_path
+                        .as_deref()
+                        .expect("SSH proxy requires its own socket"),
                 )
                 .await
             }

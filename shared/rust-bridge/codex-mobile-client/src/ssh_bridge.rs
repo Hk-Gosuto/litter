@@ -705,6 +705,10 @@ async fn connect_codex_via_ssh(
                 &args,
                 &bootstrap.codex_path,
                 bootstrap.shell,
+                bootstrap
+                    .socket_path
+                    .as_deref()
+                    .expect("SSH proxy requires its own socket"),
             )
             .await
         }

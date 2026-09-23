@@ -47,6 +47,16 @@ fn test_server_launch_command_for_codex() {
 }
 
 #[test]
+fn test_litter_unix_server_uses_explicit_socket() {
+    let command = server_launch_command(
+        &RemoteCodexBinary::Codex("/usr/local/bin/codex".into()),
+        "unix:///tmp/litter-codex.abcdef/app-server.sock",
+        RemoteShell::Posix,
+    );
+    assert!(command.contains("--listen 'unix:///tmp/litter-codex.abcdef/app-server.sock'"));
+}
+
+#[test]
 fn test_windows_start_process_spec_for_cmd_shim() {
     let (file_path, argument_list) = windows_start_process_spec(
         &RemoteCodexBinary::Codex(r#"C:\Users\me\AppData\Roaming\npm\codex.cmd"#.into()),
@@ -170,6 +180,7 @@ fn test_bootstrap_result_clone() {
         tunnel_local_port: 12345,
         server_version: Some("1.0.0".into()),
         pid: Some(42),
+        socket_path: None,
         codex_path: "/usr/local/bin/codex".into(),
         shell: RemoteShell::Posix,
         transport: SshBootstrapTransport::WebSocketTunnel,
