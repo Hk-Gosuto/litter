@@ -409,9 +409,13 @@ struct ConversationView: View {
 private extension AppThreadSnapshot {
     var serverId: String { key.serverId }
     var isSubagent: Bool {
-        info.parentThreadId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            && ((info.agentNickname?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-                || (info.agentRole?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false))
+        guard let parentId = info.parentThreadId,
+              !parentId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if let nickname = info.agentNickname,
+           !nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        if let role = info.agentRole,
+           !role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return false
     }
 
     var agentDisplayLabel: String? {
@@ -586,6 +590,18 @@ struct ConversationScrollLayout: Equatable {
     }
 }
 
+enum ConversationScrollFollowPolicy {
+    static let pauseDistance: CGFloat = 48
+
+    static func shouldPause(isUserInteracting: Bool, distanceFromBottom: CGFloat) -> Bool {
+        isUserInteracting && distanceFromBottom > pauseDistance
+    }
+
+    static func shouldUseBottomEdge(layout: ConversationScrollLayout?) -> Bool {
+        (layout?.bottomOffset ?? 0) > 0
+    }
+}
+
 @MainActor
 final class ConversationScrollObservation {
     private(set) var threadScopeID: String?
@@ -631,6 +647,7 @@ private struct ConversationMessageList: View {
     let onLoadOlderTurns: (ThreadKey) async -> Bool
     @State private var isNearBottom = true
     @State private var isFollowingBottom = true
+    @State private var isUserInteracting = false
     @State private var scrollPosition = ScrollPosition()
     @State private var scrollObservation = ConversationScrollObservation()
     @State private var showScrollToBottomButton = false
@@ -640,23 +657,12 @@ private struct ConversationMessageList: View {
     @State private var transcriptTurns: [TranscriptTurn] = []
     @State private var transcriptBuildKey: Int?
     @State private var renderedTurns: [TranscriptTurn] = []
-    @State private var renderedTurnsBuildKey: Int?
     @State private var expandedTurnIDs: Set<String> = []
-    @State private var pendingAnimatedTurns: [TranscriptTurn]?
-    @State private var turnInsertionAnimationInFlight = false
     @State private var requestedOlderTurnsCursor: String?
     @State private var requestedOlderTurnsThreadKey: ThreadKey?
     @State private var showOlderPageLoader = false
     @AppStorage("collapseTurns") private var collapseTurns = false
-    private static let latestButtonShowDistance: CGFloat = 48
     private static let nearBottomRestoreDistance: CGFloat = 12
-
-    private var shouldCollapseTurns: Bool {
-        ConversationTurnCollapsePolicy.shouldCollapse(
-            preferenceEnabled: collapseTurns,
-            itemCount: items.count
-        )
-    }
 
     private var expandedRecentTurnCount: Int {
         ConversationTurnCollapsePolicy.expandedRecentTurnCount(
@@ -727,10 +733,17 @@ private struct ConversationMessageList: View {
     var body: some View {
         let _ = PerfTracker.event("ConversationMessageList.body")
         let turns = mergedRenderableTurns
+        let footerHeight = isStreaming && !turns.isEmpty ? typingIndicatorReservedHeight : 0
         GeometryReader { viewport in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView(.vertical) {
-                    transcriptContent(turns: turns, viewportSize: viewport.size)
+                    transcriptContent(
+                        turns: turns,
+                        viewportSize: CGSize(
+                            width: viewport.size.width,
+                            height: max(0, viewport.size.height - footerHeight)
+                        )
+                    )
                 }
                 .id(activeThreadScopeID)
                 .scrollIndicators(.hidden)
@@ -756,7 +769,8 @@ private struct ConversationMessageList: View {
                     guard isCurrentScrollObservation else { return }
                     guard newLayout != oldLayout else { return }
                     scrollObservation.layout = newLayout
-                    guard isFollowingBottom, newLayout.bottomOffset != oldLayout.bottomOffset else { return }
+                    guard isFollowingBottom, !isUserInteracting,
+                          newLayout.bottomOffset != oldLayout.bottomOffset else { return }
                     scheduleBottomFollow()
                 }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -769,23 +783,34 @@ private struct ConversationMessageList: View {
                 )
                 .onScrollPhaseChange { _, newPhase in
                     switch newPhase {
-                    case .tracking, .interacting:
-                        isFollowingBottom = false
-                    case .decelerating:
+                    case .tracking, .interacting, .decelerating:
+                        isUserInteracting = true
+                    case .idle:
+                        let finishedUserInteraction = isUserInteracting
+                        isUserInteracting = false
+                        if finishedUserInteraction && isNearBottom {
+                            isFollowingBottom = true
+                            followBottom(animated: false)
+                        } else if finishedUserInteraction && isFollowingBottom && !showScrollToBottomButton {
+                            scheduleBottomFollow()
+                        }
+                    case .animating:
                         break
-                    default:
-                        if isNearBottom { isFollowingBottom = true }
+                    @unknown default:
+                        break
                     }
                 }
                 .onAppear {
                     _ = scrollObservation.accepts(activeThreadScopeID)
                     isFollowingBottom = true
+                    isUserInteracting = false
                     syncTranscriptTurns()
                 }
                 .onChange(of: activeThreadKey) {
                     scrollPosition = ScrollPosition()
                     scrollObservation.activate(activeThreadScopeID)
                     isFollowingBottom = true
+                    isUserInteracting = false
                     isNearBottom = true
                     showScrollToBottomButton = false
                     waitingForDataExpired = false
@@ -799,8 +824,16 @@ private struct ConversationMessageList: View {
                     try? await Task.sleep(for: .seconds(1))
                     waitingForDataExpired = true
                 }
-                .onChange(of: items) { _, _ in
+                .onChange(of: items) { _, newItems in
                     syncTranscriptTurns()
+                    if !newItems.isEmpty, isFollowingBottom, !isUserInteracting {
+                        scheduleBottomFollow()
+                    }
+                }
+                .onChange(of: turns.last?.id) { oldID, newID in
+                    if oldID != newID, newID != nil, isFollowingBottom, !isUserInteracting {
+                        scheduleBottomFollow()
+                    }
                 }
                 .onChange(of: olderTurnsCursor) { oldCursor, newCursor in
                     guard oldCursor != newCursor else { return }
@@ -821,8 +854,14 @@ private struct ConversationMessageList: View {
                 }
                 .onChange(of: sendScrollToken) {
                     isFollowingBottom = true
+                    isUserInteracting = false
                     isNearBottom = true
                     followBottom(animated: false)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { _ in
+                    if isFollowingBottom, !isUserInteracting {
+                        scheduleBottomFollow()
+                    }
                 }
                 .onChange(of: threadStatus) { oldStatus, _ in
                     syncTranscriptTurns()
@@ -833,6 +872,7 @@ private struct ConversationMessageList: View {
                         StreamingRendererCoordinator.shared.finishActive()
                     }
                 }
+                .padding(.bottom, footerHeight)
 
                 if shouldShowScrollToBottom {
                     ScrollToBottomIndicator {
@@ -841,11 +881,11 @@ private struct ConversationMessageList: View {
                         followBottom()
                     }
                     .padding(.trailing, 14)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, footerHeight + 10)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                if isStreaming, !turns.isEmpty, isFollowingBottom {
+                if footerHeight > 0 {
                     TypingIndicator()
                         .padding(.leading, hasMinigameLaunchButton ? 56 : 16)
                         .padding(.bottom, 8)
@@ -886,9 +926,6 @@ private struct ConversationMessageList: View {
                     .padding(.top, 40)
             }
 
-            if isStreaming, !turns.isEmpty {
-                Color.clear.frame(height: typingIndicatorReservedHeight)
-            }
         }
         .frame(width: viewportSize.width)
         .frame(minHeight: viewportSize.height, alignment: .top)
@@ -938,20 +975,33 @@ private struct ConversationMessageList: View {
         // invalidated `ConversationMessageList.body` (rebuilding the whole turn
         // `ForEach`) for a value nothing read.
         let clampedDistance = max(0, distance)
-        let nextShowButton = clampedDistance > Self.latestButtonShowDistance
+        let nextShowButton = clampedDistance > ConversationScrollFollowPolicy.pauseDistance
         if nextShowButton != showScrollToBottomButton { showScrollToBottomButton = nextShowButton }
         let nextIsNearBottom = clampedDistance <= Self.nearBottomRestoreDistance
         if nextIsNearBottom != isNearBottom { isNearBottom = nextIsNearBottom }
+        if isFollowingBottom,
+           ConversationScrollFollowPolicy.shouldPause(
+               isUserInteracting: isUserInteracting,
+               distanceFromBottom: clampedDistance
+           ) {
+            isFollowingBottom = false
+        }
     }
 
     private func followBottom(animated: Bool = true) {
-        guard let offset = scrollObservation.layout?.bottomOffset else { return }
+        guard !items.isEmpty else { return }
         guard animated else {
-            scrollPosition.scrollTo(y: offset)
+            withTransaction(Transaction(animation: nil)) {
+                if ConversationScrollFollowPolicy.shouldUseBottomEdge(layout: scrollObservation.layout) {
+                    scrollPosition.scrollTo(edge: .bottom)
+                } else {
+                    scrollPosition.scrollTo(y: 0)
+                }
+            }
             return
         }
-        withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
-            scrollPosition.scrollTo(y: offset)
+        withAnimation(.easeOut(duration: 0.18)) {
+            scrollPosition.scrollTo(edge: .bottom)
         }
     }
 
@@ -962,7 +1012,7 @@ private struct ConversationMessageList: View {
         DispatchQueue.main.async {
             guard scrollObservation.threadScopeID == threadScopeID else { return }
             scrollObservation.followScheduled = false
-            guard isFollowingBottom else { return }
+            guard isFollowingBottom, !isUserInteracting else { return }
             followBottom(animated: false)
         }
     }
@@ -1035,18 +1085,6 @@ private struct ConversationMessageList: View {
             expandedRecentTurnCount: expandedRecentTurnCount
         )
         transcriptBuildKey = nextBuildKey
-        if shouldAnimateNewTurnInsertion(from: transcriptTurns, to: nextTurns, resetExpansion: resetExpansion) {
-            pendingAnimatedTurns = nextTurns
-            guard !turnInsertionAnimationInFlight else { return }
-            startNewTurnInsertionAnimation(from: transcriptTurns)
-            return
-        }
-
-        if turnInsertionAnimationInFlight {
-            pendingAnimatedTurns = nextTurns
-            return
-        }
-
         applyTranscriptTurns(nextTurns, resetExpansion: resetExpansion)
     }
 
@@ -1054,27 +1092,6 @@ private struct ConversationMessageList: View {
         var hasher = Hasher()
         hasher.combine(expandedRecentTurnCount)
         hasher.combine(transcriptRenderDigest)
-        return hasher.finalize()
-    }
-
-    private func makeRenderedTurnsBuildKey(for turns: [TranscriptTurn]) -> Int {
-        var hasher = Hasher()
-        hasher.combine(turns.count)
-        for turn in turns {
-            hasher.combine(turn.id)
-            hasher.combine(turn.renderDigest)
-            hasher.combine(turn.isLive)
-            hasher.combine(turn.isCollapsedByDefault)
-        }
-        return hasher.finalize()
-    }
-
-    private func layoutSignature(for turn: TranscriptTurn) -> Int {
-        var hasher = Hasher()
-        hasher.combine(turn.id)
-        hasher.combine(turn.renderDigest)
-        hasher.combine(turn.isLive)
-        hasher.combine(turn.isCollapsedByDefault)
         return hasher.finalize()
     }
 
@@ -1120,80 +1137,18 @@ private struct ConversationMessageList: View {
         pinchAppliedDelta = 0
     }
 
-    private func shouldAnimateNewTurnInsertion(
-        from currentTurns: [TranscriptTurn],
-        to nextTurns: [TranscriptTurn],
-        resetExpansion: Bool
-    ) -> Bool {
-        guard shouldCollapseTurns,
-              !resetExpansion,
-              !currentTurns.isEmpty,
-              nextTurns.count == currentTurns.count + 1,
-              currentTurns.last?.id != nextTurns.last?.id,
-              let lastTurn = nextTurns.last,
-              lastTurn.items.first?.isUserItem == true,
-              lastTurn.items.first?.isFromUserTurnBoundary == true else {
-            return false
-        }
-
-        for (currentTurn, nextTurn) in zip(currentTurns, nextTurns) {
-            guard currentTurn.id == nextTurn.id else { return false }
-        }
-
-        return true
-    }
-
-    private func startNewTurnInsertionAnimation(from currentTurns: [TranscriptTurn]) {
-        guard let previousLastTurnID = currentTurns.last?.id else {
-            if let pendingAnimatedTurns {
-                applyTranscriptTurns(pendingAnimatedTurns)
-                self.pendingAnimatedTurns = nil
-            }
-            return
-        }
-
-        turnInsertionAnimationInFlight = true
-        let collapsedTurns = currentTurns.map { turn in
-            turn.id == previousLastTurnID ? turn.withCollapsedByDefault(true) : turn
-        }
-
-        withAnimation(.snappy(duration: 0.16, extraBounce: 0)) {
-            applyTranscriptTurns(
-                collapsedTurns,
-                removeExpandedTurnID: previousLastTurnID
-            )
-        } completion: {
-            let turnsToInsert = pendingAnimatedTurns ?? collapsedTurns
-            withAnimation(.smooth(duration: 0.2)) {
-                applyTranscriptTurns(turnsToInsert)
-            } completion: {
-                turnInsertionAnimationInFlight = false
-                let latestTurns = pendingAnimatedTurns ?? turnsToInsert
-                pendingAnimatedTurns = nil
-                if latestTurns.map(layoutSignature(for:)) != transcriptTurns.map(layoutSignature(for:)) {
-                    applyTranscriptTurns(latestTurns)
-                }
-            }
-        }
-    }
-
     private func applyTranscriptTurns(
         _ nextTurns: [TranscriptTurn],
-        resetExpansion: Bool = false,
-        removeExpandedTurnID: String? = nil
+        resetExpansion: Bool = false
     ) {
         let nextTurnIDs = Set(nextTurns.map(\.id))
         let nextRenderedTurns = TranscriptTurn.mergeConsecutiveExplorationTurnsForRendering(nextTurns)
         transcriptTurns = nextTurns
         renderedTurns = nextRenderedTurns
-        renderedTurnsBuildKey = makeRenderedTurnsBuildKey(for: nextTurns)
         if resetExpansion {
             expandedTurnIDs.removeAll()
         } else {
             expandedTurnIDs.formIntersection(nextTurnIDs)
-        }
-        if let removeExpandedTurnID {
-            expandedTurnIDs.remove(removeExpandedTurnID)
         }
     }
 

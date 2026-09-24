@@ -40,4 +40,21 @@ final class ConversationScrollLayoutTests: XCTestCase {
         XCTAssertTrue(observation.visibleTurnIDs.isEmpty)
         XCTAssertFalse(observation.followScheduled)
     }
+
+    func testFollowingOnlyPausesAfterDeliberateScrollAway() {
+        XCTAssertFalse(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: true, distanceFromBottom: 20))
+        XCTAssertFalse(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: true, distanceFromBottom: 48))
+        XCTAssertTrue(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: true, distanceFromBottom: 49))
+        XCTAssertFalse(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: false, distanceFromBottom: 100))
+    }
+
+    func testShortConversationKeepsTopAlignmentUntilItCanScroll() {
+        XCTAssertFalse(ConversationScrollFollowPolicy.shouldUseBottomEdge(layout: nil))
+        XCTAssertFalse(ConversationScrollFollowPolicy.shouldUseBottomEdge(
+            layout: ConversationScrollLayout(contentHeight: 300, visibleHeight: 700)
+        ))
+        XCTAssertTrue(ConversationScrollFollowPolicy.shouldUseBottomEdge(
+            layout: ConversationScrollLayout(contentHeight: 900, visibleHeight: 700)
+        ))
+    }
 }
