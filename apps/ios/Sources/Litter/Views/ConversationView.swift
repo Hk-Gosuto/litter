@@ -50,6 +50,10 @@ struct ConversationView: View {
         transcript.agentDirectoryVersion
     }
 
+    private var showsMinigameLaunchButton: Bool {
+        onTypingTap != nil && minigameOverlay == .idle && ExperimentalFeatures.shared.isEnabled(.thinkingMinigame)
+    }
+
     private var pendingModelOverride: String? {
         let trimmed = appState.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -91,6 +95,7 @@ struct ConversationView: View {
             sendScrollToken: localSendScrollToken,
             activeThreadKey: activeThreadKey,
             agentDirectoryVersion: agentDirectoryVersion,
+            hasMinigameLaunchButton: showsMinigameLaunchButton,
             topInset: thread.isSubagent ? topInset + 32 : topInset,
             olderTurnsCursor: thread.olderTurnsCursor,
             initialTurnsLoaded: thread.initialTurnsLoaded || !supportsTurnPagination,
@@ -107,9 +112,7 @@ struct ConversationView: View {
             }
         )
         .overlay(alignment: .bottomLeading) {
-            if let onTypingTap,
-               minigameOverlay == .idle,
-               ExperimentalFeatures.shared.isEnabled(.thinkingMinigame) {
+            if showsMinigameLaunchButton, let onTypingTap {
                 MinigameLaunchButton(action: onTypingTap)
                     .padding(.leading, 12)
                     .padding(.bottom, 8)
@@ -575,22 +578,37 @@ struct RateLimitBadgeView: View, Equatable {
 
 struct ConversationScrollLayout: Equatable {
     let contentHeight: CGFloat
-    let viewportHeight: CGFloat
+    let visibleHeight: CGFloat
 
     var bottomOffset: CGFloat? {
-        guard contentHeight.isFinite, viewportHeight.isFinite, viewportHeight > 0 else { return nil }
-        return max(0, contentHeight - viewportHeight)
+        guard contentHeight.isFinite, visibleHeight.isFinite, visibleHeight > 0 else { return nil }
+        return max(0, contentHeight - visibleHeight)
     }
 }
 
 @MainActor
-private final class ConversationScrollLayoutCache {
+final class ConversationScrollObservation {
+    private(set) var threadScopeID: String?
     var layout: ConversationScrollLayout?
+    var visibleTurnIDs: [String] = []
     var followScheduled = false
+
+    func accepts(_ scopeID: String) -> Bool {
+        if threadScopeID == nil { threadScopeID = scopeID }
+        return threadScopeID == scopeID
+    }
+
+    func activate(_ scopeID: String) {
+        threadScopeID = scopeID
+        layout = nil
+        visibleTurnIDs = []
+        followScheduled = false
+    }
 }
 
 private struct ConversationMessageList: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.textScale) private var textScale
     let items: [ConversationItem]
     let threadStatus: ConversationStatus
     let threadHasServerData: Bool
@@ -598,6 +616,7 @@ private struct ConversationMessageList: View {
     let sendScrollToken: Int
     let activeThreadKey: ThreadKey
     let agentDirectoryVersion: UInt64
+    let hasMinigameLaunchButton: Bool
     var topInset: CGFloat = 0
     let olderTurnsCursor: String?
     let initialTurnsLoaded: Bool
@@ -613,7 +632,7 @@ private struct ConversationMessageList: View {
     @State private var isNearBottom = true
     @State private var isFollowingBottom = true
     @State private var scrollPosition = ScrollPosition()
-    @State private var scrollLayout = ConversationScrollLayoutCache()
+    @State private var scrollObservation = ConversationScrollObservation()
     @State private var showScrollToBottomButton = false
     @State private var waitingForDataExpired = false
     @State private var pinchBaseStep: Int?
@@ -625,7 +644,6 @@ private struct ConversationMessageList: View {
     @State private var expandedTurnIDs: Set<String> = []
     @State private var pendingAnimatedTurns: [TranscriptTurn]?
     @State private var turnInsertionAnimationInFlight = false
-    @State private var visibleTurnIDs: [String] = []
     @State private var requestedOlderTurnsCursor: String?
     @State private var requestedOlderTurnsThreadKey: ThreadKey?
     @State private var showOlderPageLoader = false
@@ -675,9 +693,17 @@ private struct ConversationMessageList: View {
         "\(activeThreadKey.serverId)::\(activeThreadKey.threadId)"
     }
 
+    private var isCurrentScrollObservation: Bool {
+        scrollObservation.accepts(activeThreadScopeID)
+    }
+
     private var isStreaming: Bool {
         if case .thinking = threadStatus { return true }
         return false
+    }
+
+    private var typingIndicatorReservedHeight: CGFloat {
+        max(36, UIFont.preferredFont(forTextStyle: .body).lineHeight * textScale + 16)
     }
 
     private var hasOlderTurns: Bool {
@@ -710,22 +736,26 @@ private struct ConversationMessageList: View {
                 .scrollIndicators(.hidden)
                 .scrollDismissesKeyboard(.interactively)
                 .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { turnIDs in
-                    visibleTurnIDs = turnIDs
+                    guard isCurrentScrollObservation else { return }
+                    guard turnIDs != scrollObservation.visibleTurnIDs else { return }
+                    scrollObservation.visibleTurnIDs = turnIDs
                     prefetchOlderTurnsIfNeeded(visibleTurnIDs: turnIDs, turns: turns)
                 }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
                 } action: { _, distance in
+                    guard isCurrentScrollObservation else { return }
                     updateDistanceFromBottom(distance)
                 }
                 .onScrollGeometryChange(for: ConversationScrollLayout.self) { geometry in
                     ConversationScrollLayout(
                         contentHeight: geometry.contentSize.height,
-                        viewportHeight: geometry.containerSize.height
+                        visibleHeight: geometry.visibleRect.height
                     )
                 } action: { oldLayout, newLayout in
+                    guard isCurrentScrollObservation else { return }
                     guard newLayout != oldLayout else { return }
-                    scrollLayout.layout = newLayout
+                    scrollObservation.layout = newLayout
                     guard isFollowingBottom, newLayout.bottomOffset != oldLayout.bottomOffset else { return }
                     scheduleBottomFollow()
                 }
@@ -748,17 +778,17 @@ private struct ConversationMessageList: View {
                     }
                 }
                 .onAppear {
+                    _ = scrollObservation.accepts(activeThreadScopeID)
                     isFollowingBottom = true
                     syncTranscriptTurns()
                 }
                 .onChange(of: activeThreadKey) {
                     scrollPosition = ScrollPosition()
-                    scrollLayout.layout = nil
+                    scrollObservation.activate(activeThreadScopeID)
                     isFollowingBottom = true
                     isNearBottom = true
                     showScrollToBottomButton = false
                     waitingForDataExpired = false
-                    visibleTurnIDs = []
                     requestedOlderTurnsCursor = nil
                     requestedOlderTurnsThreadKey = nil
                     showOlderPageLoader = false
@@ -777,9 +807,11 @@ private struct ConversationMessageList: View {
                     requestedOlderTurnsCursor = nil
                     requestedOlderTurnsThreadKey = nil
                     showOlderPageLoader = false
+                    let threadScopeID = activeThreadScopeID
                     DispatchQueue.main.async {
+                        guard scrollObservation.threadScopeID == threadScopeID else { return }
                         prefetchOlderTurnsIfNeeded(
-                            visibleTurnIDs: visibleTurnIDs,
+                            visibleTurnIDs: scrollObservation.visibleTurnIDs,
                             turns: mergedRenderableTurns
                         )
                     }
@@ -813,6 +845,14 @@ private struct ConversationMessageList: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
+                if isStreaming, !turns.isEmpty, isFollowingBottom {
+                    TypingIndicator()
+                        .padding(.leading, hasMinigameLaunchButton ? 56 : 16)
+                        .padding(.bottom, 8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        .allowsHitTesting(false)
+                }
+
                 if showOlderPageLoader, hasOlderTurns {
                     ConversationLoadingIndicator(label: "Loading earlier messages...")
                         .padding(.horizontal, 12)
@@ -827,11 +867,10 @@ private struct ConversationMessageList: View {
     }
 
     private func transcriptContent(turns: [TranscriptTurn], viewportSize: CGSize) -> some View {
-        let lastTurnID = turns.last?.id
         return VStack(alignment: .leading, spacing: 0) {
             LazyVStack(alignment: .leading, spacing: 10) {
                 ForEach(turns) { turn in
-                    turnRow(turn, lastTurnID: lastTurnID, viewportHeight: viewportSize.height)
+                    turnRow(turn)
                 }
             }
             .scrollTargetLayout()
@@ -846,20 +885,20 @@ private struct ConversationMessageList: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 40)
             }
+
+            if isStreaming, !turns.isEmpty {
+                Color.clear.frame(height: typingIndicatorReservedHeight)
+            }
         }
         .frame(width: viewportSize.width)
         .frame(minHeight: viewportSize.height, alignment: .top)
     }
 
-    private func turnRow(_ turn: TranscriptTurn, lastTurnID: String?, viewportHeight: CGFloat) -> some View {
-        let isLastTurn = turn.id == lastTurnID
+    private func turnRow(_ turn: TranscriptTurn) -> some View {
         return ConversationTurnRow(
             turn: turn,
             isExpanded: isTurnExpanded(turn),
             canCollapse: turn.isCollapsedByDefault,
-            isLastTurn: isLastTurn,
-            viewportHeight: viewportHeight,
-            showTypingIndicator: isLastTurn && isStreaming,
             serverId: activeThreadKey.serverId,
             originThreadId: activeThreadKey.threadId,
             agentDirectoryVersion: agentDirectoryVersion,
@@ -906,7 +945,7 @@ private struct ConversationMessageList: View {
     }
 
     private func followBottom(animated: Bool = true) {
-        guard let offset = scrollLayout.layout?.bottomOffset else { return }
+        guard let offset = scrollObservation.layout?.bottomOffset else { return }
         guard animated else {
             scrollPosition.scrollTo(y: offset)
             return
@@ -917,12 +956,13 @@ private struct ConversationMessageList: View {
     }
 
     private func scheduleBottomFollow() {
-        guard !scrollLayout.followScheduled else { return }
-        scrollLayout.followScheduled = true
+        guard !scrollObservation.followScheduled else { return }
+        scrollObservation.followScheduled = true
         let threadScopeID = activeThreadScopeID
         DispatchQueue.main.async {
-            scrollLayout.followScheduled = false
-            guard threadScopeID == activeThreadScopeID, isFollowingBottom else { return }
+            guard scrollObservation.threadScopeID == threadScopeID else { return }
+            scrollObservation.followScheduled = false
+            guard isFollowingBottom else { return }
             followBottom(animated: false)
         }
     }
@@ -932,10 +972,12 @@ private struct ConversationMessageList: View {
         visibleTurnIDs: [String],
         turns: [TranscriptTurn]
     ) {
+        guard initialTurnsLoaded, hasOlderTurns else { return }
         guard let earliestVisibleIndex = ConversationInfiniteScrollPolicy.earliestVisibleIndex(
             visibleIDs: visibleTurnIDs,
-            orderedIDs: turns.map(\.id)
-        ), earliestVisibleIndex <= ConversationInfiniteScrollPolicy.olderPrefetchDistance else { return }
+            orderedIDs: turns.lazy.map(\.id),
+            maxIndex: ConversationInfiniteScrollPolicy.olderPrefetchDistance
+        ) else { return }
 
         requestOlderTurnsPage(showLoaderIfCacheExhausted: earliestVisibleIndex == 0)
     }
@@ -1161,9 +1203,6 @@ private struct ConversationTurnRow: View, Equatable {
     let turn: TranscriptTurn
     let isExpanded: Bool
     let canCollapse: Bool
-    let isLastTurn: Bool
-    let viewportHeight: CGFloat
-    let showTypingIndicator: Bool
     let serverId: String
     let originThreadId: String?
     let agentDirectoryVersion: UInt64
@@ -1184,9 +1223,6 @@ private struct ConversationTurnRow: View, Equatable {
             lhs.turn.isLive == rhs.turn.isLive &&
             lhs.isExpanded == rhs.isExpanded &&
             lhs.canCollapse == rhs.canCollapse &&
-            lhs.isLastTurn == rhs.isLastTurn &&
-            lhs.viewportHeight == rhs.viewportHeight &&
-            lhs.showTypingIndicator == rhs.showTypingIndicator &&
             lhs.serverId == rhs.serverId &&
             lhs.originThreadId == rhs.originThreadId &&
             lhs.agentDirectoryVersion == rhs.agentDirectoryVersion &&
@@ -1218,10 +1254,6 @@ private struct ConversationTurnRow: View, Equatable {
                 onForkFromUserItem: onForkFromUserItem,
                 onOpenConversation: onOpenConversation
             )
-
-            TypingIndicator()
-                .opacity(showTypingIndicator ? 1 : 0)
-                .animation(nil, value: showTypingIndicator)
 
             if canCollapse {
                 Button("Show Less", systemImage: "chevron.up", action: onToggleExpansion)

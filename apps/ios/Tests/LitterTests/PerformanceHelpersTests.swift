@@ -46,6 +46,13 @@ final class PerformanceHelpersTests: XCTestCase {
             ),
             4
         )
+        XCTAssertNil(
+            ConversationInfiniteScrollPolicy.earliestVisibleIndex(
+                visibleIDs: ["turn-8"],
+                orderedIDs: orderedIDs.lazy,
+                maxIndex: ConversationInfiniteScrollPolicy.olderPrefetchDistance
+            )
+        )
     }
 
     func testTranscriptTurnBuilderCollapsesPreviousTurnOnceANewLiveTurnStarts() {

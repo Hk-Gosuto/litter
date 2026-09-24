@@ -462,6 +462,13 @@ extension AnyTransition {
     }
 }
 
+enum ConversationTimelineItemRenderPolicy {
+    static func equivalent(_ lhs: ConversationItem, _ rhs: ConversationItem, streamingMessage: Bool) -> Bool {
+        lhs.id == rhs.id &&
+            (streamingMessage && lhs.isAssistantItem && rhs.isAssistantItem || lhs.renderDigest == rhs.renderDigest)
+    }
+}
+
 private struct ConversationTimelineItemRow: View, Equatable {
     private let renderCache = MessageRenderCache.shared
 
@@ -485,14 +492,15 @@ private struct ConversationTimelineItemRow: View, Equatable {
 
     static func == (lhs: ConversationTimelineItemRow, rhs: ConversationTimelineItemRow) -> Bool {
         let isAssistant = lhs.item.isAssistantItem
-        // For assistant rows: the StreamingRendererCoordinator owns the
-        // streaming→finished lifecycle.  Skip digest, richDetail, AND
-        // isStreamingMessage so the bubble body never re-evaluates when
-        // a tool call arrives and a new assistant message takes over as
-        // the "streaming" item.  Re-rendering the bubble would recreate
-        // StreamingMarkdownContentView and replay the token reveal.
-        let result = lhs.item.id == rhs.item.id &&
-            (isAssistant || lhs.item.renderDigest == rhs.item.renderDigest) &&
+        // Live assistant text updates through StreamingRendererCoordinator.
+        // Restored/finished assistant rows have no renderer, so their digest
+        // must invalidate the row when hydration corrects the message.
+        let result = ConversationTimelineItemRenderPolicy.equivalent(
+            lhs.item,
+            rhs.item,
+            streamingMessage: lhs.isLiveTurn && rhs.isLiveTurn &&
+                lhs.isStreamingMessage && rhs.isStreamingMessage
+        ) &&
             (isAssistant || lhs.isStreamingMessage == rhs.isStreamingMessage) &&
             lhs.serverId == rhs.serverId &&
             lhs.originThreadId == rhs.originThreadId &&

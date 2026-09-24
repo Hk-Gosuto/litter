@@ -23,15 +23,18 @@ enum ConversationTurnCollapsePolicy {
 enum ConversationInfiniteScrollPolicy {
     static let olderPrefetchDistance = 6
 
-    static func earliestVisibleIndex(
+    static func earliestVisibleIndex<IDs: Sequence>(
         visibleIDs: [String],
-        orderedIDs: [String]
-    ) -> Int? {
+        orderedIDs: IDs,
+        maxIndex: Int? = nil
+    ) -> Int? where IDs.Element == String {
         guard !visibleIDs.isEmpty else { return nil }
-        let indicesByID = Dictionary(
-            uniqueKeysWithValues: orderedIDs.enumerated().map { ($1, $0) }
-        )
-        return visibleIDs.compactMap { indicesByID[$0] }.min()
+        let visible = Set(visibleIDs)
+        for (index, id) in orderedIDs.enumerated() {
+            if let maxIndex, index > maxIndex { break }
+            if visible.contains(id) { return index }
+        }
+        return nil
     }
 }
 
