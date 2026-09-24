@@ -1,7 +1,23 @@
 import XCTest
+import SwiftUI
+import UIKit
 @testable import Litter
 
 final class MessageContentBridgeTests: XCTestCase {
+    @MainActor
+    func testFinalizedSwiftCodeKeepsSyntaxColors() {
+        let code = "let answer = 42\nprint(answer)"
+        let highlighted = litterHighlightedCode(code, language: "swift", colorScheme: .dark)
+        let attributed = NSAttributedString(highlighted)
+        var colors: Set<String> = []
+        attributed.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: attributed.length)) { value, _, _ in
+            if let color = value as? UIColor { colors.insert(color.description) }
+        }
+
+        XCTAssertEqual(String(highlighted.characters), code)
+        XCTAssertGreaterThan(colors.count, 1)
+    }
+
     func testAssistantRenderBlocksSplitMarkdownCodeAndImages() {
         let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
         let text = """

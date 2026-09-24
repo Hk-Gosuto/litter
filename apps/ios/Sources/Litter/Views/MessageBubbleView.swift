@@ -1222,6 +1222,11 @@ private func syncHighlighterTheme(for colorScheme: ColorScheme) {
     }
 }
 
+func litterHighlightedCode(_ code: String, language: String?, colorScheme: ColorScheme) -> AttributedString {
+    syncHighlighterTheme(for: colorScheme)
+    return sharedHighlighter.highlightCode(code, language: language)
+}
+
 // MARK: - Auto-Scaling Markdown Modifiers
 
 private struct ScaledContentMarkdownModifier: ViewModifier {

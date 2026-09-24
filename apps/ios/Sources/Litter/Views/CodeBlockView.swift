@@ -4,6 +4,7 @@ struct CodeBlockView: View {
     let language: String
     let code: String
     var fontSize: CGFloat = LitterFont.conversationBodyPointSize
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -15,7 +16,11 @@ struct CodeBlockView: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text(code)
+                Text(litterHighlightedCode(
+                    code,
+                    language: language.isEmpty ? nil : language,
+                    colorScheme: colorScheme
+                ))
                     .litterMonoFont(size: fontSize)
                     .foregroundColor(LitterTheme.textBody)
                     .textSelection(.enabled)
