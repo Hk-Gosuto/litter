@@ -398,10 +398,9 @@ struct StreamingAssistantBubble: View {
     var label: String? = nil
     private let contentFontSize: CGFloat
 
-    /// Renderer is resolved once during init. For streaming items, this
-    /// creates the renderer eagerly (before deltas arrive) so the `if let`
-    /// branch is taken on the very first body evaluation. The coordinator
-    /// returns the same renderer when deltas later call `appendDelta`.
+    /// Non-math streaming items create their renderer before deltas arrive,
+    /// so the first body evaluation uses the observed branch. Math uses
+    /// snapshot-backed segments and does not need an extra renderer.
     private let resolvedRenderer: StreamingMarkdownRenderer?
 
     init(
@@ -417,9 +416,8 @@ struct StreamingAssistantBubble: View {
         self.label = label
         self.contentFontSize = bodySize
 
-        let coord = StreamingRendererCoordinator.shared
-        if isStreaming {
-            self.resolvedRenderer = coord.renderer(for: itemId, currentText: text)
+        if isStreaming && Self.usesStreamingMarkdownRenderer(itemId: itemId, text: text) {
+            self.resolvedRenderer = StreamingRendererCoordinator.shared.renderer(for: itemId, currentText: text)
         } else {
             self.resolvedRenderer = nil
         }
@@ -443,7 +441,11 @@ struct StreamingAssistantBubble: View {
     }
 
     private var shouldUseSegmentedRenderer: Bool {
-        !isStreaming || StreamingMathDetectionCache.shared.containsMath(itemId: itemId, text: text)
+        !isStreaming || !Self.usesStreamingMarkdownRenderer(itemId: itemId, text: text)
+    }
+
+    static func usesStreamingMarkdownRenderer(itemId: String, text: String) -> Bool {
+        !StreamingMathDetectionCache.shared.containsMath(itemId: itemId, text: text)
     }
 
     private var segmentedRenderSegments: [MessageRenderCache.AssistantSegment] {

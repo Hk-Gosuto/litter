@@ -83,6 +83,16 @@ struct ConversationTurnTimeline: View {
     ) -> AnyView {
         switch row {
         case .item(let item):
+            let isStreamingMessage = item.id == streamingAssistantItemId
+            let rendererDriven: Bool
+            if isStreamingMessage, case .assistant(let data) = item.content {
+                rendererDriven = StreamingAssistantBubble.usesStreamingMarkdownRenderer(
+                    itemId: item.id,
+                    text: data.text
+                )
+            } else {
+                rendererDriven = false
+            }
             return AnyView(
                 ConversationTimelineItemRow(
                     item: item,
@@ -90,7 +100,8 @@ struct ConversationTurnTimeline: View {
                     originThreadId: originThreadId,
                     agentDirectoryVersion: agentDirectoryVersion,
                     isLiveTurn: isLive,
-                    isStreamingMessage: item.id == streamingAssistantItemId,
+                    isStreamingMessage: isStreamingMessage,
+                    rendererDriven: rendererDriven,
                     reasoningDisplayMode: reasoningDisplayMode,
                     commandDisplayMode: commandDisplayMode,
                     toolDisplayMode: toolDisplayMode,
@@ -463,9 +474,16 @@ extension AnyTransition {
 }
 
 enum ConversationTimelineItemRenderPolicy {
-    static func equivalent(_ lhs: ConversationItem, _ rhs: ConversationItem, streamingMessage: Bool) -> Bool {
-        lhs.id == rhs.id &&
-            (streamingMessage && lhs.isAssistantItem && rhs.isAssistantItem || lhs.renderDigest == rhs.renderDigest)
+    static func equivalent(_ lhs: ConversationItem, _ rhs: ConversationItem, rendererDriven: Bool) -> Bool {
+        guard lhs.id == rhs.id else { return false }
+        if rendererDriven,
+           case .assistant(let previous) = lhs.content,
+           case .assistant(let current) = rhs.content {
+            return previous.agentNickname == current.agentNickname &&
+                previous.agentRole == current.agentRole &&
+                previous.phase == current.phase
+        }
+        return lhs.renderDigest == rhs.renderDigest
     }
 }
 
@@ -478,6 +496,7 @@ private struct ConversationTimelineItemRow: View, Equatable {
     let agentDirectoryVersion: UInt64
     let isLiveTurn: Bool
     let isStreamingMessage: Bool
+    let rendererDriven: Bool
     let reasoningDisplayMode: ConversationDetailDisplayMode
     let commandDisplayMode: ConversationDetailDisplayMode
     let toolDisplayMode: ConversationDetailDisplayMode
@@ -492,14 +511,12 @@ private struct ConversationTimelineItemRow: View, Equatable {
 
     static func == (lhs: ConversationTimelineItemRow, rhs: ConversationTimelineItemRow) -> Bool {
         let isAssistant = lhs.item.isAssistantItem
-        // Live assistant text updates through StreamingRendererCoordinator.
-        // Restored/finished assistant rows have no renderer, so their digest
-        // must invalidate the row when hydration corrects the message.
+        // Only the active non-math streaming renderer observes its own deltas.
+        // Segmented math and finished rows must refresh from snapshot content.
         let result = ConversationTimelineItemRenderPolicy.equivalent(
             lhs.item,
             rhs.item,
-            streamingMessage: lhs.isLiveTurn && rhs.isLiveTurn &&
-                lhs.isStreamingMessage && rhs.isStreamingMessage
+            rendererDriven: lhs.rendererDriven && rhs.rendererDriven
         ) &&
             (isAssistant || lhs.isStreamingMessage == rhs.isStreamingMessage) &&
             lhs.serverId == rhs.serverId &&
