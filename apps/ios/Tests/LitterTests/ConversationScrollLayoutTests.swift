@@ -3,58 +3,61 @@ import XCTest
 
 @MainActor
 final class ConversationScrollLayoutTests: XCTestCase {
-    func testShortConversationStaysAtTop() {
-        XCTAssertEqual(ConversationScrollLayout(contentHeight: 280, visibleHeight: 700).bottomOffset, 0)
-    }
-
-    func testKeyboardResizeKeepsTargetWithinContent() {
-        let fullViewport = ConversationScrollLayout(contentHeight: 1_200, visibleHeight: 700)
-        let keyboardViewport = ConversationScrollLayout(contentHeight: 1_200, visibleHeight: 380)
-
-        XCTAssertEqual(fullViewport.bottomOffset, 500)
-        XCTAssertEqual(keyboardViewport.bottomOffset, 820)
-    }
-
-    func testVisibleAreaAccountsForInsets() {
-        let layout = ConversationScrollLayout(contentHeight: 1_200, visibleHeight: 620)
-        XCTAssertEqual(layout.bottomOffset, 580)
-    }
-
-    func testUnmeasuredViewportDoesNotRequestScroll() {
-        XCTAssertNil(ConversationScrollLayout(contentHeight: 280, visibleHeight: 0).bottomOffset)
-        XCTAssertNil(ConversationScrollLayout(contentHeight: .infinity, visibleHeight: 700).bottomOffset)
-    }
-
-    func testOldThreadCannotDeliverDeferredScrollAfterSwitch() {
+    func testSwitchingThreadsDiscardsVisibleTurns() {
         let observation = ConversationScrollObservation()
         XCTAssertTrue(observation.accepts("server::first"))
-        observation.layout = ConversationScrollLayout(contentHeight: 1_200, visibleHeight: 700)
         observation.visibleTurnIDs = ["first-turn"]
-        observation.followScheduled = true
 
         observation.activate("server::second")
 
         XCTAssertFalse(observation.accepts("server::first"))
         XCTAssertTrue(observation.accepts("server::second"))
-        XCTAssertNil(observation.layout)
         XCTAssertTrue(observation.visibleTurnIDs.isEmpty)
-        XCTAssertFalse(observation.followScheduled)
     }
 
-    func testFollowingOnlyPausesAfterDeliberateScrollAway() {
-        XCTAssertFalse(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: true, distanceFromBottom: 20))
-        XCTAssertFalse(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: true, distanceFromBottom: 48))
-        XCTAssertTrue(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: true, distanceFromBottom: 49))
-        XCTAssertFalse(ConversationScrollFollowPolicy.shouldPause(isUserInteracting: false, distanceFromBottom: 100))
+    func testProjectionUsesStableRowIdentifiersWhenAnotherTurnAppears() {
+        let first = makeTurn("first", text: "Hello")
+        let second = makeTurn("second", text: "Answer")
+        let initial = project([first])
+        let appended = project([first, second])
+
+        XCTAssertEqual(initial.map(\.id), ["row:first:message-first"])
+        XCTAssertEqual(appended.map(\.id), ["row:first:message-first", "row:second:message-second"])
+        XCTAssertEqual(appended.map(\.turnID), ["first", "second"])
+        XCTAssertFalse(appended[0].needsReconfigure(comparedTo: initial[0]))
     }
 
-    func testShortConversationKeepsTopAlignmentUntilItCanScroll() {
-        XCTAssertFalse(ConversationScrollFollowPolicy.shouldUseBottomEdge(layout: nil))
-        XCTAssertFalse(ConversationScrollFollowPolicy.shouldUseBottomEdge(
-            layout: ConversationScrollLayout(contentHeight: 300, visibleHeight: 700)
-        ))
-        XCTAssertTrue(ConversationScrollFollowPolicy.shouldUseBottomEdge(
-            layout: ConversationScrollLayout(contentHeight: 900, visibleHeight: 700)
-        ))
+    func testProjectionReconfiguresChangedExistingMessage() {
+        let before = project([makeTurn("first", text: "Draft")])
+        let after = project([makeTurn("first", text: "Corrected")])
+
+        XCTAssertEqual(before.map(\.id), after.map(\.id))
+        XCTAssertTrue(after[0].needsReconfigure(comparedTo: before[0]))
+    }
+
+    func testCollapsedTurnExpandsIntoRowsAndCollapseFooter() {
+        let turn = makeTurn("first", text: "Hello", collapsed: true)
+        let collapsed = project([turn])
+        let expanded = project([turn], expanded: ["first"])
+
+        XCTAssertEqual(collapsed.map(\.id), ["collapsed:first"])
+        XCTAssertEqual(expanded.map(\.id), ["row:first:message-first", "footer:first"])
+    }
+
+    private func project(_ turns: [TranscriptTurn], expanded: Set<String> = []) -> [ConversationCollectionEntry] {
+        ConversationCollectionProjection.build(turns: turns, expandedTurnIDs: expanded) { turn in
+            turn.items.map { .item($0) }
+        }
+    }
+
+    private func makeTurn(_ id: String, text: String, collapsed: Bool = false) -> TranscriptTurn {
+        let item = ConversationItem(id: "message-\(id)", content: .user(.init(text: text, images: [])))
+        return TranscriptTurn(
+            id: id,
+            items: [item],
+            isLive: false,
+            isCollapsedByDefault: collapsed,
+            renderDigest: item.renderDigest
+        )
     }
 }

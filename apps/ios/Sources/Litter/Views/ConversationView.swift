@@ -580,34 +580,14 @@ struct RateLimitBadgeView: View, Equatable {
 }
 
 
-struct ConversationScrollLayout: Equatable {
-    let contentHeight: CGFloat
-    let visibleHeight: CGFloat
-
-    var bottomOffset: CGFloat? {
-        guard contentHeight.isFinite, visibleHeight.isFinite, visibleHeight > 0 else { return nil }
-        return max(0, contentHeight - visibleHeight)
-    }
-}
-
 enum ConversationScrollFollowPolicy {
     static let pauseDistance: CGFloat = 48
-
-    static func shouldPause(isUserInteracting: Bool, distanceFromBottom: CGFloat) -> Bool {
-        isUserInteracting && distanceFromBottom > pauseDistance
-    }
-
-    static func shouldUseBottomEdge(layout: ConversationScrollLayout?) -> Bool {
-        (layout?.bottomOffset ?? 0) > 0
-    }
 }
 
 @MainActor
 final class ConversationScrollObservation {
     private(set) var threadScopeID: String?
-    var layout: ConversationScrollLayout?
     var visibleTurnIDs: [String] = []
-    var followScheduled = false
 
     func accepts(_ scopeID: String) -> Bool {
         if threadScopeID == nil { threadScopeID = scopeID }
@@ -616,14 +596,402 @@ final class ConversationScrollObservation {
 
     func activate(_ scopeID: String) {
         threadScopeID = scopeID
-        layout = nil
         visibleTurnIDs = []
-        followScheduled = false
+    }
+}
+
+enum ConversationCollectionContent {
+    case collapsed(TranscriptTurn)
+    case timeline(ConversationTimelineRowDescriptor, isLive: Bool, isLastRow: Bool, streamingItemID: String?)
+    case collapseFooter
+}
+
+struct ConversationCollectionEntry: Identifiable {
+    let id: String
+    let turnID: String
+    let content: ConversationCollectionContent
+    let rendererDriven: Bool
+
+    init(id: String, turnID: String, content: ConversationCollectionContent) {
+        self.id = id
+        self.turnID = turnID
+        self.content = content
+        if case .timeline(let row, let isLive, _, let streamingItemID) = content,
+           isLive,
+           case .item(let item) = row,
+           item.id == streamingItemID,
+           case .assistant(let data) = item.content {
+            rendererDriven = StreamingAssistantBubble.usesStreamingMarkdownRenderer(itemId: item.id, text: data.text)
+        } else {
+            rendererDriven = false
+        }
+    }
+
+    func needsReconfigure(comparedTo previous: Self) -> Bool {
+        guard id == previous.id else { return true }
+        switch (previous.content, content) {
+        case (.collapsed(let oldTurn), .collapsed(let newTurn)):
+            return oldTurn != newTurn
+        case (.timeline(let oldRow, let oldLive, let oldLast, let oldStreamingID),
+              .timeline(let newRow, let newLive, let newLast, let newStreamingID)):
+            guard oldLive == newLive, oldLast == newLast else { return true }
+            if case .item(let oldItem) = oldRow, case .item(let newItem) = newRow {
+                return !ConversationTimelineItemRenderPolicy.equivalent(
+                    oldItem, newItem, rendererDriven: previous.rendererDriven && rendererDriven
+                ) || (!oldItem.isAssistantItem && oldStreamingID != newStreamingID)
+            }
+            return oldRow != newRow
+        case (.collapseFooter, .collapseFooter):
+            return false
+        default:
+            return true
+        }
+    }
+}
+
+enum ConversationCollectionProjection {
+    static func build(
+        turns: [TranscriptTurn],
+        expandedTurnIDs: Set<String>,
+        rowsForTurn: (TranscriptTurn) -> [ConversationTimelineRowDescriptor]
+    ) -> [ConversationCollectionEntry] {
+        var result: [ConversationCollectionEntry] = []
+        for turn in turns {
+            if turn.isCollapsedByDefault && !expandedTurnIDs.contains(turn.id) {
+                result.append(.init(id: "collapsed:\(turn.id)", turnID: turn.id, content: .collapsed(turn)))
+                continue
+            }
+
+            let rows = rowsForTurn(turn)
+            let streamingItemID = turn.isLive ? turn.items.last(where: \.isAssistantItem)?.id : nil
+            for (index, row) in rows.enumerated() {
+                result.append(.init(
+                    id: "row:\(turn.id):\(row.id)",
+                    turnID: turn.id,
+                    content: .timeline(
+                        row, isLive: turn.isLive,
+                        isLastRow: index == rows.count - 1,
+                        streamingItemID: streamingItemID
+                    )
+                ))
+            }
+            if turn.isCollapsedByDefault {
+                result.append(.init(id: "footer:\(turn.id)", turnID: turn.id, content: .collapseFooter))
+            }
+        }
+        return result
+    }
+}
+
+private final class ConversationCollectionUIKitView: UICollectionView {
+    var didLayoutContent: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        didLayoutContent?()
+    }
+}
+
+private final class ConversationCollectionContainer: UIView {
+    let collectionView: ConversationCollectionUIKitView
+
+    override init(frame: CGRect) {
+        let layout = UICollectionViewCompositionalLayout { _, environment in
+            let size = NSCollectionLayoutSize(
+                widthDimension: .fractionalWidth(1),
+                heightDimension: .estimated(64)
+            )
+            let item = NSCollectionLayoutItem(layoutSize: size)
+            let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [item])
+            let section = NSCollectionLayoutSection(group: group)
+            section.interGroupSpacing = 10
+            let side = max(16, (environment.container.effectiveContentSize.width - 760) / 2)
+            section.contentInsets = .init(top: 0, leading: side, bottom: 0, trailing: side)
+            return section
+        }
+        collectionView = ConversationCollectionUIKitView(frame: .zero, collectionViewLayout: layout)
+        super.init(frame: frame)
+        backgroundColor = .clear
+        collectionView.backgroundColor = .clear
+        collectionView.alwaysBounceVertical = true
+        collectionView.showsVerticalScrollIndicator = false
+        collectionView.keyboardDismissMode = .interactive
+        collectionView.contentInsetAdjustmentBehavior = .never
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(collectionView)
+
+        keyboardLayoutGuide.usesBottomSafeArea = false
+        let bottom = collectionView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        bottom.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            collectionView.topAnchor.constraint(equalTo: topAnchor),
+            collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bottom,
+            collectionView.bottomAnchor.constraint(lessThanOrEqualTo: keyboardLayoutGuide.topAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+private struct ConversationCollectionView: UIViewRepresentable {
+    let entries: [ConversationCollectionEntry]
+    let scopeID: String
+    let sendScrollToken: Int
+    let latestScrollToken: Int
+    let topInset: CGFloat
+    let renderRevision: Int
+    let render: (ConversationCollectionEntry) -> AnyView
+    let onScrollStateChanged: (CGFloat, Bool) -> Void
+    let onVisibleTurnsChanged: ([String]) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> ConversationCollectionContainer {
+        let container = ConversationCollectionContainer()
+        context.coordinator.attach(to: container)
+        return container
+    }
+
+    func updateUIView(_ container: ConversationCollectionContainer, context: Context) {
+        context.coordinator.update(from: self, in: container)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UICollectionViewDelegate {
+        private var configuration: ConversationCollectionView
+        private weak var container: ConversationCollectionContainer?
+        private var dataSource: UICollectionViewDiffableDataSource<Int, String>!
+        private var appliedEntries: [String: ConversationCollectionEntry] = [:]
+        private var appliedIDs: [String] = []
+        private var appliedScopeID: String?
+        private var appliedRenderRevision: Int?
+        private var pendingEntries: [ConversationCollectionEntry]?
+        private var isApplying = false
+        private var followScheduled = false
+        private var isFollowingBottom = true
+        private var isDragging = false
+        private var lastSendToken: Int?
+        private var lastLatestToken: Int?
+        private var lastLayoutSize: CGSize = .zero
+        private var lastContentHeight: CGFloat = 0
+        private var lastReportedVisibleTurnIDs: [String] = []
+        private var lastReportedScrollState: (distance: CGFloat, following: Bool)?
+
+        init(_ configuration: ConversationCollectionView) {
+            self.configuration = configuration
+        }
+
+        func attach(to container: ConversationCollectionContainer) {
+            self.container = container
+            let collectionView = container.collectionView
+            collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "ConversationRow")
+            collectionView.delegate = self
+            collectionView.didLayoutContent = { [weak self] in self?.contentDidLayout() }
+            dataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) { [weak self] collectionView, indexPath, id in
+                let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "ConversationRow", for: indexPath)
+                cell.backgroundColor = .clear
+                guard let self, let entry = self.appliedEntries[id] else { return cell }
+                cell.contentConfiguration = UIHostingConfiguration { [weak self] in
+                    self?.configuration.render(entry) ?? AnyView(EmptyView())
+                }
+                .margins(.all, 0)
+                return cell
+            }
+        }
+
+        func update(from next: ConversationCollectionView, in container: ConversationCollectionContainer) {
+            configuration = next
+            let collectionView = container.collectionView
+            let top = next.topInset + 40
+            if abs(collectionView.contentInset.top - top) > 0.5 {
+                collectionView.contentInset.top = top
+            }
+            if appliedScopeID != next.scopeID {
+                isFollowingBottom = true
+                isDragging = false
+                lastReportedVisibleTurnIDs = []
+            }
+            if let old = lastSendToken, old != next.sendScrollToken { isFollowingBottom = true }
+            if let old = lastLatestToken, old != next.latestScrollToken { isFollowingBottom = true }
+            lastSendToken = next.sendScrollToken
+            lastLatestToken = next.latestScrollToken
+            pendingEntries = next.entries
+            applyPendingEntries()
+            if isFollowingBottom && !isDragging { scheduleBottomFollow() }
+        }
+
+        private func applyPendingEntries() {
+            guard !isApplying, let entries = pendingEntries, let container else { return }
+            pendingEntries = nil
+            let scopeID = configuration.scopeID
+            let ids = entries.map { "\(scopeID)::\($0.id)" }
+            let newEntries = Dictionary(uniqueKeysWithValues: zip(ids, entries))
+            let changes = ids.filter { id in
+                guard let previous = appliedEntries[id], let current = newEntries[id] else { return false }
+                return current.needsReconfigure(comparedTo: previous)
+            }
+            let contextChanged = appliedRenderRevision != configuration.renderRevision
+            let needsSnapshot = ids != appliedIDs || !changes.isEmpty || contextChanged
+            guard needsSnapshot else { return }
+
+            let preserve = isFollowingBottom ? nil : visibleAnchor(in: container.collectionView)
+            appliedEntries = newEntries
+            appliedIDs = ids
+            appliedScopeID = scopeID
+            appliedRenderRevision = configuration.renderRevision
+            var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+            snapshot.appendSections([0])
+            snapshot.appendItems(ids)
+            let retained = Set(dataSource.snapshot().itemIdentifiers)
+            snapshot.reconfigureItems((contextChanged ? ids : changes).filter { retained.contains($0) })
+            isApplying = true
+            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+                guard let self, let view = self.container?.collectionView else { return }
+                self.isApplying = false
+                view.layoutIfNeeded()
+                if self.isFollowingBottom && !self.isDragging {
+                    self.scheduleBottomFollow()
+                } else if let preserve {
+                    self.restore(anchor: preserve, in: view)
+                }
+                self.applyPendingEntries()
+            }
+        }
+
+        private func visibleAnchor(in view: UICollectionView) -> (id: String, turnID: String, offset: CGFloat)? {
+            guard let indexPath = view.indexPathsForVisibleItems.sorted().first,
+                  let id = dataSource.itemIdentifier(for: indexPath),
+                  let entry = appliedEntries[id],
+                  let attributes = view.layoutAttributesForItem(at: indexPath) else { return nil }
+            return (id, entry.turnID, attributes.frame.minY - view.contentOffset.y)
+        }
+
+        private func restore(anchor: (id: String, turnID: String, offset: CGFloat), in view: UICollectionView) {
+            let targetID = dataSource.indexPath(for: anchor.id) != nil
+                ? anchor.id
+                : appliedIDs.first(where: { appliedEntries[$0]?.turnID == anchor.turnID })
+            guard let targetID, let indexPath = dataSource.indexPath(for: targetID),
+                  let attributes = view.layoutAttributesForItem(at: indexPath) else { return }
+            let target = attributes.frame.minY - anchor.offset
+            view.setContentOffset(CGPoint(x: 0, y: min(max(target, minimumOffset(in: view)), maximumOffset(in: view))), animated: false)
+        }
+
+        private func minimumOffset(in view: UICollectionView) -> CGFloat {
+            -view.adjustedContentInset.top
+        }
+
+        private func maximumOffset(in view: UICollectionView) -> CGFloat {
+            max(minimumOffset(in: view), view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
+        }
+
+        private func distanceFromBottom(in view: UICollectionView) -> CGFloat {
+            max(0, maximumOffset(in: view) - view.contentOffset.y)
+        }
+
+        private func scheduleBottomFollow() {
+            guard !followScheduled else { return }
+            followScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.followScheduled = false
+                guard self.isFollowingBottom, !self.isDragging, let view = self.container?.collectionView else { return }
+                self.scrollToBottom(in: view)
+            }
+        }
+
+        private func scrollToBottom(in view: UICollectionView) {
+            view.layoutIfNeeded()
+            let target = maximumOffset(in: view)
+            if abs(view.contentOffset.y - target) > 1 {
+                UIView.performWithoutAnimation {
+                    view.setContentOffset(CGPoint(x: 0, y: target), animated: false)
+                }
+            }
+            reportScrollState(in: view)
+        }
+
+        private func contentDidLayout() {
+            guard let view = container?.collectionView else { return }
+            let size = view.bounds.size
+            let height = view.contentSize.height
+            if abs(size.height - lastLayoutSize.height) > 0.5 || abs(height - lastContentHeight) > 0.5 {
+                lastLayoutSize = size
+                lastContentHeight = height
+                if isFollowingBottom && !isDragging { scheduleBottomFollow() }
+            }
+            reportScrollState(in: view)
+            reportVisibleTurns(in: view)
+        }
+
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { isDragging = true }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard let view = scrollView as? UICollectionView else { return }
+            if isDragging && distanceFromBottom(in: view) > ConversationScrollFollowPolicy.pauseDistance {
+                isFollowingBottom = false
+            }
+            reportScrollState(in: view)
+            reportVisibleTurns(in: view)
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            if !decelerate, let view = scrollView as? UICollectionView { finishDragging(in: view) }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            if let view = scrollView as? UICollectionView { finishDragging(in: view) }
+        }
+
+        private func finishDragging(in view: UICollectionView) {
+            isDragging = false
+            if distanceFromBottom(in: view) <= 12 { isFollowingBottom = true; scheduleBottomFollow() }
+            reportScrollState(in: view)
+        }
+
+        private func reportScrollState(in view: UICollectionView) {
+            let distance = distanceFromBottom(in: view)
+            let state = (distance: distance, following: isFollowingBottom)
+            if let previous = lastReportedScrollState,
+               (previous.distance > ConversationScrollFollowPolicy.pauseDistance) ==
+                    (distance > ConversationScrollFollowPolicy.pauseDistance),
+               previous.following == isFollowingBottom { return }
+            lastReportedScrollState = state
+            let scopeID = configuration.scopeID
+            DispatchQueue.main.async { [weak self] in
+                guard self?.configuration.scopeID == scopeID else { return }
+                self?.configuration.onScrollStateChanged(state.distance, state.following)
+            }
+        }
+
+        private func reportVisibleTurns(in view: UICollectionView) {
+            let turnIDs = view.indexPathsForVisibleItems.sorted().compactMap { indexPath in
+                dataSource.itemIdentifier(for: indexPath).flatMap { appliedEntries[$0]?.turnID }
+            }
+            let unique = turnIDs.reduce(into: [String]()) { result, id in
+                if !result.contains(id) { result.append(id) }
+            }
+            guard unique != lastReportedVisibleTurnIDs else { return }
+            lastReportedVisibleTurnIDs = unique
+            let scopeID = configuration.scopeID
+            DispatchQueue.main.async { [weak self] in
+                guard self?.configuration.scopeID == scopeID else { return }
+                self?.configuration.onVisibleTurnsChanged(unique)
+            }
+        }
     }
 }
 
 private struct ConversationMessageList: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(AppModel.self) private var appModel
+    @Environment(AppState.self) private var appState
+    @Environment(ThemeManager.self) private var themeManager
+    @Environment(WallpaperManager.self) private var wallpaperManager
+    @Environment(\.activeThreadCwd) private var activeThreadCwd
+    @Environment(\.fontPreferenceObserver) private var fontPreferenceObserver
+    @Environment(\.locale) private var locale
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.textScale) private var textScale
     let items: [ConversationItem]
     let threadStatus: ConversationStatus
@@ -645,10 +1013,7 @@ private struct ConversationMessageList: View {
     let onForkFromUserItem: (ConversationItem) -> Void
     var onOpenConversation: ((ThreadKey) -> Void)? = nil
     let onLoadOlderTurns: (ThreadKey) async -> Bool
-    @State private var isNearBottom = true
-    @State private var isFollowingBottom = true
-    @State private var isUserInteracting = false
-    @State private var scrollPosition = ScrollPosition()
+    @State private var latestScrollToken = 0
     @State private var scrollObservation = ConversationScrollObservation()
     @State private var showScrollToBottomButton = false
     @State private var waitingForDataExpired = false
@@ -662,7 +1027,9 @@ private struct ConversationMessageList: View {
     @State private var requestedOlderTurnsThreadKey: ThreadKey?
     @State private var showOlderPageLoader = false
     @AppStorage("collapseTurns") private var collapseTurns = false
-    private static let nearBottomRestoreDistance: CGFloat = 12
+    @AppStorage(ConversationDisplayPreferenceKey.reasoning) private var reasoningDisplayModeRaw = ConversationDetailDisplayMode.collapsed.rawValue
+    @AppStorage(ConversationDisplayPreferenceKey.commands) private var commandDisplayModeRaw = ConversationDetailDisplayMode.collapsed.rawValue
+    @AppStorage(ConversationDisplayPreferenceKey.tools) private var toolDisplayModeRaw = ConversationDetailDisplayMode.collapsed.rawValue
 
     private var expandedRecentTurnCount: Int {
         ConversationTurnCollapsePolicy.expandedRecentTurnCount(
@@ -703,6 +1070,22 @@ private struct ConversationMessageList: View {
         scrollObservation.accepts(activeThreadScopeID)
     }
 
+    private var renderRevision: Int {
+        var hasher = Hasher()
+        hasher.combine(agentDirectoryVersion)
+        hasher.combine(messageActionsDisabled)
+        hasher.combine(reasoningDisplayModeRaw)
+        hasher.combine(commandDisplayModeRaw)
+        hasher.combine(toolDisplayModeRaw)
+        hasher.combine(textSizeStep)
+        hasher.combine(fontPreferenceObserver.revision)
+        hasher.combine(themeManager.selectedLightSlug)
+        hasher.combine(themeManager.selectedDarkSlug)
+        hasher.combine(colorScheme == .dark)
+        hasher.combine(locale.identifier)
+        return hasher.finalize()
+    }
+
     private var isStreaming: Bool {
         if case .thinking = threadStatus { return true }
         return false
@@ -734,84 +1117,40 @@ private struct ConversationMessageList: View {
         let _ = PerfTracker.event("ConversationMessageList.body")
         let turns = mergedRenderableTurns
         let footerHeight = isStreaming && !turns.isEmpty ? typingIndicatorReservedHeight : 0
-        GeometryReader { viewport in
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView(.vertical) {
-                    transcriptContent(
-                        turns: turns,
-                        viewportSize: CGSize(
-                            width: viewport.size.width,
-                            height: max(0, viewport.size.height - footerHeight)
-                        )
-                    )
+        let entries = ConversationCollectionProjection.build(turns: turns, expandedTurnIDs: expandedTurnIDs) { turn in
+            timeline(for: turn).renderableRows()
+        }
+        ZStack(alignment: .bottomTrailing) {
+            ConversationCollectionView(
+                entries: entries,
+                scopeID: activeThreadScopeID,
+                sendScrollToken: sendScrollToken,
+                latestScrollToken: latestScrollToken,
+                topInset: topInset,
+                renderRevision: renderRevision,
+                render: renderEntry,
+                onScrollStateChanged: { distance, following in
+                    let show = !items.isEmpty && distance > ConversationScrollFollowPolicy.pauseDistance && !following
+                    if showScrollToBottomButton != show { showScrollToBottomButton = show }
+                },
+                onVisibleTurnsChanged: { ids in
+                    guard isCurrentScrollObservation, ids != scrollObservation.visibleTurnIDs else { return }
+                    scrollObservation.visibleTurnIDs = ids
+                    prefetchOlderTurnsIfNeeded(visibleTurnIDs: ids, turns: mergedRenderableTurns)
                 }
-                .id(activeThreadScopeID)
-                .scrollIndicators(.hidden)
-                .scrollDismissesKeyboard(.interactively)
-                .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { turnIDs in
-                    guard isCurrentScrollObservation else { return }
-                    guard turnIDs != scrollObservation.visibleTurnIDs else { return }
-                    scrollObservation.visibleTurnIDs = turnIDs
-                    prefetchOlderTurnsIfNeeded(visibleTurnIDs: turnIDs, turns: turns)
-                }
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
-                } action: { _, distance in
-                    guard isCurrentScrollObservation else { return }
-                    updateDistanceFromBottom(distance)
-                }
-                .onScrollGeometryChange(for: ConversationScrollLayout.self) { geometry in
-                    ConversationScrollLayout(
-                        contentHeight: geometry.contentSize.height,
-                        visibleHeight: geometry.visibleRect.height
-                    )
-                } action: { oldLayout, newLayout in
-                    guard isCurrentScrollObservation else { return }
-                    guard newLayout != oldLayout else { return }
-                    scrollObservation.layout = newLayout
-                    guard isFollowingBottom, !isUserInteracting,
-                          newLayout.bottomOffset != oldLayout.bottomOffset else { return }
-                    scheduleBottomFollow()
-                }
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.topLeading, for: .alignment)
-                .scrollPosition($scrollPosition)
+            )
+                .padding(.bottom, footerHeight)
                 .simultaneousGesture(
                     MagnificationGesture(minimumScaleDelta: 0.03)
                         .onChanged { scale in handlePinchChanged(scale: scale) }
                         .onEnded { scale in finishPinch(scale: scale) }
                 )
-                .onScrollPhaseChange { _, newPhase in
-                    switch newPhase {
-                    case .tracking, .interacting, .decelerating:
-                        isUserInteracting = true
-                    case .idle:
-                        let finishedUserInteraction = isUserInteracting
-                        isUserInteracting = false
-                        if finishedUserInteraction && isNearBottom {
-                            isFollowingBottom = true
-                            followBottom(animated: false)
-                        } else if finishedUserInteraction && isFollowingBottom && !showScrollToBottomButton {
-                            scheduleBottomFollow()
-                        }
-                    case .animating:
-                        break
-                    @unknown default:
-                        break
-                    }
-                }
                 .onAppear {
                     _ = scrollObservation.accepts(activeThreadScopeID)
-                    isFollowingBottom = true
-                    isUserInteracting = false
                     syncTranscriptTurns()
                 }
                 .onChange(of: activeThreadKey) {
-                    scrollPosition = ScrollPosition()
                     scrollObservation.activate(activeThreadScopeID)
-                    isFollowingBottom = true
-                    isUserInteracting = false
-                    isNearBottom = true
                     showScrollToBottomButton = false
                     waitingForDataExpired = false
                     requestedOlderTurnsCursor = nil
@@ -824,16 +1163,8 @@ private struct ConversationMessageList: View {
                     try? await Task.sleep(for: .seconds(1))
                     waitingForDataExpired = true
                 }
-                .onChange(of: items) { _, newItems in
+                .onChange(of: items) { _, _ in
                     syncTranscriptTurns()
-                    if !newItems.isEmpty, isFollowingBottom, !isUserInteracting {
-                        scheduleBottomFollow()
-                    }
-                }
-                .onChange(of: turns.last?.id) { oldID, newID in
-                    if oldID != newID, newID != nil, isFollowingBottom, !isUserInteracting {
-                        scheduleBottomFollow()
-                    }
                 }
                 .onChange(of: olderTurnsCursor) { oldCursor, newCursor in
                     guard oldCursor != newCursor else { return }
@@ -852,17 +1183,6 @@ private struct ConversationMessageList: View {
                 .onChange(of: collapseTurns) {
                     syncTranscriptTurns(resetExpansion: true)
                 }
-                .onChange(of: sendScrollToken) {
-                    isFollowingBottom = true
-                    isUserInteracting = false
-                    isNearBottom = true
-                    followBottom(animated: false)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { _ in
-                    if isFollowingBottom, !isUserInteracting {
-                        scheduleBottomFollow()
-                    }
-                }
                 .onChange(of: threadStatus) { oldStatus, _ in
                     syncTranscriptTurns()
                     // When streaming ends, finish active renderers so they
@@ -872,75 +1192,48 @@ private struct ConversationMessageList: View {
                         StreamingRendererCoordinator.shared.finishActive()
                     }
                 }
-                .padding(.bottom, footerHeight)
-
-                if shouldShowScrollToBottom {
-                    ScrollToBottomIndicator {
-                        isFollowingBottom = true
-                        isNearBottom = true
-                        followBottom()
-                    }
-                    .padding(.trailing, 14)
-                    .padding(.bottom, footerHeight + 10)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-
-                if footerHeight > 0 {
-                    TypingIndicator()
-                        .padding(.leading, hasMinigameLaunchButton ? 56 : 16)
-                        .padding(.bottom, 8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                        .allowsHitTesting(false)
-                }
-
-                if showOlderPageLoader, hasOlderTurns {
-                    ConversationLoadingIndicator(label: "Loading earlier messages...")
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .padding(.top, topInset + 8)
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-    }
-
-    private func transcriptContent(turns: [TranscriptTurn], viewportSize: CGSize) -> some View {
-        return VStack(alignment: .leading, spacing: 0) {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach(turns) { turn in
-                    turnRow(turn)
-                }
-            }
-            .scrollTargetLayout()
-            .frame(maxWidth: LitterPlatform.isRegularSurface(horizontalSizeClass: horizontalSizeClass) ? 760 : .infinity)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 16)
-            .padding(.top, topInset + 40)
-            .animation(.spring(response: 0.22, dampingFraction: 0.9), value: textSizeStep)
 
             if isWaitingForData {
                 ConversationLoadingIndicator(label: "Loading conversation...")
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 40)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .allowsHitTesting(false)
             }
-
+            if shouldShowScrollToBottom {
+                ScrollToBottomIndicator { latestScrollToken &+= 1 }
+                    .padding(.trailing, 14)
+                    .padding(.bottom, footerHeight + 10)
+            }
+            if footerHeight > 0 {
+                TypingIndicator()
+                    .padding(.leading, hasMinigameLaunchButton ? 56 : 16)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .allowsHitTesting(false)
+            }
+            if showOlderPageLoader, hasOlderTurns {
+                ConversationLoadingIndicator(label: "Loading earlier messages...")
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, topInset + 8)
+                    .allowsHitTesting(false)
+            }
         }
-        .frame(width: viewportSize.width)
-        .frame(minHeight: viewportSize.height, alignment: .top)
     }
 
-    private func turnRow(_ turn: TranscriptTurn) -> some View {
-        return ConversationTurnRow(
-            turn: turn,
-            isExpanded: isTurnExpanded(turn),
-            canCollapse: turn.isCollapsedByDefault,
+    private func timeline(for turn: TranscriptTurn) -> ConversationTurnTimeline {
+        timeline(items: turn.items, isLive: turn.isLive)
+    }
+
+    private func timeline(items: [ConversationItem], isLive: Bool) -> ConversationTurnTimeline {
+        ConversationTurnTimeline(
+            items: items,
+            isLive: isLive,
             serverId: activeThreadKey.serverId,
             originThreadId: activeThreadKey.threadId,
             agentDirectoryVersion: agentDirectoryVersion,
             messageActionsDisabled: messageActionsDisabled,
-            onToggleExpansion: { toggleTurnExpansion(turn) },
             resolveTargetLabel: resolveTargetLabel,
             resolveThreadKey: resolveThreadKey,
             resolveLiveStatus: resolveLiveStatus,
@@ -949,71 +1242,71 @@ private struct ConversationMessageList: View {
             onForkFromUserItem: onForkFromUserItem,
             onOpenConversation: onOpenConversation
         )
-        .equatable()
-        .turnDebugOverlay(turnId: turn.id)
     }
 
-    private func isTurnExpanded(_ turn: TranscriptTurn) -> Bool {
-        !turn.isCollapsedByDefault || expandedTurnIDs.contains(turn.id)
+    private func renderEntry(_ entry: ConversationCollectionEntry) -> AnyView {
+        let content: AnyView
+        switch entry.content {
+        case .collapsed(let turn):
+            content = AnyView(
+                ConversationTurnRow(
+                    turn: turn,
+                    isExpanded: false,
+                    canCollapse: true,
+                    serverId: activeThreadKey.serverId,
+                    originThreadId: activeThreadKey.threadId,
+                    agentDirectoryVersion: agentDirectoryVersion,
+                    messageActionsDisabled: messageActionsDisabled,
+                    onToggleExpansion: { toggleTurnExpansion(turn) },
+                    resolveTargetLabel: resolveTargetLabel,
+                    resolveThreadKey: resolveThreadKey,
+                    resolveLiveStatus: resolveLiveStatus,
+                    onWidgetPrompt: onWidgetPrompt,
+                    onEditUserItem: onEditUserItem,
+                    onForkFromUserItem: onForkFromUserItem,
+                    onOpenConversation: onOpenConversation
+                )
+                .equatable()
+                .turnDebugOverlay(turnId: turn.id)
+            )
+        case .timeline(let row, let isLive, let isLastRow, let streamingItemID):
+            content = timeline(items: [], isLive: isLive).renderRow(
+                row, isLastRow: isLastRow, streamingAssistantItemId: streamingItemID
+            )
+        case .collapseFooter:
+            content = AnyView(
+                Button("Show Less", systemImage: "chevron.up") {
+                    if let turn = mergedRenderableTurns.first(where: { $0.id == entry.turnID }) {
+                        toggleTurnExpansion(turn)
+                    }
+                }
+                .litterFont(.caption, weight: .semibold)
+                .foregroundColor(LitterTheme.textSecondary)
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+            )
+        }
+        return AnyView(content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(appModel)
+            .environment(appState)
+            .environment(themeManager)
+            .environment(wallpaperManager)
+            .environment(\.textScale, textScale)
+            .environment(\.fontPreferenceObserver, fontPreferenceObserver)
+            .activeThreadKey(activeThreadKey)
+            .environment(\.activeThreadCwd, activeThreadCwd)
+            .environment(\.locale, locale)
+            .environment(\.colorScheme, colorScheme)
+        )
     }
 
     private func toggleTurnExpansion(_ turn: TranscriptTurn) {
         guard turn.isCollapsedByDefault else { return }
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-            if expandedTurnIDs.contains(turn.id) {
-                expandedTurnIDs.remove(turn.id)
-            } else {
-                expandedTurnIDs.insert(turn.id)
-            }
-        }
-    }
-
-    private func updateDistanceFromBottom(_ distance: CGFloat) {
-        // `clampedDistance` is intentionally not stored: it changed on every
-        // scroll frame, keyboard move and composer-height change, and the only
-        // consumers are the two guarded booleans below. Writing it to @State
-        // invalidated `ConversationMessageList.body` (rebuilding the whole turn
-        // `ForEach`) for a value nothing read.
-        let clampedDistance = max(0, distance)
-        let nextShowButton = clampedDistance > ConversationScrollFollowPolicy.pauseDistance
-        if nextShowButton != showScrollToBottomButton { showScrollToBottomButton = nextShowButton }
-        let nextIsNearBottom = clampedDistance <= Self.nearBottomRestoreDistance
-        if nextIsNearBottom != isNearBottom { isNearBottom = nextIsNearBottom }
-        if isFollowingBottom,
-           ConversationScrollFollowPolicy.shouldPause(
-               isUserInteracting: isUserInteracting,
-               distanceFromBottom: clampedDistance
-           ) {
-            isFollowingBottom = false
-        }
-    }
-
-    private func followBottom(animated: Bool = true) {
-        guard !items.isEmpty else { return }
-        guard animated else {
-            withTransaction(Transaction(animation: nil)) {
-                if ConversationScrollFollowPolicy.shouldUseBottomEdge(layout: scrollObservation.layout) {
-                    scrollPosition.scrollTo(edge: .bottom)
-                } else {
-                    scrollPosition.scrollTo(y: 0)
-                }
-            }
-            return
-        }
-        withAnimation(.easeOut(duration: 0.18)) {
-            scrollPosition.scrollTo(edge: .bottom)
-        }
-    }
-
-    private func scheduleBottomFollow() {
-        guard !scrollObservation.followScheduled else { return }
-        scrollObservation.followScheduled = true
-        let threadScopeID = activeThreadScopeID
-        DispatchQueue.main.async {
-            guard scrollObservation.threadScopeID == threadScopeID else { return }
-            scrollObservation.followScheduled = false
-            guard isFollowingBottom, !isUserInteracting else { return }
-            followBottom(animated: false)
+        if expandedTurnIDs.contains(turn.id) {
+            expandedTurnIDs.remove(turn.id)
+        } else {
+            expandedTurnIDs.insert(turn.id)
         }
     }
 

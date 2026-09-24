@@ -25,6 +25,10 @@ struct ConversationTurnTimeline: View {
         timelineContent
     }
 
+    func renderableRows() -> [ConversationTimelineRowDescriptor] {
+        rowDescriptors
+    }
+
     private var timelineContent: some View {
         let rows = rowDescriptors
         // Hoisted: this used to be a computed property doing an O(n)
@@ -34,7 +38,7 @@ struct ConversationTurnTimeline: View {
 
         return LazyVStack(alignment: .leading, spacing: 10) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                rowView(
+                renderRow(
                     row,
                     isLastRow: index == rows.indices.last,
                     streamingAssistantItemId: streamingItemId
@@ -76,7 +80,7 @@ struct ConversationTurnTimeline: View {
     // Time Profiler showed 44% of main-thread CPU in `outlined destroy` of that
     // nested union; AnyView's per-node diff overhead is cheaper than destroying
     // the union every SwiftUI pass.
-    private func rowView(
+    func renderRow(
         _ row: ConversationTimelineRowDescriptor,
         isLastRow: Bool,
         streamingAssistantItemId: String?
@@ -140,7 +144,7 @@ struct ConversationTurnTimeline: View {
     }
 }
 
-private enum ConversationTimelineRowDescriptor: Identifiable, Equatable {
+enum ConversationTimelineRowDescriptor: Identifiable, Equatable {
     case item(ConversationItem)
     case exploration(id: String, items: [ConversationItem])
     case subagentGroup(id: String, merged: ConversationMultiAgentActionData, sourceItems: [ConversationItem])
