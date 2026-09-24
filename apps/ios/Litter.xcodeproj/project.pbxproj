@@ -69,6 +69,7 @@
 		18E05E61B326B6F0BA4BF241 /* absolutely-light.json in Resources */ = {isa = PBXBuildFile; fileRef = ADE3C405C5BF7CFDD59604A0 /* absolutely-light.json */; };
 		19B4F5707625A7336C99DC88 /* CrossServerTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F39212507F7334160D127E8 /* CrossServerTools.swift */; };
 		19F1A6368F9DECCBA45AB55B /* AppSnapshotObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB8D8E49DD6C1B742C847FA4 /* AppSnapshotObserver.swift */; };
+		1ACD8A21660360C52B807561 /* ConversationScrollLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDEB8A5E557555D61E72E224 /* ConversationScrollLayoutTests.swift */; };
 		1AF5B0CFD0F28F0A7E787A04 /* MessageRenderCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D3FB91329C177A51F198B3 /* MessageRenderCache.swift */; };
 		1B6CB8BC9F613C565C3F66A7 /* kitty-litter-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 1F375FD1856F2663DBEA699F /* kitty-litter-light.json */; };
 		1BFD0FD1F466901FB05DACBD /* LitterLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 2DF6931F753DFD2AB67F62DC /* LitterLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -1073,6 +1074,7 @@
 		CB972757270C09470E490121 /* EndVoiceSessionIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndVoiceSessionIntent.swift; sourceTree = "<group>"; };
 		CC23186BC2EA0520D9532ED3 /* AppThreadSnapshot+Runtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppThreadSnapshot+Runtime.swift"; sourceTree = "<group>"; };
 		CD02327C52F16587C973B70F /* ConversationWarmupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWarmupCoordinator.swift; sourceTree = "<group>"; };
+		CDEB8A5E557555D61E72E224 /* ConversationScrollLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationScrollLayoutTests.swift; sourceTree = "<group>"; };
 		CFF9DBA865CCBB3308B5667D /* light-plus.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "light-plus.json"; sourceTree = "<group>"; };
 		D0453F9A958E06582AE93013 /* DiffRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffRendering.swift; sourceTree = "<group>"; };
 		D0B91C694EA050F1FE6738A7 /* ThemeDefinitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeDefinitionTests.swift; sourceTree = "<group>"; };
@@ -1243,6 +1245,7 @@
 				77969543FA36FEA8B621A3B9 /* ConversationDisplayPreferenceTests.swift */,
 				B0C1A0569B4424123A37B0DA /* ConversationPlanSemanticsTests.swift */,
 				B66383694E80CDCBCF582C67 /* ConversationScreenModelTests.swift */,
+				CDEB8A5E557555D61E72E224 /* ConversationScrollLayoutTests.swift */,
 				8A6C1D1C48E7406BAD30F901 /* HexColorTests.swift */,
 				018779F7529B6CAAC3A2B896 /* HomeDashboardSupportTests.swift */,
 				F5F26ED2D3C223D3FD12ACB9 /* InteractionTimingTests.swift */,
@@ -2275,6 +2278,7 @@
 				2F28DA245F84E87318A4D7E4 /* ConversationDisplayPreferenceTests.swift in Sources */,
 				9C44ABDBA2399DD2C0B1E9E2 /* ConversationPlanSemanticsTests.swift in Sources */,
 				F1535DE46C8E5A530A8C131E /* ConversationScreenModelTests.swift in Sources */,
+				1ACD8A21660360C52B807561 /* ConversationScrollLayoutTests.swift in Sources */,
 				58547E503761BE6E1C2086C9 /* HexColorTests.swift in Sources */,
 				6EF7AFD103A68CDEA1A94612 /* HomeDashboardSupportTests.swift in Sources */,
 				7881749EF05190C237EFF36B /* InteractionTimingTests.swift in Sources */,

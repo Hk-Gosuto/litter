@@ -573,9 +573,20 @@ struct RateLimitBadgeView: View, Equatable {
 }
 
 
-private struct ConversationScrollLayout: Equatable {
+struct ConversationScrollLayout: Equatable {
     let contentHeight: CGFloat
     let viewportHeight: CGFloat
+
+    var bottomOffset: CGFloat? {
+        guard contentHeight.isFinite, viewportHeight.isFinite, viewportHeight > 0 else { return nil }
+        return max(0, contentHeight - viewportHeight)
+    }
+}
+
+@MainActor
+private final class ConversationScrollLayoutCache {
+    var layout: ConversationScrollLayout?
+    var followScheduled = false
 }
 
 private struct ConversationMessageList: View {
@@ -602,6 +613,7 @@ private struct ConversationMessageList: View {
     @State private var isNearBottom = true
     @State private var isFollowingBottom = true
     @State private var scrollPosition = ScrollPosition()
+    @State private var scrollLayout = ConversationScrollLayoutCache()
     @State private var showScrollToBottomButton = false
     @State private var waitingForDataExpired = false
     @State private var pinchBaseStep: Int?
@@ -689,62 +701,10 @@ private struct ConversationMessageList: View {
     var body: some View {
         let _ = PerfTracker.event("ConversationMessageList.body")
         let turns = mergedRenderableTurns
-        let lastTurnID = turns.last?.id
         GeometryReader { viewport in
             ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(turns) { turn in
-                                let isLastTurn = turn.id == lastTurnID
-                                ConversationTurnRow(
-                                    turn: turn,
-                                    isExpanded: isTurnExpanded(turn),
-                                    canCollapse: turn.isCollapsedByDefault,
-                                    isLastTurn: isLastTurn,
-                                    viewportHeight: viewport.size.height,
-                                    showTypingIndicator: isLastTurn && {
-                                        if case .thinking = threadStatus { return true }
-                                        return false
-                                    }(),
-                                    serverId: activeThreadKey.serverId,
-                                    originThreadId: activeThreadKey.threadId,
-                                    agentDirectoryVersion: agentDirectoryVersion,
-                                    messageActionsDisabled: messageActionsDisabled,
-                                    onToggleExpansion: {
-                                        toggleTurnExpansion(turn)
-                                    },
-                                    resolveTargetLabel: resolveTargetLabel,
-                                    resolveThreadKey: resolveThreadKey,
-                                    resolveLiveStatus: resolveLiveStatus,
-                                    onWidgetPrompt: onWidgetPrompt,
-                                    onEditUserItem: onEditUserItem,
-                                    onForkFromUserItem: onForkFromUserItem,
-                                    onOpenConversation: onOpenConversation
-                                )
-                                .equatable()
-                                .turnDebugOverlay(turnId: turn.id)
-                            }
-
-                        }
-                        .scrollTargetLayout()
-                        .frame(maxWidth: LitterPlatform.isRegularSurface(horizontalSizeClass: horizontalSizeClass) ? 760 : .infinity)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.horizontal, 16)
-                        // Navigation owns the safe-area header. This keeps
-                        // the first message below it without wasting the
-                        // extra blank line that made an open chat feel
-                        // disconnected from its content.
-                        .padding(.top, topInset + 40)
-                        .animation(.spring(response: 0.22, dampingFraction: 0.9), value: textSizeStep)
-
-                        if isWaitingForData {
-                            ConversationLoadingIndicator(label: "Loading conversation...")
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 40)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .top)
+                ScrollView(.vertical) {
+                    transcriptContent(turns: turns, viewportSize: viewport.size)
                 }
                 .id(activeThreadScopeID)
                 .scrollIndicators(.hidden)
@@ -764,12 +724,13 @@ private struct ConversationMessageList: View {
                         viewportHeight: geometry.containerSize.height
                     )
                 } action: { oldLayout, newLayout in
-                    // Keyboard/composer resizing can hide the last message even
-                    // when the transcript's content height does not change.
-                    guard newLayout != oldLayout, isFollowingBottom else { return }
-                    followBottom()
+                    guard newLayout != oldLayout else { return }
+                    scrollLayout.layout = newLayout
+                    guard isFollowingBottom, newLayout.bottomOffset != oldLayout.bottomOffset else { return }
+                    scheduleBottomFollow()
                 }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.topLeading, for: .alignment)
                 .scrollPosition($scrollPosition)
                 .simultaneousGesture(
                     MagnificationGesture(minimumScaleDelta: 0.03)
@@ -792,6 +753,7 @@ private struct ConversationMessageList: View {
                 }
                 .onChange(of: activeThreadKey) {
                     scrollPosition = ScrollPosition()
+                    scrollLayout.layout = nil
                     isFollowingBottom = true
                     isNearBottom = true
                     showScrollToBottomButton = false
@@ -807,17 +769,8 @@ private struct ConversationMessageList: View {
                     try? await Task.sleep(for: .seconds(1))
                     waitingForDataExpired = true
                 }
-                .onChange(of: items) { oldItems, newItems in
+                .onChange(of: items) { _, _ in
                     syncTranscriptTurns()
-                    // The send action can request the bottom position while the
-                    // transcript is still empty. ScrollPosition then resolves
-                    // that request against the pre-message layout and keeps the
-                    // first turn at a stale offset until the user drags. Give
-                    // the first content insertion two post-layout passes to
-                    // settle, while keeping the user's manual scroll choice.
-                    if oldItems.isEmpty, !newItems.isEmpty, isFollowingBottom {
-                        requestDeferredBottomFollowAfterFirstItem()
-                    }
                 }
                 .onChange(of: olderTurnsCursor) { oldCursor, newCursor in
                     guard oldCursor != newCursor else { return }
@@ -837,7 +790,7 @@ private struct ConversationMessageList: View {
                 .onChange(of: sendScrollToken) {
                     isFollowingBottom = true
                     isNearBottom = true
-                    followBottom()
+                    followBottom(animated: false)
                 }
                 .onChange(of: threadStatus) { oldStatus, _ in
                     syncTranscriptTurns()
@@ -873,6 +826,57 @@ private struct ConversationMessageList: View {
         }
     }
 
+    private func transcriptContent(turns: [TranscriptTurn], viewportSize: CGSize) -> some View {
+        let lastTurnID = turns.last?.id
+        return VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                ForEach(turns) { turn in
+                    turnRow(turn, lastTurnID: lastTurnID, viewportHeight: viewportSize.height)
+                }
+            }
+            .scrollTargetLayout()
+            .frame(maxWidth: LitterPlatform.isRegularSurface(horizontalSizeClass: horizontalSizeClass) ? 760 : .infinity)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 16)
+            .padding(.top, topInset + 40)
+            .animation(.spring(response: 0.22, dampingFraction: 0.9), value: textSizeStep)
+
+            if isWaitingForData {
+                ConversationLoadingIndicator(label: "Loading conversation...")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+            }
+        }
+        .frame(width: viewportSize.width)
+        .frame(minHeight: viewportSize.height, alignment: .top)
+    }
+
+    private func turnRow(_ turn: TranscriptTurn, lastTurnID: String?, viewportHeight: CGFloat) -> some View {
+        let isLastTurn = turn.id == lastTurnID
+        return ConversationTurnRow(
+            turn: turn,
+            isExpanded: isTurnExpanded(turn),
+            canCollapse: turn.isCollapsedByDefault,
+            isLastTurn: isLastTurn,
+            viewportHeight: viewportHeight,
+            showTypingIndicator: isLastTurn && isStreaming,
+            serverId: activeThreadKey.serverId,
+            originThreadId: activeThreadKey.threadId,
+            agentDirectoryVersion: agentDirectoryVersion,
+            messageActionsDisabled: messageActionsDisabled,
+            onToggleExpansion: { toggleTurnExpansion(turn) },
+            resolveTargetLabel: resolveTargetLabel,
+            resolveThreadKey: resolveThreadKey,
+            resolveLiveStatus: resolveLiveStatus,
+            onWidgetPrompt: onWidgetPrompt,
+            onEditUserItem: onEditUserItem,
+            onForkFromUserItem: onForkFromUserItem,
+            onOpenConversation: onOpenConversation
+        )
+        .equatable()
+        .turnDebugOverlay(turnId: turn.id)
+    }
+
     private func isTurnExpanded(_ turn: TranscriptTurn) -> Bool {
         !turn.isCollapsedByDefault || expandedTurnIDs.contains(turn.id)
     }
@@ -902,28 +906,24 @@ private struct ConversationMessageList: View {
     }
 
     private func followBottom(animated: Bool = true) {
+        guard let offset = scrollLayout.layout?.bottomOffset else { return }
         guard animated else {
-            scrollPosition.scrollTo(edge: .bottom)
+            scrollPosition.scrollTo(y: offset)
             return
         }
         withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
-            scrollPosition.scrollTo(edge: .bottom)
+            scrollPosition.scrollTo(y: offset)
         }
     }
 
-    private func requestDeferredBottomFollowAfterFirstItem() {
+    private func scheduleBottomFollow() {
+        guard !scrollLayout.followScheduled else { return }
+        scrollLayout.followScheduled = true
         let threadScopeID = activeThreadScopeID
         DispatchQueue.main.async {
+            scrollLayout.followScheduled = false
             guard threadScopeID == activeThreadScopeID, isFollowingBottom else { return }
             followBottom(animated: false)
-
-            // Markdown and live content can finish measuring one frame later.
-            // A second pass catches that height without affecting a thread the
-            // user may have navigated to in the meantime.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                guard threadScopeID == activeThreadScopeID, isFollowingBottom else { return }
-                followBottom()
-            }
         }
     }
 
