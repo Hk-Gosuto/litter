@@ -79,16 +79,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.sigkitten.litter.android.R
 import com.litter.android.state.ChatGPTOAuth
-import com.litter.android.state.ChatGPTOAuthTokenStore
 import com.litter.android.state.DebugSettings
 import com.litter.android.state.MessageRecorder
-import com.litter.android.state.OpenAIApiKeyStore
 import com.litter.android.state.PetOverlayController
 import com.litter.android.state.SavedServer
 import com.litter.android.state.SavedServerStore
@@ -119,7 +116,6 @@ import com.litter.android.util.LLog
 import kotlinx.coroutines.launch
 import uniffi.codex_mobile_client.Account
 import uniffi.codex_mobile_client.AppServerSnapshot
-import uniffi.codex_mobile_client.AppLoginAccountRequest
 import uniffi.codex_mobile_client.AppPetSummary
 
 /**
@@ -151,42 +147,51 @@ fun SettingsSheet(
         )
     }
 
+    // Pets and Debug open from the Advanced page, so they return there
+    // (unless Settings was opened straight onto Pets).
+    val backToAdvanced = {
+        subScreen = if (initialSubScreen == SettingsStartDestination.Pets) null else SettingsSubScreen.Advanced
+    }
     when (subScreen) {
         SettingsSubScreen.Harnesses -> HarnessSettingsScreen(onBack = { subScreen = null })
         SettingsSubScreen.Appearance -> AppearanceScreen(onBack = { subScreen = null })
-        SettingsSubScreen.Experimental -> ExperimentalScreen(onBack = { subScreen = null })
-        SettingsSubScreen.Pets -> PetsScreen(onBack = { subScreen = null })
+        SettingsSubScreen.Advanced -> AdvancedScreen(
+            onBack = { subScreen = null },
+            onOpenPets = { subScreen = SettingsSubScreen.Pets },
+            onOpenDebug = { subScreen = SettingsSubScreen.Debug },
+            onOpenApps = onOpenApps?.let { openApps ->
+                {
+                    onDismiss()
+                    openApps()
+                }
+            },
+        )
+        SettingsSubScreen.Pets -> PetsScreen(onBack = backToAdvanced)
         SettingsSubScreen.TipJar -> TipJarScreen(onBack = { subScreen = null })
-        SettingsSubScreen.Debug -> DebugScreen(onBack = { subScreen = null })
+        SettingsSubScreen.Debug -> DebugScreen(onBack = { subScreen = SettingsSubScreen.Advanced })
         null -> SettingsTopLevel(
             onDismiss = onDismiss,
             onOpenHarnesses = { subScreen = SettingsSubScreen.Harnesses },
             onOpenAppearance = { subScreen = SettingsSubScreen.Appearance },
-            onOpenExperimental = { subScreen = SettingsSubScreen.Experimental },
-            onOpenPets = { subScreen = SettingsSubScreen.Pets },
+            onOpenAdvanced = { subScreen = SettingsSubScreen.Advanced },
             onOpenTipJar = { subScreen = SettingsSubScreen.TipJar },
-            onOpenDebug = { subScreen = SettingsSubScreen.Debug },
             onOpenAccount = onOpenAccount,
-            onOpenApps = onOpenApps,
         )
     }
 }
 
 enum class SettingsStartDestination { TopLevel, Pets }
 
-private enum class SettingsSubScreen { Harnesses, Appearance, Experimental, Pets, TipJar, Debug }
+private enum class SettingsSubScreen { Harnesses, Appearance, Advanced, Pets, TipJar, Debug }
 
 @Composable
 private fun SettingsTopLevel(
     onDismiss: () -> Unit,
     onOpenHarnesses: () -> Unit,
     onOpenAppearance: () -> Unit,
-    onOpenExperimental: () -> Unit,
-    onOpenPets: () -> Unit,
+    onOpenAdvanced: () -> Unit,
     onOpenTipJar: () -> Unit,
-    onOpenDebug: () -> Unit,
     onOpenAccount: (serverId: String) -> Unit,
-    onOpenApps: (() -> Unit)?,
 ) {
     val appModel = LocalAppModel.current
     val context = LocalContext.current
@@ -213,8 +218,8 @@ private fun SettingsTopLevel(
             .testTag("settings.content")
             .fillMaxWidth()
             .imePadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         // Title
         item {
@@ -448,6 +453,62 @@ private fun SettingsTopLevel(
             }
         }
 
+        // ── Connections ──
+        item { SectionHeader("Connections") }
+        item {
+            if (currentServer != null) {
+                val accountStatus = when (val account = currentServer!!.account) {
+                    is Account.Chatgpt -> account.email.ifEmpty { "ChatGPT account" }
+                    is Account.ApiKey -> "OpenAI API key"
+                    null -> "Not signed in"
+                }
+                SettingsRow(
+                    label = "Account",
+                    subtitle = "${currentServer!!.displayName} · $accountStatus",
+                    trailing = {
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            null,
+                            tint = LitterQuiet.meta,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    onClick = { onOpenAccount(currentServer!!.serverId) },
+                )
+            } else {
+                SettingsRow(label = "Account", subtitle = "Connect a computer first")
+            }
+        }
+        item { NavRow(Icons.Default.Computer, "Harnesses", onOpenHarnesses) }
+
+        // ── Interface ──
+        item { SectionHeader("Interface") }
+        item {
+            NavRow(icon = Icons.Default.Palette, label = "Appearance", onClick = onOpenAppearance)
+        }
+        item {
+            SettingsRow(
+                label = "Collapse earlier turns",
+                subtitle = "Long conversations collapse automatically",
+                trailing = {
+                    Switch(
+                        checked = collapseTurns,
+                        onCheckedChange = { ConversationPrefs.setCollapseTurns(context, it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
+                    )
+                },
+            )
+        }
+
+        // ── More ──
+        item { SectionHeader("More") }
+        item {
+            NavRow(icon = Icons.Default.Science, label = "Advanced", onClick = onOpenAdvanced)
+        }
+        item {
+            NavRow(icon = Icons.Default.Pets, label = "Tip the Kitty", onClick = onOpenTipJar)
+        }
+
         item { Spacer(Modifier.height(32.dp)) }
     }
 
@@ -607,31 +668,48 @@ private fun ServerSettingsRow(
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
-    ) {
+    val healthy =
+        server.transportState == AppServerTransportState.CONNECTED &&
+            server.statusLabel == server.transportState.displayLabel
+    Box(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .heightIn(min = LitterSpacing.row)
+                .padding(vertical = LitterSpacing.xs),
         ) {
-            Text(if (server.isLocal) "📱" else "🖥", fontSize = 16.sp)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(server.displayName, color = LitterTheme.textPrimary, fontSize = 13.sp)
-                Text(
-                    "${server.statusLabel} · ${server.connectionModeLabel}",
-                    color = server.statusColor,
-                    fontSize = 11.sp,
-                )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(server.displayName, style = LitterType.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row {
+                    Text(metaLine(server.connectionModeLabel), style = LitterType.meta)
+                    // Same one-word states as the Home switcher; healthy shows
+                    // nothing, other unhealthy states keep their status label.
+                    val link = com.litter.android.ui.home.serverLinkLabel(
+                        server,
+                        com.litter.android.ui.home.rememberLaunchWindowOpen(),
+                    )
+                    if (link != null) {
+                        Text(" · ", style = LitterType.meta)
+                        Text(
+                            link.text,
+                            style = LitterType.meta,
+                            color = link.color,
+                            maxLines = 1,
+                        )
+                    } else if (!healthy) {
+                        Text(" · ", style = LitterType.meta)
+                        Text(
+                            server.statusLabel.lowercase(),
+                            style = LitterType.meta,
+                            color = server.statusColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
-            IconButton(
-                onClick = { showMenu = true },
-                modifier = Modifier.size(28.dp),
-            ) {
+            IconButton(onClick = { showMenu = true }) {
                 Icon(
                     Icons.Default.MoreVert,
                     contentDescription = stringResource(R.string.a11y_server_actions),
@@ -970,13 +1048,14 @@ private fun ServerEditSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = LitterTheme.background,
+        containerColor = LitterQuiet.raised,
+        shape = LitterRadius.sheetShape,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .imePadding()
-                .padding(16.dp),
+                .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Header
@@ -1007,26 +1086,26 @@ private fun ServerEditSheet(
                         Text(
                             stringResource(R.string.settings_pairing_metadata_help),
                             color = LitterTheme.textSecondary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                         )
                     } else if (server.isLocal) {
                         Text(
                             stringResource(R.string.settings_local_runtime_managed),
                             color = LitterTheme.textSecondary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                         )
                     } else if (connectionMode == ServerConnectionMode.SLINGSHOT) {
                         Text(
                             stringResource(R.string.settings_connected_computer_help),
                             color = LitterTheme.textSecondary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                         )
                     } else {
                         // Mode selector
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                                .background(LitterQuiet.raised, LitterRadius.raisedShape)
                                 .padding(4.dp),
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
@@ -1041,7 +1120,7 @@ private fun ServerEditSheet(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (selected) LitterTheme.accent else Color.Transparent)
+                                        .background(if (selected) LitterTheme.textPrimary else Color.Transparent)
                                         .clickable { connectionMode = mode }
                                         .padding(vertical = 9.dp),
                                     contentAlignment = Alignment.Center,
@@ -1120,7 +1199,7 @@ private fun ServerEditSheet(
                             Text(
                                 stringResource(R.string.settings_manual_codex_warning),
                                 color = LitterTheme.textMuted,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                         }
@@ -1130,7 +1209,7 @@ private fun ServerEditSheet(
                 item {
                     if (isReconnecting) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                            CircularProgressIndicator(color = LitterTheme.accent, strokeWidth = 2.dp)
+                            CircularProgressIndicator(color = LitterTheme.textPrimary, strokeWidth = 2.dp)
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1143,7 +1222,7 @@ private fun ServerEditSheet(
                                         onSave()
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = LitterTheme.accent),
+                                colors = ButtonDefaults.buttonColors(containerColor = LitterTheme.textPrimary),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(stringResource(R.string.common_save), color = LitterTheme.onAccentStrong)
@@ -1184,7 +1263,7 @@ private fun ServerEditSheet(
                                             }
                                         }
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = LitterTheme.accentStrong),
+                                    colors = ButtonDefaults.buttonColors(containerColor = LitterTheme.textPrimary),
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     Text(
@@ -1254,12 +1333,12 @@ private fun AppearanceScreen(onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .imePadding()
-            .padding(16.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
     ) {
         // Nav bar
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.textPrimary)
             }
             Spacer(Modifier.weight(1f))
             Text(stringResource(R.string.appearance_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
@@ -1282,7 +1361,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                 Text(
                     stringResource(R.string.settings_appearance_help),
                     color = LitterTheme.textMuted,
-                    fontSize = 11.sp,
+                    fontSize = 13.sp,
                     modifier = Modifier.padding(start = 4.dp),
                 )
             }
@@ -1292,7 +1371,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
             item {
                 Column(
                     Modifier.fillMaxWidth()
-                        .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                        .background(LitterQuiet.raised, LitterRadius.raisedShape)
                         .padding(12.dp),
                 ) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1303,7 +1382,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("A", color = LitterTheme.textMuted, fontSize = 11.sp)
+                        Text("A", color = LitterTheme.textMuted, fontSize = 13.sp)
                         Slider(
                             value = textSizeStep,
                             onValueChange = {
@@ -1312,7 +1391,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                             },
                             valueRange = 0f..6f, steps = 5,
                             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                            colors = SliderDefaults.colors(thumbColor = LitterTheme.accent, activeTrackColor = LitterTheme.accent),
+                            colors = SliderDefaults.colors(thumbColor = LitterTheme.textPrimary, activeTrackColor = LitterTheme.textPrimary),
                         )
                         Text("A", color = LitterTheme.textMuted, fontSize = 18.sp)
                     }
@@ -1328,7 +1407,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                        .background(LitterQuiet.raised, LitterRadius.raisedShape)
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1366,7 +1445,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                             Text(
                                 wallpaperError!!,
                                 color = LitterTheme.danger,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                             )
                         }
                     }
@@ -1410,11 +1489,11 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                                 .padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("✓", color = LitterTheme.success, fontSize = 12.sp)
+                            Text("✓", color = LitterTheme.success, fontSize = 13.sp)
                             Spacer(Modifier.width(6.dp))
                             Text("rg 'TODO: fix later' --count", color = LitterTheme.toolCallCommand, fontFamily = BerkeleyMono, fontSize = (previewFontSize.value - 2).sp)
                             Spacer(Modifier.weight(1f))
-                            Text("0.3s", color = LitterTheme.textMuted, fontSize = 10.sp)
+                            Text("0.3s", color = LitterTheme.textMuted, fontSize = 13.sp)
                         }
                         // Assistant bubble
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1428,7 +1507,7 @@ private fun AppearanceScreen(onBack: () -> Unit) {
                                 Text(
                                     "PYTHON",
                                     color = LitterTheme.textSecondary,
-                                    fontSize = 10.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                 )
                                 Box(
@@ -1493,7 +1572,8 @@ private fun AppearanceScreen(onBack: () -> Unit) {
         ModalBottomSheet(
             onDismissRequest = { showThemePicker = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = LitterTheme.background,
+            containerColor = LitterQuiet.raised,
+            shape = LitterRadius.sheetShape,
         ) {
             val themes = if (type == LitterColorThemeType.DARK) LitterThemeManager.darkThemes else LitterThemeManager.lightThemes
             val selectedSlug = if (type == LitterColorThemeType.DARK) LitterThemeManager.darkTheme.slug else LitterThemeManager.lightTheme.slug
@@ -1541,7 +1621,7 @@ private fun ThemePickerContent(
         Modifier
             .fillMaxWidth()
             .imePadding()
-            .padding(16.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
     ) {
         // Title + Done
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1557,7 +1637,6 @@ private fun ThemePickerContent(
         Row(
             Modifier.fillMaxWidth()
                 .background(LitterTheme.surface.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-                .border(1.dp, LitterTheme.border.copy(alpha = 0.85f), RoundedCornerShape(10.dp))
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1566,7 +1645,7 @@ private fun ThemePickerContent(
             BasicTextField(
                 value = searchQuery, onValueChange = { searchQuery = it },
                 textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = 14.sp),
-                cursorBrush = SolidColor(LitterTheme.accent),
+                cursorBrush = SolidColor(LitterTheme.textPrimary),
                 modifier = Modifier.fillMaxWidth(),
                 decorationBox = { inner ->
                     if (searchQuery.isEmpty()) Text(stringResource(R.string.appearance_search_themes), color = LitterTheme.textMuted, fontSize = 14.sp)
@@ -1585,26 +1664,21 @@ private fun ThemePickerContent(
                 Text(stringResource(R.string.appearance_no_matching_themes), color = LitterTheme.textPrimary, fontSize = 14.sp)
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn {
                 items(filtered, key = { it.slug }) { entry ->
                     val isSelected = entry.slug == selectedSlug
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
-                            .background(LitterTheme.surface.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
-                            .border(
-                                1.dp,
-                                if (isSelected) LitterTheme.accent.copy(alpha = 0.6f) else LitterTheme.border.copy(alpha = 0.85f),
-                                RoundedCornerShape(12.dp),
-                            )
+                            .heightIn(min = LitterSpacing.touch + LitterSpacing.xs)
                             .clickable { onSelect(entry.slug) }
-                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                            .padding(vertical = LitterSpacing.xs),
                     ) {
                         ThemePreviewBadge(entry)
-                        Spacer(Modifier.width(10.dp))
-                        Text(entry.name, color = LitterTheme.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(LitterSpacing.sm))
+                        Text(entry.name, style = LitterType.title, modifier = Modifier.weight(1f))
                         if (isSelected) {
-                            Icon(Icons.Default.Check, null, tint = LitterTheme.accent, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Check, "Selected", tint = LitterQuiet.text, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -1618,7 +1692,7 @@ private fun ThemePickerContent(
 private fun ThemePreviewBadge(entry: LitterThemeIndexEntry) {
     val bg = try { Color(android.graphics.Color.parseColor(entry.backgroundHex)) } catch (_: Exception) { LitterTheme.surface }
     val fg = try { Color(android.graphics.Color.parseColor(entry.foregroundHex)) } catch (_: Exception) { LitterTheme.textPrimary }
-    val accent = try { Color(android.graphics.Color.parseColor(entry.accentHex)) } catch (_: Exception) { LitterTheme.accent }
+    val accent = try { Color(android.graphics.Color.parseColor(entry.accentHex)) } catch (_: Exception) { LitterTheme.textPrimary }
 
     Box {
         Box(
@@ -1627,7 +1701,7 @@ private fun ThemePreviewBadge(entry: LitterThemeIndexEntry) {
                 .border(0.5.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(5.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Aa", color = fg, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = BerkeleyMono)
+            Text("Aa", color = fg, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = BerkeleyMono)
         }
         Spacer(
             Modifier.size(6.dp).clip(CircleShape).background(accent)
@@ -1641,7 +1715,7 @@ private fun ThemePickerButton(entry: LitterThemeIndexEntry?, onClick: () -> Unit
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
-            .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .background(LitterQuiet.raised, LitterRadius.raisedShape)
             .clickable(onClick = onClick)
             .padding(12.dp),
     ) {
@@ -1652,7 +1726,7 @@ private fun ThemePickerButton(entry: LitterThemeIndexEntry?, onClick: () -> Unit
         } else {
             Text(stringResource(R.string.appearance_no_themes), color = LitterTheme.textMuted, fontSize = 14.sp, modifier = Modifier.weight(1f))
         }
-        Text("⇅", color = LitterTheme.textMuted, fontSize = 12.sp)
+        Text("⇅", color = LitterTheme.textMuted, fontSize = 13.sp)
     }
 }
 
@@ -1664,7 +1738,7 @@ private fun AppearanceModePicker(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .background(LitterQuiet.raised, LitterRadius.raisedShape)
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1674,15 +1748,15 @@ private fun AppearanceModePicker(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSelected) LitterTheme.accent else Color.Transparent)
+                    .background(if (isSelected) LitterTheme.textPrimary else Color.Transparent)
                     .clickable { onSelect(mode) }
                     .padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = mode.displayName,
-                    color = if (isSelected) LitterTheme.onAccentStrong else LitterTheme.textSecondary,
-                    fontSize = 12.sp,
+                    color = if (isSelected) LitterTheme.background else LitterTheme.textSecondary,
+                    fontSize = 13.sp,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                 )
             }
@@ -1743,19 +1817,19 @@ private fun PetsScreen(onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .imePadding()
-            .padding(16.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.textPrimary)
                 }
                 Spacer(Modifier.weight(1f))
                 Text(stringResource(R.string.pet_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { refresh() }, enabled = selectedServerId.isNotBlank() && !loading) {
-                    Icon(Icons.Default.Refresh, "Refresh", tint = LitterTheme.accent)
+                    Icon(Icons.Default.Refresh, "Refresh", tint = LitterTheme.textPrimary)
                 }
             }
         }
@@ -1770,7 +1844,7 @@ private fun PetsScreen(onBack: () -> Unit) {
                     Switch(
                         checked = PetOverlayController.visible,
                         onCheckedChange = { PetOverlayController.setVisible(context, it) },
-                        colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.accent),
+                        colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
                     )
                 },
             )
@@ -1783,7 +1857,7 @@ private fun PetsScreen(onBack: () -> Unit) {
                 } else {
                     stringResource(R.string.settings_overlay_needed)
                 },
-                icon = { Icon(Icons.Default.Widgets, null, tint = LitterTheme.accent, modifier = Modifier.size(18.dp)) },
+                icon = { Icon(Icons.Default.Widgets, null, tint = LitterTheme.textPrimary, modifier = Modifier.size(18.dp)) },
                 trailing = {
                     Switch(
                         checked = PetOverlayController.overlayEnabled,
@@ -1793,7 +1867,7 @@ private fun PetsScreen(onBack: () -> Unit) {
                                 PetOverlayController.requestOverlayPermission(context)
                             }
                         },
-                        colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.accent),
+                        colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
                     )
                 },
                 onClick = if (!overlayPermissionGranted) {
@@ -1814,7 +1888,7 @@ private fun PetsScreen(onBack: () -> Unit) {
                     subtitle = server.connectionModeLabel,
                     trailing = {
                         if (server.serverId == selectedServerId) {
-                            Icon(Icons.Default.Check, null, tint = LitterTheme.accentStrong, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Check, null, tint = LitterTheme.textPrimary, modifier = Modifier.size(18.dp))
                         }
                     },
                     onClick = { selectedServerId = server.serverId },
@@ -1832,11 +1906,11 @@ private fun PetsScreen(onBack: () -> Unit) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                            .background(LitterQuiet.raised, LitterRadius.raisedShape)
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = LitterTheme.accent, strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = LitterTheme.textPrimary, strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(stringResource(R.string.pet_loading), color = LitterTheme.textSecondary, fontSize = 13.sp)
                     }
@@ -1862,9 +1936,9 @@ private fun PetsScreen(onBack: () -> Unit) {
                         subtitle = pet.validationError ?: pet.description ?: pet.sourcePath,
                         trailing = {
                             if (PetOverlayController.isLoading && selected) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = LitterTheme.accent, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = LitterTheme.textPrimary, strokeWidth = 2.dp)
                             } else if (selected) {
-                                Icon(Icons.Default.Check, null, tint = LitterTheme.accentStrong, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Check, null, tint = LitterTheme.textPrimary, modifier = Modifier.size(18.dp))
                             }
                         },
                         onClick = if (pet.hasValidSpritesheet) {
@@ -1890,11 +1964,16 @@ private fun PetsScreen(onBack: () -> Unit) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Experimental Sub-Screen (matches iOS ExperimentalFeaturesView)
+// Advanced Sub-Screen (matches the iOS Settings "Advanced" page)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 @Composable
-private fun ExperimentalScreen(onBack: () -> Unit) {
+private fun AdvancedScreen(
+    onBack: () -> Unit,
+    onOpenPets: () -> Unit,
+    onOpenDebug: () -> Unit,
+    onOpenApps: (() -> Unit)?,
+) {
     val context = LocalContext.current
     val features = remember { LitterFeature.entries }
 
@@ -1902,12 +1981,12 @@ private fun ExperimentalScreen(onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .imePadding()
-            .padding(16.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
     ) {
         // Nav bar
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.textPrimary)
             }
             Spacer(Modifier.weight(1f))
             Text(stringResource(R.string.experimental_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
@@ -1915,30 +1994,85 @@ private fun ExperimentalScreen(onBack: () -> Unit) {
             Spacer(Modifier.width(48.dp))
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        SectionHeader("Features")
-        Column(
-            Modifier.fillMaxWidth().background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
-        ) {
-            features.forEachIndexed { idx, feature ->
-                val enabled = ExperimentalFeatures.isEnabled(feature)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(feature.displayName, color = LitterTheme.textPrimary, fontSize = 14.sp)
-                        Text(feature.description, color = LitterTheme.textSecondary, fontSize = 11.sp)
-                    }
-                    Switch(
-                        checked = enabled,
-                        onCheckedChange = { ExperimentalFeatures.setEnabled(context, feature, it) },
-                        colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.accentStrong),
-                    )
-                }
-                if (idx < features.lastIndex) HorizontalDivider(color = LitterTheme.divider)
+        LazyColumn(Modifier.fillMaxWidth()) {
+            item { SectionHeader("Experimental") }
+            items(features, key = { it.name }) { feature ->
+                SettingsRow(
+                    label = feature.displayName,
+                    subtitle = feature.description,
+                    trailing = {
+                        Switch(
+                            checked = ExperimentalFeatures.isEnabled(feature),
+                            onCheckedChange = { ExperimentalFeatures.setEnabled(context, feature, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
+                        )
+                    },
+                )
             }
+            item {
+                Text(
+                    "Experimental features may be unstable or change without notice.",
+                    style = LitterType.meta,
+                    modifier = Modifier.padding(top = LitterSpacing.xxs),
+                )
+            }
+
+            item { SectionHeader("Extras") }
+            item {
+                SettingsRow(
+                    label = "Wake Pet",
+                    subtitle = PetOverlayController.selectedPet?.displayName ?: "Choose a Codex pet",
+                    trailing = {
+                        Switch(
+                            checked = PetOverlayController.visible,
+                            onCheckedChange = { PetOverlayController.setVisible(context, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
+                        )
+                    },
+                    onClick = onOpenPets,
+                )
+            }
+            if (onOpenApps != null) {
+                item { NavRow(icon = Icons.Default.Widgets, label = "Saved Apps", onClick = onOpenApps) }
+            }
+            item {
+                SettingsRow(
+                    label = "Local Studio",
+                    subtitle = "localstudio.ai",
+                    trailing = {
+                        Icon(
+                            Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = null,
+                            tint = LitterQuiet.meta,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
+                    onClick = {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("https://localstudio.ai")),
+                        )
+                    },
+                )
+            }
+
+            item { SectionHeader("Debug") }
+            item {
+                SettingsRow(
+                    label = "Debug mode",
+                    subtitle = "Show debug controls in conversations",
+                    trailing = {
+                        Switch(
+                            checked = DebugSettings.enabled,
+                            onCheckedChange = { DebugSettings.setEnabled(context, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
+                        )
+                    },
+                )
+            }
+            if (DebugSettings.enabled) {
+                item { NavRow(icon = Icons.Default.Science, label = "Debug Settings", onClick = onOpenDebug) }
+            }
+            item { Spacer(Modifier.height(32.dp)) }
         }
         Spacer(Modifier.height(8.dp))
         Text(stringResource(R.string.experimental_warning), color = LitterTheme.textMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
@@ -1957,12 +2091,12 @@ private fun DebugScreen(onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .imePadding()
-            .padding(16.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
     ) {
         // Nav bar
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.accent)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LitterTheme.textPrimary)
             }
             Spacer(Modifier.weight(1f))
             Text(stringResource(R.string.debug_title), color = LitterTheme.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
@@ -1974,7 +2108,7 @@ private fun DebugScreen(onBack: () -> Unit) {
 
         SectionHeader("Rendering")
         Column(
-            Modifier.fillMaxWidth().background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+            Modifier.fillMaxWidth().background(LitterQuiet.raised, LitterRadius.raisedShape),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1987,7 +2121,7 @@ private fun DebugScreen(onBack: () -> Unit) {
                 Switch(
                     checked = DebugSettings.disableMarkdown,
                     onCheckedChange = { DebugSettings.setDisableMarkdown(context, it) },
-                    colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.accentStrong),
+                    colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
                 )
             }
             HorizontalDivider(color = LitterTheme.divider)
@@ -2002,7 +2136,7 @@ private fun DebugScreen(onBack: () -> Unit) {
                 Switch(
                     checked = DebugSettings.showTurnMetrics,
                     onCheckedChange = { DebugSettings.setShowTurnMetrics(context, it) },
-                    colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.accentStrong),
+                    colors = SwitchDefaults.colors(checkedTrackColor = LitterTheme.textPrimary),
                 )
             }
         }
@@ -2017,7 +2151,7 @@ private fun DebugScreen(onBack: () -> Unit) {
         var recordings by remember { mutableStateOf(MessageRecorder.listRecordings(context)) }
 
         Column(
-            Modifier.fillMaxWidth().background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp)).padding(12.dp),
+            Modifier.fillMaxWidth().background(LitterQuiet.raised, LitterRadius.raisedShape).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
@@ -2068,11 +2202,11 @@ private fun DebugScreen(onBack: () -> Unit) {
                         Text(
                             file.name,
                             color = LitterTheme.textPrimary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             modifier = Modifier.weight(1f),
                         )
                         val sizeKb = file.length() / 1024
-                        Text("${sizeKb}KB", color = LitterTheme.textMuted, fontSize = 10.sp)
+                        Text("${sizeKb}KB", color = LitterTheme.textMuted, fontSize = 13.sp)
                         Spacer(Modifier.width(8.dp))
                         TextButton(onClick = {
                             MessageRecorder.deleteRecording(file)
@@ -2411,10 +2545,21 @@ private fun normalizeOpenAIBaseUrl(rawValue: String): String? {
 
 @Composable
 private fun SectionHeader(text: String) {
-    Spacer(Modifier.height(8.dp))
-    Text(text.uppercase(), color = LitterTheme.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp))
+    Text(
+        text.lowercase(),
+        style = LitterType.meta,
+        modifier = Modifier
+            .semantics { heading() }
+            .padding(top = LitterSpacing.md, bottom = LitterSpacing.xxs),
+    )
 }
 
+/**
+ * Plain settings row: title with an optional mono subtitle, trailing control
+ * or chevron. Row icons are decorative in Litter Quiet, so [icon] is accepted
+ * for call-site compatibility but not drawn.
+ */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun SettingsRow(
     label: String, subtitle: String? = null,
@@ -2425,26 +2570,26 @@ private fun SettingsRow(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
-            .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .heightIn(min = if (subtitle != null) LitterSpacing.row else LitterSpacing.touch + LitterSpacing.xs)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(12.dp),
+            .padding(vertical = LitterSpacing.xs),
     ) {
-        icon?.invoke()
-        if (icon != null) Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(label, color = LitterTheme.textPrimary, fontSize = 14.sp)
-            subtitle?.let { Text(it, color = LitterTheme.textSecondary, fontSize = 11.sp) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = LitterType.title)
+            subtitle?.let { Text(it, style = LitterType.meta) }
         }
-        trailing?.invoke()
+        if (trailing != null) {
+            Spacer(Modifier.width(LitterSpacing.sm))
+            trailing()
+        }
     }
 }
 
 @Composable
 private fun NavRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
     SettingsRow(
-        icon = { Icon(icon, null, tint = LitterTheme.accent, modifier = Modifier.size(20.dp)) },
         label = label,
-        trailing = { Icon(Icons.Default.ChevronRight, null, tint = LitterTheme.textMuted, modifier = Modifier.size(16.dp)) },
+        trailing = { Icon(Icons.Default.ChevronRight, null, tint = LitterQuiet.meta, modifier = Modifier.size(18.dp)) },
         onClick = onClick,
     )
 }
@@ -2459,6 +2604,6 @@ private fun FontRow(name: String, fontFamily: FontFamily, isSelected: Boolean, o
             Text(name, color = LitterTheme.textPrimary, fontSize = 14.sp)
             Text(stringResource(R.string.appearance_font_preview), color = LitterTheme.textSecondary, fontSize = 13.sp, fontFamily = fontFamily)
         }
-        if (isSelected) Icon(Icons.Default.Check, null, tint = LitterTheme.accent, modifier = Modifier.size(18.dp))
+        if (isSelected) Icon(Icons.Default.Check, null, tint = LitterTheme.textPrimary, modifier = Modifier.size(18.dp))
     }
 }

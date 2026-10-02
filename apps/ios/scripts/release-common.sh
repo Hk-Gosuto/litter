@@ -246,3 +246,70 @@ validate_fastlane_metadata() {
 
     asc migrate validate --fastlane-dir "$fastlane_dir" --output json >/dev/null
 }
+
+# Make the single in-flight App Store version slot available for $2.
+#
+# App Store Connect allows one in-flight version per platform, so `versions create`
+# fails with "You cannot create a new version of the App in the current state"
+# while another version holds the slot. Cancel any open review submission, then
+# reuse the version that held it by renaming it to $2. Deleting is not an escape
+# hatch here: Apple only permits deleting the first version of a platform. A version
+# that is still under review is waited on rather than renamed.
+clear_in_flight_version() {
+    local app_store_app_id="$1"
+    local marketing_version="$2"
+    local attempts="${3:-12}"
+
+    local submissions_json
+    submissions_json="$(asc review submissions-list --app "$app_store_app_id" --platform IOS --output json)"
+
+    while IFS=$'\t' read -r submission_id submission_state; do
+        [[ -z "$submission_id" ]] && continue
+        case "$submission_state" in
+            READY_FOR_REVIEW | WAITING_FOR_REVIEW | IN_REVIEW | UNRESOLVED_ISSUES) ;;
+            *) continue ;;
+        esac
+        echo "    Cancelling review submission $submission_id ($submission_state)"
+        asc review submissions-update \
+            --id "$submission_id" \
+            --canceled=true \
+            --confirm \
+            --output json >/dev/null
+    done < <(printf '%s' "$submissions_json" |
+        jq -r '.data[]? | [.id, (.attributes.state // "unknown")] | @tsv')
+
+    local attempt blocking version_id version_string state
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        blocking=""
+
+        local versions_json
+        versions_json="$(asc versions list --app "$app_store_app_id" --platform IOS --output json)"
+
+        while IFS=$'\t' read -r version_id version_string state; do
+            [[ -z "$version_id" ]] && continue
+            [[ "$version_string" == "$marketing_version" ]] && return 0
+            case "$state" in
+                PREPARE_FOR_SUBMISSION | DEVELOPER_REJECTED)
+                    echo "    Reusing $state version $version_string as $marketing_version ($version_id)"
+                    asc versions update \
+                        --version-id "$version_id" \
+                        --version "$marketing_version" \
+                        --output json >/dev/null
+                    return 0
+                    ;;
+                WAITING_FOR_REVIEW | IN_REVIEW | READY_FOR_REVIEW | UNRESOLVED_ISSUES)
+                    blocking="$version_string $state"
+                    ;;
+            esac
+        done < <(printf '%s' "$versions_json" |
+            jq -r '.data[]? | [.id, (.attributes.versionString // "?"), (.attributes.appStoreState // "?")] | @tsv')
+
+        [[ -z "$blocking" ]] && return 0
+
+        echo "    Waiting for $blocking to clear (attempt $attempt/$attempts)"
+        sleep 10
+    done
+
+    echo "Version $blocking still holds the in-flight App Store slot" >&2
+    exit 1
+}

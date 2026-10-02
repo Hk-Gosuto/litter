@@ -1,5 +1,6 @@
 package com.litter.android.ui.home
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -79,7 +80,7 @@ fun ProjectPickerSheet(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onDismiss) {
@@ -89,7 +90,7 @@ fun ProjectPickerSheet(
             Text(
                 text = stringResource(R.string.project_title),
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.subheadline.scaled,
+                fontSize = LitterTextStyle.body.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.weight(1f))
@@ -128,10 +129,10 @@ fun ProjectPickerSheet(
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 4.dp),
+                .padding(horizontal = 20.dp, vertical = 4.dp),
         )
 
-        HorizontalDivider(color = LitterTheme.textMuted.copy(alpha = 0.15f))
+        Spacer(Modifier.height(8.dp))
 
         if (filtered.isEmpty()) {
             Column(
@@ -157,7 +158,7 @@ fun ProjectPickerSheet(
                 Text(
                     text = stringResource(R.string.project_empty_helper),
                     color = LitterTheme.textMuted,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
                 TextButton(onClick = onCreateNew) {
@@ -191,49 +192,30 @@ private fun ProjectRow(
     onClick: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    Row(
+    val path = com.litter.android.state.PathDisplay.display(project.cwd, isLocal, context)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 62.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
-        Icon(
-            imageVector = Icons.Default.Folder,
-            contentDescription = null,
-            tint = LitterTheme.textSecondary,
-            modifier = Modifier
-                .size(18.dp)
-                .padding(top = 2.dp),
+        Text(
+            text = projectDefaultLabel(project.cwd),
+            color = LitterTheme.textPrimary,
+            fontSize = LitterTextStyle.body.scaled,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = projectDefaultLabel(project.cwd),
-                color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.body.scaled,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (serverName != null) {
-                    Text(
-                        text = serverName,
-                        color = LitterTheme.accent.copy(alpha = 0.75f),
-                        fontSize = LitterTextStyle.caption2.scaled,
-                        fontFamily = LitterTheme.monoFont,
-                        maxLines = 1,
-                    )
-                }
-                Text(
-                    text = com.litter.android.state.PathDisplay.display(project.cwd, isLocal, context),
-                    color = LitterTheme.textMuted,
-                    fontSize = LitterTextStyle.caption2.scaled,
-                    fontFamily = LitterTheme.monoFont,
-                    maxLines = 1,
-                )
-            }
-        }
+        Text(
+            text = listOfNotNull(serverName, path).joinToString(" · ").lowercase(),
+            color = LitterTheme.textSecondary,
+            fontSize = LitterTextStyle.footnote.scaled,
+            fontFamily = LitterTheme.monoFont,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 

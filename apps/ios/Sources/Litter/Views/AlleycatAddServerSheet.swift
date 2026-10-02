@@ -110,7 +110,20 @@ struct AlleycatAddServerSheet: View {
                     Button("Cancel") { dismiss() }
                         .foregroundColor(LitterTheme.accent)
                 }
+                // Confirm action lives in the bar (Settings/Mail pattern) so
+                // the keyboard can never cover it after a paste.
+                ToolbarItem(placement: .confirmationAction) {
+                    if isConnecting {
+                        ProgressView()
+                    } else {
+                        Button("Connect") { connect() }
+                            .fontWeight(.semibold)
+                            .disabled(!canConnect)
+                            .accessibilityIdentifier("alleycat.pair.toolbarConnect")
+                    }
+                }
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .onAppear {
             requestInitialScanIfNeeded()
@@ -134,10 +147,10 @@ struct AlleycatAddServerSheet: View {
             isPresented: $cameraDenied,
             actions: {
                 Button("Open Settings") { openAppSettings() }
-                Button("Cancel", role: .cancel) {}
+                Button("Paste JSON Instead", role: .cancel) {}
             },
             message: {
-                Text("Allow camera access in Settings to scan the pairing QR code.")
+                Text("Allow camera access in Settings to scan the pairing QR code, or paste the pairing JSON.")
             }
         )
     }
@@ -155,7 +168,7 @@ struct AlleycatAddServerSheet: View {
     private var pairingSection: some View {
         Section {
             Text(pairingMode.instructions)
-                .litterFont(.caption)
+                .litterFont(.footnote)
                 .foregroundColor(LitterTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -169,7 +182,7 @@ struct AlleycatAddServerSheet: View {
             }
         } header: {
             Text("Pairing")
-                .foregroundColor(LitterTheme.textSecondary)
+                .litterSectionLabel()
         }
         .listRowBackground(LitterTheme.surface.opacity(0.6))
     }
@@ -214,14 +227,15 @@ struct AlleycatAddServerSheet: View {
     @ViewBuilder
     private func pasteJSONEntryControls(minHeight: CGFloat) -> some View {
         TextEditor(text: $pasteJSON)
-            .litterFont(.caption)
+            .accessibilityIdentifier("alleycat.pair.jsonField")
+            .litterFont(.footnote)
             .foregroundColor(LitterTheme.textPrimary)
             .scrollContentBackground(.hidden)
             .frame(minHeight: minHeight)
             .overlay(alignment: .topLeading) {
                 if pasteJSON.isEmpty {
                     Text(#"{"v":1,"node_id":"...","token":"...","relay":"https://..."}"#)
-                        .litterFont(.caption)
+                        .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textMuted)
                         .padding(.top, 8)
                         .padding(.leading, 4)
@@ -233,6 +247,7 @@ struct AlleycatAddServerSheet: View {
             Button("Paste from Clipboard") {
                 if let clipboard = UIPasteboard.general.string {
                     pasteJSON = clipboard
+                    handleScannedPayload(clipboard)
                 }
             }
             .litterFont(.footnote)
@@ -264,13 +279,13 @@ struct AlleycatAddServerSheet: View {
                 previewRow(label: "host", value: hostName)
             }
             TextField("display name (optional)", text: $displayName)
-                .litterFont(.caption)
+                .litterFont(.footnote)
                 .foregroundColor(LitterTheme.textPrimary)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
         } header: {
             Text("Scanned Host")
-                .foregroundColor(LitterTheme.textSecondary)
+                .litterSectionLabel()
         }
         .listRowBackground(LitterTheme.surface.opacity(0.6))
     }
@@ -281,12 +296,12 @@ struct AlleycatAddServerSheet: View {
                 HStack {
                     ProgressView().tint(LitterTheme.accent)
                     Text("Loading agents")
-                        .litterFont(.caption)
+                        .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textSecondary)
                 }
             } else if availableAgents.isEmpty {
                 Text("No agents are available on this host.")
-                    .litterFont(.caption)
+                    .litterFont(.footnote)
                     .foregroundColor(LitterTheme.textMuted)
             } else {
                 ForEach(availableAgents, id: \.name) { agent in
@@ -300,14 +315,14 @@ struct AlleycatAddServerSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
                                     Text(agent.displayName)
-                                        .litterFont(.subheadline)
+                                        .litterFont(.body)
                                         .foregroundColor(agent.available ? LitterTheme.textPrimary : LitterTheme.textMuted)
                                     if AgentRuntimeKind.isBetaAgentName(agent.name, displayName: agent.displayName) {
                                         BetaBadge()
                                     }
                                 }
                                 Text(wireLabel(agent.wire))
-                                    .litterFont(.caption)
+                                    .litterFont(.footnote)
                                     .foregroundColor(LitterTheme.textSecondary)
                             }
                             Spacer()
@@ -316,7 +331,7 @@ struct AlleycatAddServerSheet: View {
                                     .foregroundColor(LitterTheme.accent)
                             } else if !agent.available {
                                 Text("Unavailable")
-                                    .litterFont(.caption)
+                                    .litterFont(.footnote)
                                     .foregroundColor(LitterTheme.textMuted)
                             } else {
                                 Image(systemName: "square")
@@ -359,7 +374,7 @@ struct AlleycatAddServerSheet: View {
                 .foregroundColor(LitterTheme.textSecondary)
             Spacer()
             Text(value)
-                .litterFont(.caption)
+                .litterFont(.footnote)
                 .foregroundColor(LitterTheme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -377,7 +392,7 @@ struct AlleycatAddServerSheet: View {
                     }
                     Text("Connect")
                         .foregroundColor(LitterTheme.accent)
-                        .litterFont(.subheadline)
+                        .litterFont(.body)
                 }
             }
             .disabled(!canConnect)
@@ -388,7 +403,7 @@ struct AlleycatAddServerSheet: View {
     private func errorSection(_ message: String, color: Color) -> some View {
         Section {
             Text(message)
-                .litterFont(.caption)
+                .litterFont(.footnote)
                 .foregroundColor(color)
         }
         .listRowBackground(LitterTheme.surface.opacity(0.6))
@@ -593,7 +608,7 @@ private struct QRScannerScreen: View {
     let pairingMode: AlleycatPairingMode
     let onScan: (String) -> Void
 
-    private static let pairCommand = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.10/kittylitter-npm-package.tar.gz"
+    private static let pairCommand = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.11/kittylitter-npm-package.tar.gz"
 
     @State private var copied = false
     @State private var isFinishing = false

@@ -241,9 +241,3 @@ struct MountedFoldersView: View {
         return AppLanguage.localizedString("Remove mount?")
     }
 }
-
-#if DEBUG
-#Preview {
-    MountedFoldersView()
-}
-#endif

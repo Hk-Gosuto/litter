@@ -4,16 +4,17 @@ struct AppearanceSettingsView: View {
     @Environment(ThemeManager.self) private var themeManager
     @State private var activeThemePicker: ThemePickerKind?
     @AppStorage("conversationTextSizeStep") private var textSizeStep = ConversationTextSize.medium.rawValue
+    @AppStorage("fontFamily") private var fontFamily = FontFamilyOption.system.rawValue
 
     var body: some View {
         ZStack {
             LitterTheme.backgroundGradient.ignoresSafeArea()
             Form {
                 appearanceModeSection
-                fontSizeSection
-                conversationPreviewSection
                 lightThemeSection
                 darkThemeSection
+                fontSizeSection
+                conversationPreviewSection
             }
             .scrollContentBackground(.hidden)
         }
@@ -49,12 +50,12 @@ struct AppearanceSettingsView: View {
             }
             .pickerStyle(.segmented)
             .tint(LitterTheme.accent)
-            .listRowBackground(LitterTheme.surface.opacity(0.6))
+            .settingsRowBackground()
         } header: {
-            Text("Mode")
-                .foregroundColor(LitterTheme.textSecondary)
+            SettingsSectionHeader("Mode")
         } footer: {
             Text("Match the device setting, or keep Litter fixed in light or dark mode.")
+                .litterFont(.footnote)
                 .foregroundColor(LitterTheme.textMuted)
         }
     }
@@ -63,14 +64,35 @@ struct AppearanceSettingsView: View {
 
     private var fontSizeSection: some View {
         Section {
+            Picker(selection: Binding(
+                get: { fontFamily },
+                set: { next in
+                    fontFamily = next
+                    ThemeManager.shared.syncFontPreference()
+                    FontPreferenceObserver.shared.didChange()
+                }
+            )) {
+                ForEach(FontFamilyOption.allCases) { option in
+                    Text(option.displayName).tag(option.rawValue)
+                }
+            } label: {
+                Text("Font")
+                    .litterFont(.body)
+                    .foregroundColor(LitterTheme.textPrimary)
+            }
+            .pickerStyle(.menu)
+            .tint(LitterTheme.textSecondary)
+            .accessibilityIdentifier("appearance.fontFamily")
+            .settingsRowBackground()
+
             VStack(spacing: 12) {
                 HStack {
-                    Text("Font Size")
-                        .litterFont(.subheadline)
+                    Text("Size")
+                        .litterFont(.body)
                         .foregroundColor(LitterTheme.textPrimary)
                     Spacer()
                     Text(ConversationTextSize.clamped(rawValue: textSizeStep).label)
-                        .litterFont(.subheadline)
+                        .litterFont(.body)
                         .foregroundColor(LitterTheme.textSecondary)
                 }
 
@@ -95,12 +117,12 @@ struct AppearanceSettingsView: View {
                 }
             }
             .padding(.vertical, 4)
-            .listRowBackground(LitterTheme.surface.opacity(0.6))
+            .settingsRowBackground()
         } header: {
-            Text("Font Size")
-                .foregroundColor(LitterTheme.textSecondary)
+            SettingsSectionHeader("Text")
         } footer: {
-            Text("Pinch in conversations to adjust, or use this slider. Applies across the app.")
+            Text("Pinch in a conversation to change the size too.")
+                .litterFont(.footnote)
                 .foregroundColor(LitterTheme.textMuted)
         }
     }
@@ -141,8 +163,7 @@ struct AppearanceSettingsView: View {
             .listRowBackground(LitterTheme.backgroundGradient)
             .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
         } header: {
-            Text("Preview")
-                .foregroundColor(LitterTheme.textSecondary)
+            SettingsSectionHeader("Preview")
         }
     }
 
@@ -156,8 +177,7 @@ struct AppearanceSettingsView: View {
                 pickerKind: .light
             )
         } header: {
-            Text("Light theme")
-                .foregroundColor(LitterTheme.textSecondary)
+            SettingsSectionHeader("Light theme")
         }
     }
 
@@ -171,8 +191,7 @@ struct AppearanceSettingsView: View {
                 pickerKind: .dark
             )
         } header: {
-            Text("Dark theme")
-                .foregroundColor(LitterTheme.textSecondary)
+            SettingsSectionHeader("Dark theme")
         }
     }
 
@@ -190,7 +209,7 @@ struct AppearanceSettingsView: View {
             ThemePickerRow(entry: selected, trailingAccessory: .chevron)
         }
         .buttonStyle(.plain)
-        .listRowBackground(LitterTheme.surface.opacity(0.6))
+        .settingsRowBackground()
     }
 
     private func themes(for pickerKind: ThemePickerKind) -> [ThemeIndexEntry] {
@@ -367,7 +386,7 @@ private struct ThemePickerSheet: View {
                 .litterFont(size: 14, weight: .medium)
 
             TextField("Search themes", text: $searchQuery)
-                .litterFont(.subheadline)
+                .litterFont(.body)
                 .foregroundColor(LitterTheme.textPrimary)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
@@ -401,12 +420,12 @@ private struct ThemePickerSheet: View {
                 .foregroundColor(LitterTheme.textMuted)
 
             Text("No matching themes")
-                .litterFont(.subheadline)
+                .litterFont(.body)
                 .foregroundColor(LitterTheme.textPrimary)
 
             if !trimmedSearchQuery.isEmpty {
                 Text(trimmedSearchQuery)
-                    .litterFont(.caption)
+                    .litterFont(.footnote)
                     .foregroundColor(LitterTheme.textSecondary)
             }
         }
@@ -443,23 +462,4 @@ struct ThemePreviewBadge: View {
                 .offset(x: 1, y: 1)
         }
     }
-
-    @MainActor
-    static func renderToImage(backgroundHex: String, foregroundHex: String, accentHex: String) -> UIImage {
-        let badge = ThemePreviewBadge(backgroundHex: backgroundHex, foregroundHex: foregroundHex, accentHex: accentHex)
-        let renderer = ImageRenderer(content: badge)
-        renderer.scale = UIScreen.main.scale
-        guard let cgImage = renderer.cgImage else { return UIImage() }
-        return UIImage(cgImage: cgImage).withRenderingMode(.alwaysOriginal)
-    }
 }
-
-#if DEBUG
-#Preview("Appearance") {
-    LitterPreviewScene(includeBackground: false) {
-        NavigationStack {
-            AppearanceSettingsView()
-        }
-    }
-}
-#endif

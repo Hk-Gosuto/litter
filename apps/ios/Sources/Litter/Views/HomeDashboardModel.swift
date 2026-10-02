@@ -53,9 +53,15 @@ final class HomeDashboardModel {
         let sessionSummaries: [AppSessionSummary]
         let activeThread: ThreadKey?
         let rawServers: [AppServerSnapshot]
+        let isSessionListSettled: Bool
     }
 
     private(set) var connectedServers: [HomeDashboardServer] = []
+    /// False while Home cannot yet tell "no sessions" from "not loaded":
+    /// no store snapshot yet, or remembered servers still reconnecting.
+    /// Home shows the empty state (cat + coachmarks) only once settled, so
+    /// it never flashes on launch.
+    private(set) var isSessionListSettled = false
     /// Home list source: pinned threads first (in pin order). Local Studio
     /// also keeps recent sessions visible after a pin so newly synced Pi
     /// sessions remain discoverable. Hidden threads are always excluded.
@@ -91,7 +97,9 @@ final class HomeDashboardModel {
     var selectedServerId: String? {
         didSet {
             if oldValue != selectedServerId {
-                persistence.setSelectedServerId(selectedServerId)
+                if persistSelectionChanges {
+                    persistence.setSelectedServerId(selectedServerId)
+                }
                 if selectedServerId != nil {
                     userClearedSelection = false
                 }
@@ -103,15 +111,24 @@ final class HomeDashboardModel {
     /// In-memory selection. May be a project derived from sessions, or a
     /// synthetic `(server, cwd)` pair the user just picked via the directory
     /// picker (which hasn't produced a thread yet, so it's not in `projects`).
+    /// True while the selected server was chosen by the fallback above
+    /// rather than by the user.
+    private var serverSelectionIsAutomatic = false
+
     var selectedProject: AppProject? {
         didSet {
-            if oldValue?.id != selectedProject?.id {
+            if oldValue?.id != selectedProject?.id, persistSelectionChanges {
                 persistence.setSelectedProjectId(selectedProject?.id)
             }
         }
     }
 
     @ObservationIgnored private let persistence: HomeDashboardPersistence
+    /// False while the reconciler (not the user) changes the selection, e.g.
+    /// clearing it because the last-used server has not reconnected yet at
+    /// launch. Persisting that would erase the user's last-used server and
+    /// project before the server ever came back.
+    @ObservationIgnored private var persistSelectionChanges = true
     @ObservationIgnored private let observedRefreshDelayNanoseconds: UInt64
     @ObservationIgnored private weak var appModel: AppModel?
     @ObservationIgnored private(set) var rebuildCount = 0
@@ -199,13 +216,6 @@ final class HomeDashboardModel {
         refreshState()
     }
 
-    func unhideThread(_ key: ThreadKey) {
-        let pin = SavedThreadsStore.PinnedKey(threadKey: key)
-        persistence.unhide(pin)
-        hiddenKeys = persistence.hiddenKeys()
-        refreshState()
-    }
-
     func isPinned(_ key: ThreadKey) -> Bool {
         pinnedKeys.contains(SavedThreadsStore.PinnedKey(threadKey: key))
     }
@@ -267,16 +277,27 @@ final class HomeDashboardModel {
         let generation = observationGeneration
         let snapshot = withObservationTracking {
             let appSnapshot = appModel.snapshot
+            let rememberedServers = persistence.rememberedServers()
             let nextConnectedServers = HomeDashboardSupport.sortedConnectedServers(
                 from: appSnapshot?.servers ?? [],
-                savedServers: persistence.rememberedServers(),
+                savedServers: rememberedServers,
                 activeServerId: appSnapshot?.activeThread?.serverId
             )
+            let reconnectPending = SavedServerReconnectState.shared.isReconnectPending
+            let isSettled = appSnapshot != nil
+                && (!reconnectPending || !rememberedServers.contains(where: \.rememberedByUser))
+            // Live threads show only for servers that can launch sessions.
+            // Summary-only rows (Rust's launch cache, not yet backed by a live
+            // thread) show for any remembered server, so recent sessions
+            // appear before reconnect finishes.
+            let liveThreadKeys = Set((appSnapshot?.threads ?? []).map(\.key))
+            let launchableServerIds = Set(nextConnectedServers.filter(\.canLaunchSessions).map(\.id))
+            let visibleSummaries = (appSnapshot?.sessionSummaries ?? []).filter {
+                launchableServerIds.contains($0.key.serverId) || !liveThreadKeys.contains($0.key)
+            }
             let nextAllSessions = HomeDashboardSupport.recentConnectedSessions(
-                from: appSnapshot?.sessionSummaries ?? [],
-                serversById: Dictionary(uniqueKeysWithValues: nextConnectedServers
-                    .filter(\.canLaunchSessions)
-                    .map { ($0.id, $0) }),
+                from: visibleSummaries,
+                serversById: Dictionary(uniqueKeysWithValues: nextConnectedServers.map { ($0.id, $0) }),
                 limit: nil
             )
             return Snapshot(
@@ -284,7 +305,8 @@ final class HomeDashboardModel {
                 recentSessions: nextAllSessions,
                 sessionSummaries: appSnapshot?.sessionSummaries ?? [],
                 activeThread: appSnapshot?.activeThread,
-                rawServers: appSnapshot?.servers ?? []
+                rawServers: appSnapshot?.servers ?? [],
+                isSessionListSettled: isSettled
             )
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -295,6 +317,7 @@ final class HomeDashboardModel {
 
         rebuildCount += 1
         connectedServers = snapshot.connectedServers
+        isSessionListSettled = snapshot.isSessionListSettled
         allSessions = snapshot.recentSessions
         recentSessions = Self.mergedHomeSessions(
             pinned: pinnedKeys,
@@ -351,9 +374,39 @@ final class HomeDashboardModel {
         // Keep selectedServerId valid: if the server it points at isn't in
         // the live/launchable list, clear the scope. Default is no filter —
         // we do not auto-select the first connected server.
-        if let current = selectedServerId,
-           !connectedServers.contains(where: { $0.id == current && $0.canLaunchSessions }) {
+        let isLaunchable: (String) -> Bool = { id in
+            self.connectedServers.contains(where: { $0.id == id && $0.canLaunchSessions })
+        }
+        if let current = selectedServerId, !isLaunchable(current) {
+            persistSelectionChanges = false
             selectedServerId = nil
+            persistSelectionChanges = true
+        }
+        // Restore the last-used server as soon as it is launchable again.
+        if selectedServerId == nil, !userClearedSelection,
+           let persisted = persistence.selectedServerId(), isLaunchable(persisted) {
+            selectedServerId = persisted
+        }
+        // Home is a composer: it needs somewhere to send. Prefer a connected
+        // remote computer over the in-app local server.
+        // An automatic pick of the in-app server upgrades to a remote
+        // computer as soon as one connects; an explicit pick never changes.
+        let launchable = connectedServers.filter(\.canLaunchSessions)
+        let remote = launchable.first(where: { !$0.isLocal })
+        if serverSelectionIsAutomatic,
+           let current = selectedServerId,
+           launchable.first(where: { $0.id == current })?.isLocal == true,
+           let remote {
+            persistSelectionChanges = false
+            selectedServerId = remote.id
+            persistSelectionChanges = true
+        }
+        if selectedServerId == nil, !userClearedSelection,
+           let fallback = remote ?? launchable.first {
+            persistSelectionChanges = false
+            selectedServerId = fallback.id
+            persistSelectionChanges = true
+            serverSelectionIsAutomatic = true
         }
 
         reconcileSelectedProject()
@@ -381,10 +434,26 @@ final class HomeDashboardModel {
             return
         }
 
-        if let persistedId = persistence.selectedProjectId(),
-           let match = serverProjects.first(where: { $0.id == persistedId }) {
-            selectedProject = match
-            return
+        if let persistedId = persistence.selectedProjectId() {
+            if let match = serverProjects.first(where: { $0.id == persistedId }) {
+                selectedProject = match
+                return
+            }
+            // Last-used project on this server that has no threads loaded
+            // (yet): keep it instead of silently switching to another one.
+            let prefix = "\(serverId)::"
+            if persistedId.hasPrefix(prefix) {
+                let cwd = String(persistedId.dropFirst(prefix.count))
+                if !cwd.isEmpty {
+                    selectedProject = AppProject(
+                        id: persistedId,
+                        serverId: serverId,
+                        cwd: cwd,
+                        lastUsedAtMs: nil
+                    )
+                    return
+                }
+            }
         }
 
         selectedProject = serverProjects.first
@@ -438,6 +507,7 @@ final class HomeDashboardModel {
     /// project locally and select it. It will appear in `projects` naturally
     /// once the first thread is created.
     func selectFreshProject(serverId: String, cwd: String) {
+        serverSelectionIsAutomatic = false
         selectedServerId = serverId
         let id = projectIdFor(serverId: serverId, cwd: cwd)
         if let existing = projects.first(where: { $0.id == id }) {

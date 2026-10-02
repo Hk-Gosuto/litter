@@ -25,6 +25,7 @@ mod clixml;
 mod codex_binary;
 mod connect;
 mod detect;
+mod detection;
 mod exec;
 mod forwarding;
 mod host_key;
@@ -34,6 +35,7 @@ mod probes;
 mod resolve_binary;
 mod terminal_channel;
 mod types;
+pub(crate) use types::exit_status_from_code;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,6 +63,7 @@ pub use types::{
     ExecResult, SshAuth, SshBootstrapResult, SshCredentials, SshError, SshExecChild, SshExecIo,
     SshExecStderr, SshExecStdin, SshExecStdout,
 };
+pub(crate) use detection::{SshDetection, cli_key};
 pub(crate) use types::{RemoteShell, SshBootstrapTransport};
 
 // SSH channel sizing — tuned for high-throughput interactive workloads.
@@ -97,6 +100,10 @@ pub struct SshClient {
     /// Optional login password to reuse for unlocking the remote macOS
     /// login keychain before detached headless launches.
     pub(super) macos_keychain_password: Option<String>,
+    /// Memoized remote detection results (see [`detection`]).
+    pub(super) detection: std::sync::Mutex<SshDetection>,
+    /// Single-flight guard so concurrent callers share one shell probe.
+    pub(super) shell_probe: Mutex<()>,
 }
 
 pub(super) struct ForwardTask {

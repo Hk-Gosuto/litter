@@ -25,6 +25,12 @@ extension View {
     }
 }
 
+/// Quiet first-run hints for the empty home screen.
+///
+/// Design rules: mono footnote (follows Dynamic Type), gray, lowercase, no
+/// accent colour. The bottom-bar hints are one left-aligned block anchored
+/// above the bottom buttons, wrapping within the container's 16pt gutters so
+/// nothing clips or overlaps at any iPhone width or text size.
 struct OnboardingCoachmarksView: View {
     let anchors: [CoachmarkTarget: Anchor<CGRect>]
 
@@ -103,40 +109,32 @@ struct OnboardingCoachmarksView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let size = proxy.size
             ZStack(alignment: .topLeading) {
-                ForEach(items) { item in
-                    if let rect = resolvedRect(for: item.id, in: proxy) {
-                        coachmark(for: item, targetRect: rect, container: proxy.size)
-                    }
-                }
+                bottomHints(container: size, bottomTop: bottomBarTop(in: proxy))
             }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
         }
         .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
     }
 
-    /// Resolve the on-screen rect for a target. Server pill, +, and search
-    /// publish anchors from inside the dashboard subtree. The voice button
-    /// is overlaid externally (in `LitterApp.primaryNavigationStack`) so its
-    /// anchor never reaches us — fall back to a fixed position matching
-    /// `homeVoiceLauncher`'s `.bottomLeading` placement (14pt leading inset,
-    /// 4pt bottom inset, 44pt button size).
-    private func resolvedRect(for target: CoachmarkTarget, in proxy: GeometryProxy) -> CGRect? {
-        if let anchor = anchors[target] {
-            return proxy[anchor]
+    /// Top edge of the bottom bar buttons, falling back to a conservative
+    /// inset when the anchors are not published yet.
+    private func bottomBarTop(in proxy: GeometryProxy) -> CGFloat {
+        let tops = [CoachmarkTarget.newThread, .search].compactMap { anchors[$0].map { proxy[$0].minY } }
+        return tops.min() ?? (proxy.size.height - 72)
+    }
+
+    private func bottomHints(container: CGSize, bottomTop: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            hint("+ start a thread, or just type")
+            hint("search · all your threads")
+            hint("voice · needs an openai key in settings")
         }
-        if target == .voice {
-            let size: CGFloat = 44
-            let leading: CGFloat = 14
-            let bottomInset: CGFloat = 4
-            return CGRect(
-                x: leading,
-                y: proxy.size.height - bottomInset - size,
-                width: size,
-                height: size
-            )
-        }
-        return nil
+        .frame(width: max(0, container.width - gutter * 2), alignment: .leading)
+        .frame(height: max(0, bottomTop - 40), alignment: .bottomLeading)
+        .offset(x: gutter)
     }
 
     @ViewBuilder

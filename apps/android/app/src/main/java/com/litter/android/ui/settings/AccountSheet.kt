@@ -241,7 +241,7 @@ fun AccountSheet(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = LitterTheme.accent,
+                    containerColor = LitterTheme.textPrimary,
                     contentColor = Color.Black,
                 ),
                 modifier = Modifier.fillMaxWidth(),
@@ -256,13 +256,13 @@ fun AccountSheet(
                 Text(
                     stringResource(R.string.account_key_saved_environment),
                     color = LitterTheme.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                 )
             } else if (isChatGPTAccount) {
                 Text(
                     stringResource(R.string.account_save_key_environment),
                     color = LitterTheme.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                 )
             } else {
                 Text(stringResource(R.string.account_api_key_helper), color = LitterTheme.textSecondary, fontSize = 12.sp)
@@ -300,7 +300,7 @@ fun AccountSheet(
                     },
                     enabled = apiKey.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = LitterTheme.accent,
+                        containerColor = LitterTheme.textPrimary,
                         contentColor = Color.Black,
                     ),
                 ) {
@@ -323,7 +323,7 @@ fun AccountSheet(
                     stringResource(R.string.account_optional_endpoint)
                 },
                 color = LitterTheme.textSecondary,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -362,7 +362,7 @@ fun AccountSheet(
                     },
                     enabled = openAIBaseUrl.isNotBlank() && !isAuthWorking,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = LitterTheme.accent,
+                        containerColor = LitterTheme.textPrimary,
                         contentColor = Color.Black,
                     ),
                 ) {
@@ -397,12 +397,12 @@ fun AccountSheet(
             Text(
                 stringResource(R.string.account_remote_login_help),
                 color = LitterTheme.textSecondary,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
             )
         }
 
         error?.let {
-            Text(it, color = LitterTheme.danger, fontSize = 12.sp)
+            Text(it, color = LitterTheme.danger, fontSize = 13.sp)
         }
     }
 }

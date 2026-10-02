@@ -329,7 +329,7 @@ fun AlleycatAddServerSheet(
                 },
             ),
             color = LitterTheme.textSecondary,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
         )
         OutlinedButton(
             onClick = ::requestCameraAndScan,
@@ -338,7 +338,7 @@ fun AlleycatAddServerSheet(
             Icon(
                 imageVector = Icons.Default.QrCodeScanner,
                 contentDescription = null,
-                tint = LitterTheme.accent,
+                tint = LitterTheme.textPrimary,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(8.dp))
@@ -357,7 +357,7 @@ fun AlleycatAddServerSheet(
             Text(
                 text = stringResource(R.string.alleycat_camera_permission),
                 color = LitterTheme.warning,
-                fontSize = 11.sp,
+                fontSize = 13.sp,
             )
             Text(
                 text = stringResource(R.string.alleycat_open_settings),
@@ -383,7 +383,7 @@ fun AlleycatAddServerSheet(
                         text = "{\"v\":1,\"node_id\":\"...\",\"token\":\"...\",\"relay\":\"https://...\"}",
                         color = LitterTheme.textMuted,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
+                        fontSize = 13.sp,
                     )
                 },
                 minLines = 3,
@@ -403,7 +403,7 @@ fun AlleycatAddServerSheet(
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = null,
-                        tint = LitterTheme.accent,
+                        tint = LitterTheme.textPrimary,
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(6.dp))
@@ -428,7 +428,7 @@ fun AlleycatAddServerSheet(
         }
 
         parseError?.let { message ->
-            Text(message, color = LitterTheme.warning, fontSize = 12.sp)
+            Text(message, color = LitterTheme.warning, fontSize = 13.sp)
         }
 
         val params = parsedParams
@@ -473,8 +473,8 @@ fun AlleycatAddServerSheet(
                     ) {
                         Text(
                             text = if (selectedAgents.size == availableAgents.size) "None" else "All",
-                            color = LitterTheme.accent,
-                            fontSize = 12.sp,
+                            color = LitterTheme.textPrimary,
+                            fontSize = 13.sp,
                         )
                     }
                 }
@@ -493,7 +493,7 @@ fun AlleycatAddServerSheet(
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
-                            color = LitterTheme.accent,
+                            color = LitterTheme.textPrimary,
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.discovery_loading_agents), color = LitterTheme.textSecondary, fontSize = 12.sp)
@@ -501,7 +501,7 @@ fun AlleycatAddServerSheet(
                     availableAgents.isEmpty() -> Text(
                         text = stringResource(R.string.alleycat_no_agents),
                         color = LitterTheme.textMuted,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         modifier = Modifier.padding(8.dp),
                     )
                     else -> availableAgents.forEach { agent ->
@@ -524,15 +524,15 @@ fun AlleycatAddServerSheet(
         }
 
         agentError?.let { message ->
-            Text(message, color = LitterTheme.warning, fontSize = 12.sp)
+            Text(message, color = LitterTheme.warning, fontSize = 13.sp)
         }
 
         Button(
             onClick = ::connect,
             enabled = canConnect,
             colors = ButtonDefaults.buttonColors(
-                containerColor = LitterTheme.accent.copy(alpha = 0.18f),
-                contentColor = LitterTheme.accent,
+                containerColor = LitterTheme.textPrimary.copy(alpha = 0.18f),
+                contentColor = LitterTheme.textPrimary,
             ),
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -540,7 +540,7 @@ fun AlleycatAddServerSheet(
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
-                    color = LitterTheme.accent,
+                    color = LitterTheme.textPrimary,
                 )
                 Spacer(Modifier.width(8.dp))
             }
@@ -548,7 +548,7 @@ fun AlleycatAddServerSheet(
         }
 
         connectError?.let { message ->
-            Text(message, color = LitterTheme.danger, fontSize = 12.sp)
+            Text(message, color = LitterTheme.danger, fontSize = 13.sp)
         }
     }
 }
@@ -609,7 +609,7 @@ private fun AgentRow(
             Text(
                 text = wireLabel(agent.wire),
                 color = LitterTheme.textSecondary,
-                fontSize = 11.sp,
+                fontSize = 13.sp,
             )
         }
         if (!agent.available) {
@@ -630,7 +630,7 @@ private fun SectionHeader(label: String, modifier: Modifier = Modifier) {
     Text(
         text = label.uppercase(),
         color = LitterTheme.textSecondary,
-        fontSize = 10.sp,
+        fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
         modifier = modifier.padding(top = 4.dp),
     )
@@ -642,13 +642,13 @@ private fun PreviewRow(label: String, value: String) {
         Text(
             text = label,
             color = LitterTheme.textSecondary,
-            fontSize = 11.sp,
+            fontSize = 13.sp,
             modifier = Modifier.width(96.dp),
         )
         Text(
             text = value,
             color = LitterTheme.textPrimary,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontFamily = FontFamily.Monospace,
         )
     }
@@ -664,7 +664,7 @@ private fun DisclosureRow(
         Text(
             text = (if (expanded) "▾ " else "▸ ") + label,
             color = LitterTheme.textSecondary,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -703,7 +703,7 @@ fun alleycatWireStorageValue(wire: AppAlleycatAgentWire): String = when (wire) {
     AppAlleycatAgentWire.JSONL -> "jsonl"
 }
 
-private const val PAIR_COMMAND = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.10/kittylitter-npm-package.tar.gz"
+private const val PAIR_COMMAND = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.11/kittylitter-npm-package.tar.gz"
 
 @Composable
 private fun QrScannerScreen(
@@ -893,13 +893,13 @@ private fun StepRow(number: String, title: String) {
         Box(
             modifier = Modifier
                 .size(20.dp)
-                .background(LitterTheme.accent, androidx.compose.foundation.shape.CircleShape),
+                .background(LitterTheme.textPrimary, androidx.compose.foundation.shape.CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = number,
                 color = androidx.compose.ui.graphics.Color.Black,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -975,7 +975,7 @@ private fun FramingHint() {
     Text(
         text = stringResource(R.string.alleycat_hold_steady),
         color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.75f),
-        fontSize = 12.sp,
+        fontSize = 13.sp,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         modifier = Modifier
             .fillMaxWidth()

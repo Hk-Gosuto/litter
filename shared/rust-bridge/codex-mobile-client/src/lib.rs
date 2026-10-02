@@ -118,6 +118,7 @@ pub fn ish_run(cmd: String, cwd: String) -> IshRunResult {
 }
 
 mod local_studio;
+mod remote_dir_cache;
 #[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
 mod mobile_exec_command;
 mod shell_quoting;
@@ -144,6 +145,7 @@ pub mod cloud_sync;
 pub mod conversation;
 pub mod conversation_uniffi;
 pub mod ffi;
+mod home_cache;
 pub mod hydration;
 mod local_runtime_instructions;
 pub mod local_server;
@@ -166,14 +168,19 @@ pub mod session;
 pub(crate) mod slingshot_url;
 pub mod ssh;
 pub mod ssh_bridge;
+pub(crate) mod ssh_detect_cache;
 pub mod ssh_detached_launcher;
 pub mod ssh_launcher;
 pub mod store;
 pub mod terminal;
 mod thread_modes;
 pub mod transport;
+pub mod thread_display_text;
 pub mod types;
 pub mod widget_guidelines;
+
+#[cfg(test)]
+mod perf_profile;
 
 pub use mobile_client::*;
 

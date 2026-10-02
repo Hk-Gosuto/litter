@@ -145,6 +145,13 @@ private struct HomeComposerPresentationHost: View {
 /// and hitting send creates a new thread on (project.serverId, project.cwd)
 /// and submits the initial turn. User stays on home — the new thread appears
 /// in the task list and streams in place.
+/// What the home composer shows in its model pill.
+struct HomeComposerModelPill {
+    let label: String
+    let detail: String?
+    let open: () -> Void
+}
+
 struct HomeComposerView: View {
     let project: AppProject?
     let transcriptionServerId: String?
@@ -155,6 +162,9 @@ struct HomeComposerView: View {
     /// When true, the composer requests keyboard focus the moment it
     /// appears. Used when the view is revealed by tapping `+`.
     var autoFocus: Bool = false
+    /// Model pill in the composer's bottom row (display name; tap opens
+    /// the home model picker). Nil hides it.
+    var modelPill: HomeComposerModelPill? = nil
 
     @Environment(AppModel.self) private var appModel
     @Environment(AppState.self) private var appState
@@ -235,6 +245,8 @@ struct HomeComposerView: View {
                 contextPercent: nil,
                 isTurnActive: isSubmitting,
                 showModeChip: false,
+                modelLabel: modelPill?.label,
+                reasoningLabel: modelPill?.detail,
                 voiceManager: voiceManager,
                 allowsVoiceInput: project != nil,
                 showAttachMenu: $attach.showAttachMenu,
@@ -249,6 +261,7 @@ struct HomeComposerView: View {
                 onRemovePluginMention: removePluginMention,
                 onPasteImage: { image in attach.appendImage(image) },
                 onOpenModePicker: {},
+                onOpenModelPicker: { modelPill?.open() },
                 onSendText: handleSend,
                 onStopRecording: stopVoiceRecording,
                 onStartRecording: startVoiceRecording,
@@ -295,6 +308,10 @@ struct HomeComposerView: View {
         .background {
             HomeComposerPresentationHost(attach: attach)
         }
+        .environment(
+            \.composerPermissionContext,
+            ComposerPermissionContext(threadKey: nil, runtime: appState.selectedAgentRuntimeKind)
+        )
         .task {
             // Focus as early as possible so the keyboard rises in parallel
             // with the glass-morph spring — the two animations then feel
@@ -331,6 +348,21 @@ struct HomeComposerView: View {
             defer { isSubmitting = false }
             var createdThreadKey: ThreadKey?
             do {
+                // No project picked: start in the computer's home folder
+                // instead of blocking the send (ChatGPT never blocks).
+                let project: AppProject
+                if let selectedProject {
+                    project = selectedProject
+                } else {
+                    let serverId = fallbackServerId!
+                    let home = try await appModel.client.resolveRemoteHome(serverId: serverId)
+                    project = AppProject(
+                        id: "\(serverId)::\(home)",
+                        serverId: serverId,
+                        cwd: home,
+                        lastUsedAtMs: nil
+                    )
+                }
                 guard try await appModel.ensureLocalAuthForThreadStart(serverId: project.serverId) else {
                     return
                 }
@@ -362,7 +394,7 @@ struct HomeComposerView: View {
                 createdThreadKey = threadKey
                 onThreadCreated(threadKey)
                 RecentDirectoryStore.shared.record(path: project.cwd, for: project.serverId)
-                let preparedAttachments = images.compactMap(ConversationAttachmentSupport.prepareImage)
+                let preparedAttachments = await ConversationAttachmentSupport.prepareImages(images)
                 var additionalInputs: [AppUserInput] = []
                 let mentionsToSend = collectPluginMentionsForSubmission(text)
                 pluginMentionSelections = []

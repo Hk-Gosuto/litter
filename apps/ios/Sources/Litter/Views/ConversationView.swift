@@ -21,8 +21,7 @@ struct ConversationView: View {
     var resolveTargetLabel: (String) -> String?
     var resolveThreadKey: (String) -> ThreadKey?
     var resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
-    @Binding var composerInputText: String
-    @Binding var composerAttachedImages: [UIImage]
+    let composerDraft: ConversationComposerDraft
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
     var onOpenConversation: ((ThreadKey) -> Void)? = nil
@@ -149,8 +148,7 @@ struct ConversationView: View {
                 ConversationBottomChrome(
                     pinnedContextItems: pinnedContextItems,
                     composer: composer,
-                    composerInputText: $composerInputText,
-                    composerAttachedImages: $composerAttachedImages,
+                    composerDraft: composerDraft,
                     onSend: sendMessage,
                     onFileSearch: searchComposerFiles,
                     bottomInset: bottomInset,
@@ -223,9 +221,10 @@ struct ConversationView: View {
                     activeThreadKey.threadId,
                     text.count
                 )
+                let preparedAttachments = await ConversationAttachmentSupport.prepareImages(attachmentImages)
                 let payload = try makeComposerPayload(
                     text: text,
-                    attachmentImages: attachmentImages,
+                    preparedAttachments: preparedAttachments,
                     fileAttachments: fileAttachments,
                     skillMentions: skillMentions,
                     pluginMentions: pluginMentions
@@ -261,7 +260,7 @@ struct ConversationView: View {
             do {
                 let payload = try makeComposerPayload(
                     text: text,
-                    attachmentImages: [],
+                    preparedAttachments: [],
                     fileAttachments: [],
                     skillMentions: [],
                     pluginMentions: []
@@ -365,12 +364,11 @@ struct ConversationView: View {
 
     private func makeComposerPayload(
         text: String,
-        attachmentImages: [UIImage],
+        preparedAttachments: [PreparedImageAttachment],
         fileAttachments: [ComposerFileAttachment],
         skillMentions: [SkillMentionSelection],
         pluginMentions: [PluginMentionSelection]
     ) throws -> AppComposerPayload {
-        let preparedAttachments = attachmentImages.compactMap(ConversationAttachmentSupport.prepareImage)
         var additionalInputs = skillMentions.map { mention in
             AppUserInput.skill(name: mention.name, path: AbsolutePath(value: mention.path))
         }
@@ -427,12 +425,22 @@ private extension AppThreadSnapshot {
     }
 }
 
+/// Builds the draft bindings inside a leaf so keystrokes invalidate only the
+/// composer, not the conversation screen that holds the draft.
+private struct ComposerDraftBinder<Content: View>: View {
+    @Bindable var draft: ConversationComposerDraft
+    @ViewBuilder let content: (Binding<String>, Binding<[UIImage]>) -> Content
+
+    var body: some View {
+        content($draft.text, $draft.attachedImages)
+    }
+}
+
 private struct ConversationBottomChrome: View {
     @Environment(AppModel.self) private var appModel
     let pinnedContextItems: [ConversationItem]
     let composer: ConversationComposerSnapshot
-    @Binding var composerInputText: String
-    @Binding var composerAttachedImages: [UIImage]
+    let composerDraft: ConversationComposerDraft
     let onSend: (String, [UIImage], [ComposerFileAttachment], [SkillMentionSelection], [PluginMentionSelection]) -> Void
     let onFileSearch: (String) async throws -> [FileSearchResult]
     var bottomInset: CGFloat = 0
@@ -448,20 +456,25 @@ private struct ConversationBottomChrome: View {
             ConversationPinnedContextStrip(
                 items: pinnedContextItems
             )
-            ConversationInputBar(
-                snapshot: composer,
-                onSend: onSend,
-                onFileSearch: onFileSearch,
-                bottomInset: bottomInset,
-                showModeChip: !hasPinnedDiff,
-                onOpenModePicker: openCollaborationModePicker,
-                onOpenConversation: onOpenConversation,
-                onResumeSessions: onResumeSessions,
-                inputText: $composerInputText,
-                attachedImages: $composerAttachedImages
-            )
+            ComposerDraftBinder(draft: composerDraft) { text, images in
+                ConversationInputBar(
+                    snapshot: composer,
+                    onSend: onSend,
+                    onFileSearch: onFileSearch,
+                    bottomInset: bottomInset,
+                    showModeChip: !hasPinnedDiff,
+                    onOpenModePicker: openCollaborationModePicker,
+                    onOpenConversation: onOpenConversation,
+                    onResumeSessions: onResumeSessions,
+                    inputText: text,
+                    attachedImages: images
+                )
+            }
             .background(.clear, ignoresSafeAreaEdges: .bottom)
         }
+        // Line the composer up with the transcript column on wide surfaces.
+        .frame(maxWidth: LitterSpace.readableColumn + LitterSpace.margin * 2)
+        .frame(maxWidth: .infinity)
         .padding(.bottom, 4)
         .background(
             LinearGradient(
@@ -570,10 +583,9 @@ struct RateLimitBadgeView: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Text(label)
-                .font(LitterFont.monospaced(size: 9.5, weight: .semibold))
-                .foregroundColor(LitterTheme.textSecondary)
+                .litterMeta()
             ContextBadgeView(percent: percent, tint: tint)
         }
     }
@@ -1038,17 +1050,6 @@ private struct ConversationMessageList: View {
         )
     }
 
-    private var sourceTurns: [TranscriptTurn] {
-        if transcriptTurns.isEmpty {
-            return TranscriptTurn.build(
-                from: items,
-                threadStatus: threadStatus,
-                expandedRecentTurnCount: expandedRecentTurnCount
-            )
-        }
-        return transcriptTurns
-    }
-
     private var messageActionsDisabled: Bool {
         if case .thinking = threadStatus { return true }
         return false
@@ -1098,19 +1099,6 @@ private struct ConversationMessageList: View {
     private var hasOlderTurns: Bool {
         if let cursor = olderTurnsCursor { return !cursor.isEmpty }
         return false
-    }
-
-    private var mergedRenderableTurns: [TranscriptTurn] {
-        // `renderedTurns` is already kept in sync by `applyTranscriptTurns`
-        // / `syncTranscriptTurns` whenever the transcript changes. Computing
-        // the build key here would be an O(n) hash across the entire
-        // transcript on every body evaluation (including every scroll frame),
-        // defeating the purpose of the cache. Fall back to source-derived
-        // merge only when the cache is empty (e.g. first render before
-        // `.onAppear` fires `syncTranscriptTurns`).
-        if !renderedTurns.isEmpty { return renderedTurns }
-        let turns = sourceTurns
-        return TranscriptTurn.mergeConsecutiveExplorationTurnsForRendering(turns)
     }
 
     var body: some View {
@@ -1163,7 +1151,7 @@ private struct ConversationMessageList: View {
                     try? await Task.sleep(for: .seconds(1))
                     waitingForDataExpired = true
                 }
-                .onChange(of: items) { _, _ in
+                .onChange(of: transcriptRenderDigest) { _, _ in
                     syncTranscriptTurns()
                 }
                 .onChange(of: olderTurnsCursor) { oldCursor, newCursor in
@@ -1368,7 +1356,11 @@ private struct ConversationMessageList: View {
     private func syncTranscriptTurns(resetExpansion: Bool = false) {
         let nextBuildKey = makeTranscriptBuildKey()
         if transcriptBuildKey == nextBuildKey, !transcriptTurns.isEmpty {
-            if resetExpansion { expandedTurnIDs.removeAll() }
+            if resetExpansion {
+                expandedTurnIDs.removeAll()
+                workGroupExpansion.removeAll()
+                rebuildTimelineProjection()
+            }
             return
         }
 
@@ -1434,12 +1426,24 @@ private struct ConversationMessageList: View {
         _ nextTurns: [TranscriptTurn],
         resetExpansion: Bool = false
     ) {
+        // A follow-up never changes the expansion state of an existing turn.
+        // Apply the preference only to newly loaded turns or an explicit reset.
+        if !resetExpansion {
+            let previousIDs = TranscriptTurn.previousTurnIDs(in: nextTurns, from: transcriptTurns)
+            expandedTurnIDs = Set(previousIDs.compactMap { newID, oldID in
+                expandedTurnIDs.contains(oldID) ? newID : nil
+            })
+        }
+        let nextTurns = resetExpansion ? nextTurns : TranscriptTurn.preservingCollapseState(
+            in: nextTurns, from: transcriptTurns
+        )
         let nextTurnIDs = Set(nextTurns.map(\.id))
-        let nextRenderedTurns = TranscriptTurn.mergeConsecutiveExplorationTurnsForRendering(nextTurns)
+        let nextRenderedTurns = TranscriptTurn.renderableTurns(nextTurns)
         transcriptTurns = nextTurns
         renderedTurns = nextRenderedTurns
         if resetExpansion {
             expandedTurnIDs.removeAll()
+            workGroupExpansion.removeAll()
         } else {
             expandedTurnIDs.formIntersection(nextTurnIDs)
         }
@@ -1447,7 +1451,7 @@ private struct ConversationMessageList: View {
 
 }
 
-private struct ConversationTurnRow: View, Equatable {
+private struct ConversationTurnSummary: View, Equatable {
     let turn: TranscriptTurn
     let isExpanded: Bool
     let canCollapse: Bool
@@ -1457,13 +1461,7 @@ private struct ConversationTurnRow: View, Equatable {
     @Environment(\.textScale) private var textScale
     let messageActionsDisabled: Bool
     let onToggleExpansion: () -> Void
-    let resolveTargetLabel: (String) -> String?
-    let resolveThreadKey: (String) -> ThreadKey?
-    let resolveLiveStatus: (ThreadKey) -> AppSubagentStatus?
-    let onWidgetPrompt: (String) -> Void
-    let onEditUserItem: (ConversationItem) -> Void
-    let onForkFromUserItem: (ConversationItem) -> Void
-    var onOpenConversation: ((ThreadKey) -> Void)? = nil
+    @Environment(\.textScale) private var textScale
 
     static func == (lhs: ConversationTurnRow, rhs: ConversationTurnRow) -> Bool {
         lhs.turn.id == rhs.turn.id &&
@@ -1513,98 +1511,33 @@ private struct ConversationTurnRow: View, Equatable {
         }
     }
 
+    /// An older turn folds to two quiet lines: what was asked, then a mono
+    /// metadata line ("12s · 3 tools ›"). No card, glass or fade mask.
     private var collapsedCard: some View {
         // `turn.preview` is derived from the turn's items on access, so bind it
         // once here instead of letting each sub-builder re-derive it.
         let preview = turn.preview
+        let meta = (footerMetadataItems(preview).map(\.text) + ["›"]).joined(separator: " · ")
         return Button(action: onToggleExpansion) {
-            previewTextBlock(preview)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.top, 10)
-                .padding(.bottom, collapsedFooterReservedInset)
-                .modifier(GlassRectModifier(cornerRadius: 16, tint: LitterTheme.surface.opacity(0.34)))
-                .overlay(alignment: .bottomLeading) {
-                    footerRow(preview)
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 10)
-                }
+            VStack(alignment: .leading, spacing: LitterSpace.xs) {
+                Text(verbatim: preview.primaryText)
+                    .litterFont(size: LitterFont.conversationBodyPointSize)
+                    .foregroundColor(LitterTheme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(verbatim: meta)
+                    .litterMeta()
+                    .lineLimit(1)
+            }
+            .frame(minHeight: LitterSpace.hitTarget, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary(preview))
+        .accessibilityHint("Expands this turn")
     }
-
-    private func previewTextBlock(_ preview: TranscriptTurn.Preview) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: preview.primaryText)
-                .litterFont(.body, weight: .semibold)
-                .foregroundColor(LitterTheme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .minimumScaleFactor(0.82)
-                .allowsTightening(true)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(verbatim: responsePreviewText(preview))
-                .litterFont(.body)
-                .foregroundColor(LitterTheme.textSecondary.opacity(0.82))
-                .lineLimit(2)
-                .truncationMode(.tail)
-                .multilineTextAlignment(.leading)
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: collapsedResponseHeight,
-                    maxHeight: collapsedResponseHeight,
-                    alignment: .topLeading
-                )
-                .mask(responsePreviewMask)
-        }
-        .frame(maxWidth: .infinity, minHeight: collapsedPreviewHeight, maxHeight: collapsedPreviewHeight, alignment: .topLeading)
-    }
-
-    private func footerRow(_ preview: TranscriptTurn.Preview) -> some View {
-        let metadataItems = footerMetadataItems(preview)
-        return HStack(alignment: .center, spacing: 10) {
-            if !metadataItems.isEmpty {
-                HStack(spacing: 10) {
-                    ForEach(metadataItems, id: \.id) { item in
-                        CollapsedTurnMetaItem(systemImage: item.systemImage, text: item.text)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Spacer(minLength: 8)
-            Image(systemName: "chevron.down")
-                .litterFont(size: 11, weight: .semibold)
-                .foregroundColor(LitterTheme.textMuted)
-        }
-        .padding(.horizontal, 2)
-        .padding(.bottom, 2)
-    }
-
-    private var collapsedPreviewHeight: CGFloat { collapsedPrimaryLineHeight + collapsedResponseHeight + 4 }
-    private var collapsedFooterReservedInset: CGFloat { collapsedFooterHeight + 10 }
-    private var collapsedFooterHeight: CGFloat { max(UIFont.preferredFont(forTextStyle: .caption1).lineHeight * textScale, 14) }
-
-    private var responsePreviewMask: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .white, location: 0),
-                .init(color: .white, location: 0.55),
-                .init(color: .white.opacity(0.58), location: 0.82),
-                .init(color: .white.opacity(0.24), location: 1),
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    private var collapsedPrimaryLineHeight: CGFloat { collapsedPreviewLineHeight }
-    private var collapsedResponseHeight: CGFloat { (collapsedPreviewLineHeight * 2) + 2 }
-    private var collapsedPreviewLineHeight: CGFloat { UIFont.preferredFont(forTextStyle: .body).lineHeight * textScale }
 
     private func footerMetadataItems(_ preview: TranscriptTurn.Preview) -> [CollapsedTurnMeta] {
         var items: [CollapsedTurnMeta] = []
@@ -1612,16 +1545,16 @@ private struct ConversationTurnRow: View, Equatable {
             items.append(CollapsedTurnMeta(id: "duration", systemImage: "clock", text: durationText))
         }
         if preview.toolCallCount > 0 {
-            items.append(CollapsedTurnMeta(id: "tools", systemImage: "chevron.left.forwardslash.chevron.right", text: "\(preview.toolCallCount)"))
+            items.append(CollapsedTurnMeta(id: "tools", systemImage: "chevron.left.forwardslash.chevron.right", text: "\(preview.toolCallCount) \(preview.toolCallCount == 1 ? "tool" : "tools")"))
         }
         if preview.eventCount > 0 {
-            items.append(CollapsedTurnMeta(id: "events", systemImage: "sparkles", text: "\(preview.eventCount)"))
+            items.append(CollapsedTurnMeta(id: "events", systemImage: "sparkles", text: "\(preview.eventCount) \(preview.eventCount == 1 ? "event" : "events")"))
         }
         if preview.widgetCount > 0 {
-            items.append(CollapsedTurnMeta(id: "widgets", systemImage: "rectangle.3.group", text: "\(preview.widgetCount)"))
+            items.append(CollapsedTurnMeta(id: "widgets", systemImage: "rectangle.3.group", text: "\(preview.widgetCount) \(preview.widgetCount == 1 ? "widget" : "widgets")"))
         }
         if preview.imageCount > 0 {
-            items.append(CollapsedTurnMeta(id: "images", systemImage: "photo", text: "\(preview.imageCount)"))
+            items.append(CollapsedTurnMeta(id: "images", systemImage: "photo", text: "\(preview.imageCount) \(preview.imageCount == 1 ? "image" : "images")"))
         }
         return items
     }
@@ -1629,10 +1562,6 @@ private struct ConversationTurnRow: View, Equatable {
     private func secondaryPreviewText(_ preview: TranscriptTurn.Preview) -> String? {
         guard let secondaryText = preview.secondaryText, secondaryText != preview.primaryText else { return nil }
         return secondaryText
-    }
-
-    private func responsePreviewText(_ preview: TranscriptTurn.Preview) -> String {
-        secondaryPreviewText(preview) ?? preview.primaryText
     }
 
     private func accessibilitySummary(_ preview: TranscriptTurn.Preview) -> String {
@@ -1653,39 +1582,40 @@ private struct CollapsedTurnMeta: Identifiable {
     let text: String
 }
 
-private struct CollapsedTurnMetaItem: View {
-    let systemImage: String
-    let text: String
+/// Separates whole turns: 32pt of space with a faint 1pt line through the
+/// middle. The list's own 10pt spacing is part of the 32.
+private struct TurnBoundaryModifier: ViewModifier {
+    let isTurnStart: Bool
 
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: systemImage)
-                .litterFont(size: 9, weight: .medium)
-                .foregroundColor(LitterTheme.textMuted)
-            Text(verbatim: text)
-                .litterMonoFont(size: 10)
-                .foregroundColor(LitterTheme.textSecondary)
-                .lineLimit(1)
+    func body(content: Content) -> some View {
+        if isTurnStart {
+            VStack(alignment: .leading, spacing: 0) {
+                LitterTheme.turnDivider
+                    .frame(height: 1)
+                    .padding(.top, 5)
+                    .padding(.bottom, LitterSpace.betweenTurns - 10 - 5 - 1)
+                    .accessibilityHidden(true)
+                content
+            }
+        } else {
+            content
         }
     }
 }
 
 private struct ScrollToBottomIndicator: View {
     let action: () -> Void
-    @State private var bob = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: "arrow.down")
-                .litterFont(.caption, weight: .bold)
-                .offset(y: bob ? 1.5 : -1.5)
-                .animation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true), value: bob)
-            Text("Latest")
                 .litterFont(.caption, weight: .semibold)
+            Text("latest")
+                .litterMeta(LitterTheme.textPrimary)
         }
         .foregroundColor(LitterTheme.textPrimary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, LitterSpace.m)
+        .frame(minHeight: 36)
         .modifier(GlassCapsuleModifier())
         .contentShape(Capsule())
         // A normal Button tap can be consumed merely to stop an actively
@@ -1696,9 +1626,21 @@ private struct ScrollToBottomIndicator: View {
         .accessibilityLabel("Latest")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
-        .onAppear {
-            bob = true
-        }
+    }
+}
+
+/// Leaf view that is the only body reading the composer draft on each
+/// keystroke, so text changes don't invalidate `ConversationInputBar`.
+private struct ComposerTextChangeObserver: View {
+    @Binding var text: String
+    let onChange: (String) -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onChange(of: text) { _, next in onChange(next) }
     }
 }
 
@@ -1857,9 +1799,14 @@ private struct ConversationInputBar: View {
         ) {
             composerSurface
         }
-        .onChange(of: inputText) { _, next in
-            scheduleComposerPopupRefresh(for: next)
-        }
+        // Observe the draft from a leaf view: reading `inputText` here (as
+        // `.onChange(of: inputText)` does) made every keystroke re-evaluate
+        // this whole body, the modal coordinator, and every composer row.
+        .background(
+            ComposerTextChangeObserver(text: $inputText) { next in
+                scheduleComposerPopupRefresh(for: next)
+            }
+        )
         .onChange(of: snapshot.composerPrefillRequest?.id) { _, _ in
             guard let prefill = snapshot.composerPrefillRequest else { return }
             inputText = prefill.text
@@ -1939,6 +1886,13 @@ private struct ConversationInputBar: View {
                 composerSelectionRange: composerSelection.binding
             )
             .environment(\.skillMentionHighlightNames, recognizedSkillNames)
+            .environment(
+                \.composerPermissionContext,
+                ComposerPermissionContext(
+                    threadKey: snapshot.threadKey,
+                    runtime: appModel.threadSnapshot(for: snapshot.threadKey)?.agentRuntimeKind
+                )
+            )
             .overlay(alignment: .top) {
                 ConversationComposerPopupOverlayView(
                     state: popupState,
@@ -1983,7 +1937,7 @@ private struct ConversationInputBar: View {
         let pending = appState.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let selection = pending.isEmpty ? snapshot.threadModel : pending
         let runtime = pending.isEmpty
-            ? appModel.threadSnapshot(for: snapshot.threadKey)?.agentRuntimeKind
+            ? snapshot.threadAgentRuntimeKind
             : appState.selectedAgentRuntimeKind
         if let model = snapshot.availableModels.first(where: {
             modelMatchesSelection($0, selection, runtime: runtime)
@@ -3746,9 +3700,10 @@ private struct QueuedFollowUpPreviewStyle {
     }
 }
 
+/// Static mono status line. The old gradient shimmer ran a repeating
+/// animation for as long as the label was on screen.
 private struct ConversationLoadingIndicator: View {
     let label: String
-    @State private var shimmerOffset: CGFloat = -1
 
     var body: some View {
         Text(LocalizedStringKey(label))
@@ -3795,28 +3750,13 @@ private struct MinigameLaunchButton: View {
     }
 }
 
+/// "thinking…" in mono metadata while a turn is live. Static on purpose:
+/// the streaming text and stop button already show that work is happening.
 struct TypingIndicator: View {
-    @State private var shimmerOffset: CGFloat = -1
-
     var body: some View {
-        Text("Thinking")
-            .litterFont(.body, weight: .medium)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [
-                        LitterTheme.textSecondary.opacity(0.4),
-                        LitterTheme.accent,
-                        LitterTheme.textSecondary.opacity(0.4),
-                    ],
-                    startPoint: UnitPoint(x: shimmerOffset - 0.3, y: 0.5),
-                    endPoint: UnitPoint(x: shimmerOffset + 0.3, y: 0.5)
-                )
-            )
-            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false), value: shimmerOffset)
-            .padding(.leading, 12)
-            .onAppear {
-                shimmerOffset = 2
-            }
+        Text("thinking…")
+            .litterMeta()
+            .accessibilityLabel("Thinking")
     }
 }
 
@@ -3862,13 +3802,16 @@ private struct SubagentBreadcrumbBar: View {
             Button(action: onNavigateToParent) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
-                        .litterFont(size: 10, weight: .semibold)
-                    Text("Parent")
-                        .litterFont(.caption, weight: .medium)
+                        .litterFont(size: 13, weight: .semibold)
+                    Text("parent")
+                        .litterMeta(LitterTheme.textPrimary)
                 }
-                .foregroundColor(LitterTheme.accent)
+                .foregroundColor(LitterTheme.textPrimary)
+                .frame(minHeight: LitterSpace.hitTarget)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Parent conversation")
 
             Divider()
                 .frame(height: 14)
@@ -3886,9 +3829,8 @@ private struct SubagentBreadcrumbBar: View {
 
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .padding(.top, topInset + 8)
+        .padding(.horizontal, LitterSpace.margin)
+        .padding(.top, topInset)
         .background(
             LitterTheme.surface.opacity(0.85)
                 .background(.ultraThinMaterial)
@@ -4114,11 +4056,3 @@ extension View {
         }
     }
 }
-
-#if DEBUG
-#Preview("Conversation") {
-    LitterPreviewScene(appModel: LitterPreviewData.makeConversationAppModel(messages: LitterPreviewData.longConversation)) {
-        ContentView()
-    }
-}
-#endif

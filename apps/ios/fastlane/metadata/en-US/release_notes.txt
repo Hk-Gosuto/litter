@@ -1,7 +1,7 @@
-Litter 2.1.2 brings current agent models and more complete settings.
+Smoother, clearer, complete.
 
-- Browse and edit native settings for connected coding agents, including unset options and managed settings.
-- Discover current models from each agent with faster incremental catalog updates.
-- Use Oh My Pi as a separate agent with its own models and settings.
-- Keep computer helpers in the background and preserve Local Studio connections during upgrades.
-- Reduce unnecessary screen updates and improve conversation responsiveness.
+- Typing stays fast after a reply.
+- Full session history for Claude Code, Pi and other harnesses.
+- A new model picker: harness first, then models by provider, with search.
+- Conversations sit in a centered column; code and tables no longer run off the screen.
+- Simpler Settings and cleaner session titles.

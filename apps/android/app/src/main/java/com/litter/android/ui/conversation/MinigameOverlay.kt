@@ -108,7 +108,7 @@ private fun Header(state: MinigameOverlayState, onClose: () -> Unit) {
         Text(
             text = title,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.Medium,
         )
         Spacer(Modifier.weight(1f))
@@ -170,7 +170,7 @@ private fun LoadingSkeleton() {
         Text(
             text = LOADING_STAGES[stageIndex],
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.Medium,
         )
         Box(
@@ -209,7 +209,7 @@ private fun FailureCard(message: String, onRetry: () -> Unit) {
         Text(
             message,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             style = TextStyle(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
         )
         Spacer(Modifier.height(16.dp))

@@ -43,7 +43,7 @@ fun ModelBadgeLine(
     val agentLabel = session.agentDisplayLabel?.trim()?.takeIf { it.isNotEmpty() }
 
     Row(
-        modifier = modifier.padding(top = 1.dp),
+        modifier = modifier.padding(top = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -53,12 +53,6 @@ fun ModelBadgeLine(
         ) {
             BadgeText(text = timeAgo, color = LitterTheme.textMuted.copy(alpha = 0.8f))
             SeparatorDot()
-            Icon(
-                imageVector = Icons.Outlined.Storage,
-                contentDescription = null,
-                tint = LitterTheme.accent.copy(alpha = 0.5f),
-                modifier = Modifier.size(10.dp),
-            )
             BadgeText(
                 text = HomeDashboardSupport.runtimeLabel(session.agentRuntimeKind),
                 color = LitterTheme.accent.copy(alpha = 0.75f),
@@ -71,7 +65,6 @@ fun ModelBadgeLine(
             )
             if (model.isNotEmpty()) {
                 SeparatorDot()
-                AgentIconView(kind = session.agentRuntimeKind, sizeDp = 12)
                 BadgeText(
                     text = model,
                     color = LitterTheme.textSecondary.copy(alpha = 0.7f),
@@ -133,4 +126,4 @@ private fun SeparatorDot() {
     )
 }
 
-private const val BADGE_FONT_SP = 10f
+private const val BADGE_FONT_SP = 13f

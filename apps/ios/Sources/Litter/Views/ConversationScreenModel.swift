@@ -37,6 +37,10 @@ struct ConversationComposerSnapshot: Equatable {
     var threadPreview: String
     var threadModel: String
     var threadReasoningEffort: String?
+    /// Captured here so the composer's model pill never reads
+    /// `appModel.threadSnapshot(for:)` in its body (a per-snapshot edge that
+    /// re-rendered the whole composer during streaming while typing).
+    var threadAgentRuntimeKind: AgentRuntimeKind?
     var modelContextWindow: Int64?
     var contextTokensUsed: Int64?
     var rateLimits: RateLimitSnapshot?
@@ -60,6 +64,7 @@ struct ConversationComposerSnapshot: Equatable {
         threadPreview: "",
         threadModel: "",
         threadReasoningEffort: nil,
+        threadAgentRuntimeKind: nil,
         modelContextWindow: nil,
         contextTokensUsed: nil,
         rateLimits: nil,
@@ -98,16 +103,17 @@ final class ConversationScreenModel {
     private(set) var composer: ConversationComposerSnapshot = .empty
     private(set) var minigameOverlay: MinigameOverlayState = .idle
     /// Precomputed server snapshot for the current thread's server. Read by
-    /// HeaderView and ConversationToolbarControls via param instead of
+    /// ConversationToolbarControls via param instead of
     /// `appModel.snapshot` in body (which would create a per-token edge).
     private(set) var serverSnapshot: AppServerSnapshot?
-    /// Live composer draft. Lifted out of `ConversationInputBar` so it
-    /// survives view teardown when `ConversationDestinationScreen` flips
-    /// through its `if let conversationThread` branch during foreground
-    /// refresh — otherwise typed-but-unsent text and pasted attachments
-    /// vanish on app switch.
-    var composerInputText: String = ""
-    var composerAttachedImages: [UIImage] = []
+    /// Live composer draft. Owned here so it survives view teardown when
+    /// `ConversationDestinationScreen` flips through its
+    /// `if let conversationThread` branch during foreground refresh —
+    /// otherwise typed-but-unsent text and pasted attachments vanish on app
+    /// switch. A separate object, passed down by reference, so only the
+    /// composer observes keystrokes: a binding to a property here made every
+    /// keystroke re-render the whole conversation screen and transcript.
+    let composerDraft = ConversationComposerDraft()
 
     /// Precomputed closure that resolves agent target labels from a captured
     /// snapshot of `sessionSummaries`. Reading `appModel.snapshot` inside a
@@ -160,8 +166,8 @@ final class ConversationScreenModel {
             minigameTask?.cancel()
             minigameTask = nil
             minigameOverlay = .idle
-            composerInputText = ""
-            composerAttachedImages = []
+            composerDraft.text = ""
+            composerDraft.attachedImages = []
         }
 
         refreshState()
@@ -202,7 +208,7 @@ final class ConversationScreenModel {
         }
 
         // Precompute server-derived properties here (non-body context) so
-        // ConversationView/ConversationInputBar/HeaderView never read
+        // ConversationView/ConversationInputBar never read
         // `appModel.snapshot` in their body. Each read of
         // `appModel.snapshot` in `body` registers an observation edge that
         // re-renders the view on every coalesced snapshot mutation (~8 fps
@@ -269,6 +275,7 @@ final class ConversationScreenModel {
             threadPreview: thread.resolvedPreview,
             threadModel: thread.resolvedModel,
             threadReasoningEffort: thread.reasoningEffort,
+            threadAgentRuntimeKind: thread.agentRuntimeKind,
             modelContextWindow: thread.modelContextWindow.map(Int64.init),
             contextTokensUsed: thread.contextTokensUsed.map(Int64.init),
             rateLimits: appModel.rateLimits(
@@ -567,3 +574,11 @@ extension ConversationScreenModel {
     }
 }
 #endif
+
+/// The conversation composer's unsent text and attachments.
+@MainActor
+@Observable
+final class ConversationComposerDraft {
+    var text: String = ""
+    var attachedImages: [UIImage] = []
+}

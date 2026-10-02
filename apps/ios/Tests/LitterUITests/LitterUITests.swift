@@ -6,14 +6,114 @@ final class LitterUITests: XCTestCase {
     }
 
     @MainActor
+    func testFollowUpKeepsPreviousTurnVisible() throws {
+        let app = conversationDisplayHarnessApp()
+        app.launchArguments += ["--ui-test-multiturn", "-collapseTurns", "YES"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["HISTORY_MESSAGE_2"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["multiturn.followup"].isHittable)
+        app.buttons["multiturn.followup"].tap()
+        XCTAssertTrue(app.staticTexts["FOLLOWUP_ANSWER_1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["HISTORY_MESSAGE_2"].exists)
+        app.buttons["Finish"].tap()
+        XCTAssertTrue(app.buttons["multiturn.followup"].isHittable)
+        app.buttons["multiturn.followup"].tap()
+        XCTAssertTrue(app.staticTexts["FOLLOWUP_ANSWER_2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["FOLLOWUP_ANSWER_1"].exists)
+        XCTAssertFalse(app.buttons["Show Less"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    func testLongTurnRemainsScrollableAfterFollowUp() throws {
+        let app = conversationDisplayHarnessApp()
+        app.launchArguments += ["--ui-test-multiturn", "--ui-test-long-turn", "-collapseTurns", "NO"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["HISTORY_MESSAGE_499"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["multiturn.followup"].isHittable)
+        app.buttons["multiturn.followup"].tap()
+        XCTAssertTrue(app.staticTexts["FOLLOWUP_ANSWER_1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["HISTORY_MESSAGE_499"].exists)
+        app.scrollViews.firstMatch.swipeDown()
+        let history = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "HISTORY_MESSAGE_"))
+        XCTAssertTrue(history.firstMatch.exists)
+        XCTAssertFalse(app.buttons["Show Less"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    func testRichTranscriptStaysInsideReadingColumn() throws {
+        let app = conversationDisplayHarnessApp(reasoning: "expanded", commands: "expanded", tools: "expanded")
+        app.launchArguments += ["--ui-test-multiturn", "--ui-test-rich"]
+        app.launch()
+
+        let prose = app.staticTexts.containing(
+            NSPredicate(format: "label BEGINSWITH %@", "This example defines")
+        ).firstMatch
+        XCTAssertTrue(prose.waitForExistence(timeout: 10))
+        attachScreenshot(app, named: "rich-transcript-bottom")
+        sleep(1)
+        attachScreenshot(app, named: "rich-transcript-bottom-settled")
+        let window = app.windows.firstMatch.frame
+        // Prose keeps a real gutter on both sides; wide code and tables
+        // scroll inside their own boxes instead of widening the column.
+        XCTAssertGreaterThanOrEqual(prose.frame.minX, window.minX + 12, "Prose lost its left gutter")
+        XCTAssertLessThanOrEqual(prose.frame.maxX, window.maxX - 12, "Prose lost its right gutter")
+
+        let user = app.staticTexts.containing(
+            NSPredicate(format: "label BEGINSWITH %@", "Write a markdown answer")
+        ).firstMatch
+        XCTAssertTrue(user.exists)
+        XCTAssertLessThanOrEqual(user.frame.maxX, window.maxX - 12, "User bubble touches the edge")
+
+        app.scrollViews.firstMatch.swipeDown()
+        attachScreenshot(app, named: "rich-transcript-top")
+        XCTAssertGreaterThanOrEqual(prose.frame.minX, window.minX + 12, "Column moved after scrolling")
+    }
+
+    @MainActor
+    func testSettingsRootScreenshot() throws {
+        let app = conversationDisplayHarnessApp()
+        app.launchArguments.append("--ui-test-open-settings")
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        attachScreenshot(app, named: "settings-root")
+        app.swipeUp()
+        attachScreenshot(app, named: "settings-root-scrolled")
+        let appearance = app.descendants(matching: .any)["settings.category.appearance"]
+        if appearance.waitForExistence(timeout: 3) {
+            if !appearance.isHittable { app.swipeDown() }
+            appearance.tap()
+            sleep(1)
+            attachScreenshot(app, named: "settings-appearance")
+        }
+    }
+
+    @MainActor
+    private func attachScreenshot(_ app: XCUIApplication, named name: String) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testConversationDisplaySettingsRowsAreReachable() throws {
         let app = conversationDisplayHarnessApp()
         app.launchArguments.append("--ui-test-open-settings")
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Conversation"].waitForExistence(timeout: 5))
-        XCTAssertTrue(findStaticText("Internal Thinking", in: app))
+        // Settings is a category list; conversation options live one level in.
+        let conversation = app.descendants(matching: .any)["settings.category.conversation"]
+        XCTAssertTrue(conversation.waitForExistence(timeout: 10))
+        conversation.tap()
+        XCTAssertTrue(app.navigationBars["Conversation"].waitForExistence(timeout: 5))
+        XCTAssertTrue(findStaticText("Thinking", in: app))
         XCTAssertTrue(findStaticText("Commands", in: app))
         XCTAssertTrue(findStaticText("Tools", in: app))
     }
@@ -115,7 +215,7 @@ final class LitterUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["conversation.modelPickerButton"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Attach"].exists)
-        XCTAssertTrue(app.buttons["Default"].exists)
+        XCTAssertTrue(app.buttons["Mode: Default"].exists)
         let composer = app.textViews["conversation.composerTextView"]
         XCTAssertTrue(composer.exists)
         composer.tap()

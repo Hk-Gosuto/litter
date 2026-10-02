@@ -1,24 +1,9 @@
 package com.litter.android.ui
 
-import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -37,31 +22,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.sigkitten.litter.android.R
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.floor
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sin
 
 /**
- * Animated splash screen matching the iOS version.
- * Time-driven animation: bobbing kittens, blinking, ear twitches, meowing.
+ * Launch splash: theme background with the static Litter mark centered.
+ * No per-frame animation; MainActivity fades the whole layer out once the
+ * first real frame is composed.
  */
 @Composable
 fun AnimatedSplashScreen() {
-    val elapsedMillis = remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) {
-        val startedAt = withInfiniteAnimationFrameMillis { it }
-        while (true) {
-            withInfiniteAnimationFrameMillis { elapsedMillis.longValue = it - startedAt }
-        }
-    }
-    // Read the clock in drawing/layer scopes: animation must not recompose
-    // the splash layout, text, and provider images on every frame.
-
     Box(
         modifier = Modifier
             .fillMaxSize()
