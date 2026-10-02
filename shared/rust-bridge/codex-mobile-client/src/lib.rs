@@ -67,21 +67,10 @@ pub fn proot_bootstrap(
     rootfs_archive: String,
     data_dir: String,
 ) -> Result<(), ProotBootstrapError> {
-    #[cfg(target_os = "android")]
-    {
-        return proot_runtime::bootstrap(
-            std::path::Path::new(&proot_lib_dir),
-            std::path::Path::new(&rootfs_archive),
-            std::path::Path::new(&data_dir),
-        );
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (proot_lib_dir, rootfs_archive, data_dir);
-        Err(ProotBootstrapError::Unsupported {
-            detail: "proot is Android-only".into(),
-        })
-    }
+    let _ = (proot_lib_dir, rootfs_archive, data_dir);
+    Err(ProotBootstrapError::Unsupported {
+        detail: "Local execution is unavailable. Connect a remote computer.".into(),
+    })
 }
 
 /// Run `cmd` through the persistent iSH `/bin/sh`. An empty `cwd` means "no
@@ -123,10 +112,8 @@ mod tls_roots;
 
 #[cfg(target_os = "android")]
 mod android_context;
-#[cfg(target_os = "android")]
-pub mod android_exec;
-#[cfg(target_os = "android")]
-pub mod proot_runtime;
+
+
 
 #[cfg(any(
     all(target_os = "ios", not(target_abi = "macabi")),

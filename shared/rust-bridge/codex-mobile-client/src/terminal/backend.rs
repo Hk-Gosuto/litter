@@ -33,7 +33,7 @@ pub(crate) async fn open_backend(
         TerminalBackendKind::LocalIsh { .. } => Err(TerminalError::Unsupported {
             detail: "embedded iSH is disabled; use a remote Codex terminal".to_string(),
         }),
-        TerminalBackendKind::LocalProot { cwd } => super::local_proot::open(cwd, size).await,
+        TerminalBackendKind::LocalProot { .. } => Err(TerminalError::Unsupported { detail: "Local execution is unavailable. Connect a remote computer.".into() }),
         TerminalBackendKind::RemoteAlleycat {
             node_id,
             token,

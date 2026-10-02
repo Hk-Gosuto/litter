@@ -130,7 +130,7 @@ fn is_path_component_continuation(byte: u8) -> bool {
     target_os = "android"
 ))]
 pub fn install() {
-    codex_core::exec::set_mobile_exec_preflight(prepare_mobile_exec_argv);
+
 }
 
 #[cfg(test)]
