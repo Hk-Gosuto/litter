@@ -160,7 +160,7 @@
     <string name="onboarding_new_thread">start a new thread</string>
     <string name="onboarding_type_message">or just type a message</string>
     <string name="onboarding_realtime_voice">realtime voice</string>
-    <string name="onboarding_voice_key">needs OpenAI key in Settings</string>
+    <string name="onboarding_voice_key">connect a computer with realtime voice support</string>
     <string name="home_loading_thread">Loading thread</string>
     <string name="home_reconnect">Reconnect</string>
     <string name="home_restart_app_server">Restart app server</string>

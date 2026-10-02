@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sigkitten.litter.android.R
 import com.litter.android.state.connectionModeLabel
 import com.litter.android.state.contextPercent
 import com.litter.android.state.displayTitle
@@ -76,6 +78,7 @@ import com.litter.android.ui.scaled
 import kotlinx.coroutines.launch
 import uniffi.codex_mobile_client.AppActivityByDayEntry
 import uniffi.codex_mobile_client.AppConversationStats
+import uniffi.codex_mobile_client.PlanType
 import uniffi.codex_mobile_client.AppModelUsageEntry
 import uniffi.codex_mobile_client.AppServerHealth
 import uniffi.codex_mobile_client.AppServerSnapshot
@@ -137,14 +140,18 @@ fun ConversationInfoScreen(
             IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = LitterTheme.textPrimary,
                     modifier = Modifier.size(20.dp),
                 )
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (isServerOnly) "Server Info" else "Conversation Info",
+                text = if (isServerOnly) {
+                    stringResource(R.string.sessions_server_info)
+                } else {
+                    stringResource(R.string.conversation_info_title)
+                },
                 color = LitterTheme.textPrimary,
                 fontSize = 16f.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -206,13 +213,13 @@ fun ConversationInfoScreen(
                     ) {
                         ActionCircleButton(
                             icon = Icons.Default.Image,
-                            label = "Wallpaper",
+                            label = stringResource(R.string.conversation_wallpaper),
                             onClick = onChangeWallpaper,
                         )
                         if (onOpenShell != null) {
                             ActionCircleButton(
                                 icon = Icons.Outlined.Terminal,
-                                label = "Shell",
+                                label = stringResource(R.string.conversation_shell),
                                 onClick = onOpenShell,
                             )
                         }
@@ -237,7 +244,7 @@ fun ConversationInfoScreen(
             // Section B: Server-Wide Charts
             if (serverUsage != null) {
                 item {
-                    SectionHeader("Server Usage")
+                    SectionHeader(stringResource(R.string.conversation_server_usage))
                 }
 
                 if (serverUsage.tokensByThread.isNotEmpty()) {
@@ -279,12 +286,12 @@ fun ConversationInfoScreen(
     if (showRenameDialog && threadKey != null) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename Thread") },
+            title = { Text(stringResource(R.string.conversation_rename_thread)) },
             text = {
                 OutlinedTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.settings_name)) },
                     singleLine = true,
                 )
             },
@@ -306,12 +313,12 @@ fun ConversationInfoScreen(
                         } catch (_: Exception) {}
                     }
                 }) {
-                    Text("Rename")
+                    Text(stringResource(R.string.common_rename))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRenameDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
         )
@@ -323,7 +330,7 @@ private fun SectionHeader(title: String) {
     Text(
         text = title.uppercase(),
         color = LitterTheme.textMuted,
-        fontSize = LitterTextStyle.footnote.scaled,
+        fontSize = LitterTextStyle.caption2.scaled,
         fontWeight = FontWeight.Bold,
         letterSpacing = 1.sp,
         modifier = Modifier.padding(top = 8.dp),
@@ -339,7 +346,7 @@ private fun ThreadDetailsSection(thread: AppThreadSnapshot?, isLocal: Boolean) {
             .padding(16.dp),
     ) {
         Text(
-            text = thread?.displayTitle ?: "Untitled session",
+            text = thread?.displayTitle ?: stringResource(R.string.conversation_untitled_session),
             color = LitterTheme.textPrimary,
             fontSize = 20f.scaled,
             fontWeight = FontWeight.Bold,
@@ -361,7 +368,7 @@ private fun ThreadDetailsSection(thread: AppThreadSnapshot?, isLocal: Boolean) {
                     Text(
                         text = effort,
                         color = LitterTheme.textMuted,
-                        fontSize = LitterTextStyle.footnote.scaled,
+                        fontSize = LitterTextStyle.caption2.scaled,
                         modifier = Modifier
                             .background(LitterTheme.border.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -381,7 +388,7 @@ private fun ThreadDetailsSection(thread: AppThreadSnapshot?, isLocal: Boolean) {
                 Text(
                     text = abbreviated,
                     color = LitterTheme.textSecondary,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption.scaled,
                     fontFamily = LitterTheme.monoFont,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -392,7 +399,7 @@ private fun ThreadDetailsSection(thread: AppThreadSnapshot?, isLocal: Boolean) {
             Text(
                 text = "id: ${thread.key.threadId}",
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.footnote.scaled,
+                fontSize = LitterTextStyle.caption2.scaled,
                 fontFamily = LitterTheme.monoFont,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -414,8 +421,8 @@ private fun ThreadDetailsSection(thread: AppThreadSnapshot?, isLocal: Boolean) {
 @Composable
 private fun InfoLabel(label: String, value: String) {
     Column {
-        Text(text = label, color = LitterTheme.textMuted, fontSize = 13f.scaled)
-        Text(text = value, color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled)
+        Text(text = label, color = LitterTheme.textMuted, fontSize = 10f.scaled)
+        Text(text = value, color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled)
     }
 }
 
@@ -435,8 +442,8 @@ private fun ContextWindowBar(thread: AppThreadSnapshot) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Context Window", color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled)
-            Text("$percent%", color = LitterTheme.accent, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.conversation_context_window), color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled)
+            Text("$percent%", color = LitterTheme.accent, fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(8.dp))
         LinearProgressIndicator(
@@ -450,9 +457,13 @@ private fun ContextWindowBar(thread: AppThreadSnapshot) {
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "${formatTokenCount(used)} / ${formatTokenCount(window)} tokens",
+            text = stringResource(
+                R.string.conversation_tokens_count,
+                formatTokenCount(used),
+                formatTokenCount(window),
+            ),
             color = LitterTheme.textMuted,
-            fontSize = 13f.scaled,
+            fontSize = 10f.scaled,
         )
     }
 }
@@ -466,7 +477,7 @@ private fun StatsGrid(stats: AppConversationStats) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SectionHeader("Conversation Stats")
+        SectionHeader(stringResource(R.string.conversation_stats))
         Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard("Messages", "${stats.totalMessages}", "${stats.userMessageCount}u / ${stats.assistantMessageCount}a", Modifier.weight(1f))
@@ -474,11 +485,11 @@ private fun StatsGrid(stats: AppConversationStats) {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard("Commands", "${stats.commandsExecuted}", "${stats.commandsSucceeded}\u2713 / ${stats.commandsFailed}\u2717", Modifier.weight(1f))
-            StatCard("Files Changed", "${stats.filesChanged}", null, Modifier.weight(1f))
+            StatCard(stringResource(R.string.conversation_files_changed), "${stats.filesChanged}", null, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatCard("MCP Calls", "${stats.mcpToolCallCount}", null, Modifier.weight(1f))
-            StatCard("Cmd Time", formatDuration(stats.totalCommandDurationMs), null, Modifier.weight(1f))
+            StatCard(stringResource(R.string.conversation_mcp_calls), "${stats.mcpToolCallCount}", null, Modifier.weight(1f))
+            StatCard(stringResource(R.string.conversation_command_time), formatDuration(stats.totalCommandDurationMs), null, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard("Diff", "+${stats.diffAdditions} / -${stats.diffDeletions}", null, Modifier.weight(1f))
@@ -494,7 +505,7 @@ private fun StatCard(title: String, value: String, subtitle: String?, modifier: 
             .background(LitterTheme.codeBackground, RoundedCornerShape(8.dp))
             .padding(12.dp),
     ) {
-        Text(text = title, color = LitterTheme.textMuted, fontSize = 13f.scaled)
+        Text(text = title, color = LitterTheme.textMuted, fontSize = 10f.scaled)
         Text(
             text = value,
             color = LitterTheme.textPrimary,
@@ -503,7 +514,7 @@ private fun StatCard(title: String, value: String, subtitle: String?, modifier: 
             fontFamily = LitterTheme.monoFont,
         )
         if (subtitle != null) {
-            Text(text = subtitle, color = LitterTheme.textSecondary, fontSize = 13f.scaled)
+            Text(text = subtitle, color = LitterTheme.textSecondary, fontSize = 10f.scaled)
         }
     }
 }
@@ -530,7 +541,7 @@ private fun TokenUsageChart(data: List<AppTokensByThreadEntry>) {
             .background(LitterTheme.surface, RoundedCornerShape(12.dp))
             .padding(16.dp),
     ) {
-        Text("Token Usage by Thread", color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.conversation_token_usage_thread), color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(12.dp))
 
         val accent = LitterTheme.accent
@@ -602,7 +613,7 @@ private fun ActivityChart(data: List<AppActivityByDayEntry>) {
             .background(LitterTheme.surface, RoundedCornerShape(12.dp))
             .padding(16.dp),
     ) {
-        Text("Activity Timeline", color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.conversation_activity_timeline), color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(12.dp))
 
         val accent = LitterTheme.accent
@@ -686,7 +697,7 @@ private fun ModelBreakdownChart(data: List<AppModelUsageEntry>) {
             .background(LitterTheme.surface, RoundedCornerShape(12.dp))
             .padding(16.dp),
     ) {
-        Text("Model Breakdown", color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.conversation_model_breakdown), color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(12.dp))
 
         val accent = LitterTheme.accent
@@ -750,7 +761,7 @@ private fun RateLimitGauge(rateLimits: uniffi.codex_mobile_client.RateLimitSnaps
             .background(LitterTheme.surface, RoundedCornerShape(12.dp))
             .padding(16.dp),
     ) {
-        Text("Rate Limits", color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.conversation_rate_limits), color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(12.dp))
 
         val accent = LitterTheme.accent
@@ -764,7 +775,7 @@ private fun RateLimitGauge(rateLimits: uniffi.codex_mobile_client.RateLimitSnaps
         ) {
             // Primary gauge
             GaugeArc(
-                label = "Primary",
+                label = stringResource(R.string.conversation_primary),
                 percent = primaryPercent,
                 animatedProgress = animatedProgress,
                 accent = accent,
@@ -774,7 +785,7 @@ private fun RateLimitGauge(rateLimits: uniffi.codex_mobile_client.RateLimitSnaps
             )
             // Secondary gauge
             GaugeArc(
-                label = "Secondary",
+                label = stringResource(R.string.conversation_secondary),
                 percent = secondaryPercent,
                 animatedProgress = animatedProgress,
                 accent = accent,
@@ -837,7 +848,7 @@ private fun GaugeArc(
             fontWeight = FontWeight.Bold,
             fontFamily = LitterTheme.monoFont,
         )
-        Text(text = label, color = LitterTheme.textMuted, fontSize = 13f.scaled)
+        Text(text = label, color = LitterTheme.textMuted, fontSize = 10f.scaled)
     }
 }
 
@@ -877,21 +888,25 @@ private fun ServerInfoSection(server: AppServerSnapshot) {
             when (account) {
                 is uniffi.codex_mobile_client.Account.Chatgpt -> {
                     InfoRow("Account", account.email)
-                    InfoRow("Plan", account.planType.toString())
+                    InfoRow("Plan", planTypeLabel(account.planType))
                 }
                 is uniffi.codex_mobile_client.Account.ApiKey -> {
-                    InfoRow("Auth", "API Key")
+                    InfoRow(
+                        stringResource(R.string.conversation_auth),
+                        stringResource(R.string.conversation_api_key),
+                    )
                 }
+
             }
         }
 
         server.availableModels?.let { models ->
             if (models.isNotEmpty()) {
-                Text("Available Models", color = LitterTheme.textMuted, fontSize = 13f.scaled)
+                Text(stringResource(R.string.conversation_available_models), color = LitterTheme.textMuted, fontSize = 10f.scaled)
                 Text(
                     text = models.joinToString(", ") { it.displayName.ifBlank { it.id } },
                     color = LitterTheme.textSecondary,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption2.scaled,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -906,11 +921,11 @@ private fun InfoRow(label: String, value: String) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(text = label, color = LitterTheme.textMuted, fontSize = LitterTextStyle.footnote.scaled)
+        Text(text = label, color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
         Text(
             text = value,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.footnote.scaled,
+            fontSize = LitterTextStyle.caption2.scaled,
             fontFamily = LitterTheme.monoFont,
         )
     }
@@ -928,17 +943,17 @@ private fun ActionButtonsRow(
     ) {
         ActionCircleButton(
             icon = Icons.Default.Image,
-            label = "Wallpaper",
+            label = stringResource(R.string.conversation_wallpaper),
             onClick = onChangeWallpaper,
         )
         ActionCircleButton(
             icon = Icons.Default.ContentCopy,
-            label = "Fork",
+            label = stringResource(R.string.sessions_fork),
             onClick = onFork,
         )
         ActionCircleButton(
             icon = Icons.Default.Edit,
-            label = "Rename",
+            label = stringResource(R.string.common_rename),
             onClick = onRename,
         )
     }
@@ -971,13 +986,25 @@ private fun ActionCircleButton(
         Text(
             text = label,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.footnote.scaled,
+            fontSize = LitterTextStyle.caption2.scaled,
             fontWeight = FontWeight.Medium,
         )
     }
 }
 
 // --- Utilities ---
+
+private fun planTypeLabel(planType: PlanType): String = when (planType) {
+    PlanType.FREE -> "Free"
+    PlanType.GO -> "Go"
+    PlanType.PLUS -> "Plus"
+    PlanType.PRO -> "Pro"
+    PlanType.TEAM -> "Team"
+    PlanType.BUSINESS -> "Business"
+    PlanType.ENTERPRISE -> "Enterprise"
+    PlanType.EDU -> "Edu"
+    PlanType.UNKNOWN -> "Unknown"
+}
 
 private fun formatTimestamp(epochSeconds: Long): String {
     val now = System.currentTimeMillis()

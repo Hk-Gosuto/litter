@@ -391,3 +391,26 @@ Remote voice pins are scoped by server ID on both platforms. iOS handoffs use
 the voice session's host; CarPlay resumes connected remote threads. Account
 screens show the selected remote host, and empty terminal screens prompt for
 a computer connection rather than an embedded runtime bootstrap.
+
+## Original interface restored (2026-10-03)
+
+Both platforms use the pre-upgrade themes, typography, glass controls, home
+illustrations, session cards, chat bubbles, composer and settings structure.
+The upstream Quiet/ChatGPT visual redesign and its unused components are
+removed. Model harness/provider/mode classification and whole-catalog search
+remain available through the original picker entry points and theme.
+
+Shared Rust history fixes, title cleanup, saved-computer sync, device-only
+tokens and reconnect improvements are retained. iOS keeps isolated composer
+drafts, off-main launch/attachment work, no hidden keyboard warmup, stable
+message scroll identities and expansion across turn acknowledgements. Android
+keeps system font scaling and Android 15 system-bar compatibility, viewport
+prefetch, paged rendering and bounded hydration while retaining the original
+cards. Its work-chain expansion uses those card styles; iOS retains its
+original individual reasoning/tool collapse controls.
+
+Validation: 281 iOS unit tests and three UI regressions passed (follow-up
+history, 500-message scrolling and harness settings edits/read-only policy);
+79 Android JVM tests passed. Design-specific section grouping assertions were
+removed along with the discarded section UI. Rust runtime sources and mobile
+FFI artifacts are unchanged from the previously validated remote-only build.

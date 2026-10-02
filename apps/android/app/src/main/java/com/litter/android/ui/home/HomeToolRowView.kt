@@ -42,10 +42,15 @@ fun HomeToolRowView(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Box(
+            modifier = Modifier.widthIn(min = 20.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            ToolIcon(tool = entry.tool)
+        }
         Text(
             text = entry.detail,
-            color = LitterTheme.textSecondary,
-            fontFamily = LitterTheme.monoFont,
+            color = LitterTheme.textSecondary.copy(alpha = 0.8f),
             fontSize = TOOL_LOG_FONT_SP.scaled,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -53,4 +58,38 @@ fun HomeToolRowView(
     }
 }
 
-private const val TOOL_LOG_FONT_SP = 13f
+@Composable
+private fun ToolIcon(tool: String) {
+    val tint = LitterTheme.accent.copy(alpha = 0.6f)
+    when (tool) {
+        "MCP" -> Icon(
+            imageVector = Icons.Outlined.Computer,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(12.dp),
+        )
+        "Tool" -> Icon(
+            imageVector = Icons.Outlined.Build,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(12.dp),
+        )
+        else -> {
+            val glyph = when (tool) {
+                "Bash" -> "$"
+                "Edit" -> "✎"
+                "Explore", "WebSearch" -> "⌕"
+                else -> tool.take(1).uppercase()
+            }
+            Text(
+                text = glyph,
+                color = tint,
+                fontSize = (TOOL_LOG_FONT_SP - 1f).scaled,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.defaultMinSize(minWidth = 12.dp),
+            )
+        }
+    }
+}
+
+private const val TOOL_LOG_FONT_SP = 14f

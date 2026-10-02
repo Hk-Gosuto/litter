@@ -75,7 +75,8 @@ struct PiPContentView: View {
                     session: session,
                     isOpening: false,
                     isHydrating: false,
-                    isCancelling: false
+                    isCancelling: false,
+                    zoomLevel: 4
                 )
                 .padding(.top, 12)
                 .frame(width: Self.canvasWidth, alignment: .topLeading)

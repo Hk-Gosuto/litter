@@ -2,7 +2,12 @@ package com.litter.android.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.SubdirectoryArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -47,22 +52,32 @@ fun InlineStats(
     Row(
         modifier = modifier.wrapContentWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (turnCount > 0) {
-            Text(
-                text = "$turnCount turns",
-                color = LitterTheme.textSecondary,
-                fontFamily = LitterTheme.monoFont,
-                fontSize = CHIP_FONT_SP.scaled,
+            IconCountChip(
+                icon = { size ->
+                    Icon(
+                        imageVector = Icons.Outlined.SubdirectoryArrowRight,
+                        contentDescription = null,
+                        tint = LitterTheme.textMuted.copy(alpha = 0.7f),
+                        modifier = Modifier.size(size),
+                    )
+                },
+                count = turnCount,
             )
         }
         if (toolCallCount > 0) {
-            Text(
-                text = "$toolCallCount tools",
-                color = LitterTheme.textSecondary,
-                fontFamily = LitterTheme.monoFont,
-                fontSize = CHIP_FONT_SP.scaled,
+            IconCountChip(
+                icon = { size ->
+                    Icon(
+                        imageVector = Icons.Outlined.Code,
+                        contentDescription = null,
+                        tint = LitterTheme.textMuted.copy(alpha = 0.7f),
+                        modifier = Modifier.size(size),
+                    )
+                },
+                count = toolCallCount,
             )
         }
         if (additions > 0 || deletions > 0) {
@@ -72,13 +87,13 @@ fun InlineStats(
             ) {
                 Text(
                     text = "+$additions",
-                    color = LitterTheme.textSecondary,
+                    color = LitterTheme.accent.copy(alpha = 0.7f),
                     fontFamily = LitterTheme.monoFont,
                     fontSize = CHIP_FONT_SP.scaled,
                 )
                 Text(
                     text = "-$deletions",
-                    color = LitterTheme.textSecondary,
+                    color = LitterTheme.danger.copy(alpha = 0.6f),
                     fontFamily = LitterTheme.monoFont,
                     fontSize = CHIP_FONT_SP.scaled,
                 )
@@ -94,9 +109,9 @@ fun InlineStats(
         if (tokenUsage != null && window != null && window > 0L) {
             val pct = ((tokenUsage.totalTokens.toDouble() / window.toDouble()) * 100.0).toInt()
             val color = if (pct > 80) {
-                LitterTheme.warning
+                LitterTheme.warning.copy(alpha = 0.8f)
             } else {
-                LitterTheme.textSecondary
+                LitterTheme.textMuted.copy(alpha = 0.7f)
             }
             Text(
                 text = "$pct%",
@@ -108,4 +123,23 @@ fun InlineStats(
     }
 }
 
-private const val CHIP_FONT_SP = 13f
+@Composable
+private fun IconCountChip(
+    icon: @Composable (size: androidx.compose.ui.unit.Dp) -> Unit,
+    count: Int,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        icon(10.dp)
+        Text(
+            text = "$count",
+            color = LitterTheme.textMuted.copy(alpha = 0.7f),
+            fontFamily = LitterTheme.monoFont,
+            fontSize = CHIP_FONT_SP.scaled,
+        )
+    }
+}
+
+private const val CHIP_FONT_SP = 10f

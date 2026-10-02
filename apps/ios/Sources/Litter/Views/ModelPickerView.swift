@@ -937,7 +937,7 @@ private extension View {
     func modelPickerListStyle() -> some View {
         listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(LitterTheme.surface)
+            .background(.ultraThinMaterial)
             .environment(\.defaultMinListRowHeight, 48)
             .scrollDismissesKeyboard(.immediately)
     }

@@ -3,7 +3,6 @@ package com.litter.android.ui.conversation
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,7 +94,7 @@ fun HeaderBar(
                 CircularProgressIndicator(
                     modifier = Modifier.size(18.dp),
                     strokeWidth = 2.dp,
-                    color = LitterTheme.textSecondary,
+                    color = LitterTheme.accent,
                 )
             } else {
                 Icon(
@@ -126,23 +125,15 @@ private fun FloatingHeaderButton(
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    // 48dp touch target around a 40dp raised disc (it floats over the
-    // transcript, so it keeps a surface).
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(48.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(LitterTheme.codeBackground.copy(alpha = 0.92f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            content()
-        }
-    }
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(LitterTheme.surface.copy(alpha = 0.86f)),
+        content = content,
+    )
 }
 
 /** Shared fast-tier override selected from the model options sheet. */

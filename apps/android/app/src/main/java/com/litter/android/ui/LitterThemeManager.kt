@@ -342,6 +342,10 @@ object LitterThemeManager {
         applyActiveTheme()
     }
 
+    fun applyDarkMode(enabled: Boolean) {
+        applyAppearanceMode(if (enabled) LitterAppearanceMode.DARK else LitterAppearanceMode.LIGHT)
+    }
+
     fun applyAppearanceMode(mode: LitterAppearanceMode) {
         preferences?.edit()?.putString(APPEARANCE_MODE_KEY, mode.storageValue)?.apply()
         if (appearanceMode != mode) {

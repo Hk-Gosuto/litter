@@ -38,7 +38,7 @@
 "onboarding_new_thread" = "start a new thread";
 "onboarding_type_message" = "or just type a message";
 "onboarding_realtime_voice" = "realtime voice";
-"onboarding_voice_key" = "needs OpenAI key in Settings";
+"onboarding_voice_key" = "connect a computer with realtime voice support";
 "Settings" = "Settings";
 "Done" = "Done";
 "Server Update Failed" = "Server Update Failed";

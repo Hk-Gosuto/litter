@@ -1,17 +1,24 @@
 package com.litter.android.ui.home
 
 import com.sigkitten.litter.android.BuildConfig
+import android.graphics.ImageDecoder
+import android.graphics.drawable.Animatable
 import android.os.Build
+import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -20,12 +27,16 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +67,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,10 +80,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -79,10 +93,14 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.DebugSettings
@@ -97,10 +115,7 @@ import com.litter.android.state.statusLabel
 import com.litter.android.ui.ExperimentalFeatures
 import com.litter.android.ui.LitterFeature
 import com.litter.android.ui.LitterTextStyle
-import com.litter.android.ui.LitterSpacing
 import com.litter.android.ui.LitterTheme
-import com.litter.android.ui.LitterMark
-import com.litter.android.ui.LitterMarkHeaderSize
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.common.DebugBuildLabel
 import com.litter.android.ui.common.runtimeSortIndex
@@ -108,6 +123,7 @@ import com.litter.android.ui.scaled
 import com.sigkitten.litter.android.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import com.litter.android.ui.common.AgentRuntimeKind
 import uniffi.codex_mobile_client.AppProject
 import uniffi.codex_mobile_client.AppServerSnapshot
@@ -168,51 +184,24 @@ fun HomeDashboardScreen(
     var showTipJar by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<AppServerSnapshot?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var catEntranceFinished by remember { mutableStateOf(false) }
     val appVersionLabel = remember { "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})" }
 
     val snap = snapshot
-    // Derivations below go through HomeMemo so re-entering Home (back from a
-    // conversation) reuses the previous results when the snapshot is unchanged.
     val servers = remember(snap?.servers, snap?.activeThread?.serverId) {
-        HomeMemo.servers.get(snap?.servers, snap?.activeThread?.serverId) {
-            snap?.let { HomeDashboardSupport.sortedConnectedServers(it) } ?: emptyList()
-        }
-    }
-    // Remembered saved servers are shown in the switcher from the first frame
-    // with a quiet "connecting…" until the store reports them, so the pill row
-    // never grows after launch and the Local Studio controller's state is
-    // visible while it comes up.
-    val rememberedServers = remember { HomeMemo.rememberedServers(context) }
-    val launchWindowOpen = rememberLaunchWindowOpen()
-    LaunchedEffect(snap?.servers) {
-        snap?.servers?.let { ServerConnectionMemory.note(it) }
-    }
-    val serverEntries = remember(servers, snap?.servers, rememberedServers, launchWindowOpen) {
-        homeServerEntries(
-            visible = servers,
-            allSnapshotServers = snap?.servers.orEmpty(),
-            remembered = rememberedServers,
-            launchWindowOpen = launchWindowOpen,
-        )
-    }
-    // The session list is "known" once a snapshot exists and no saved server
-    // is still connecting. Until then Home never shows its empty state.
-    val sessionsKnown = snap != null && serverEntries.none {
-        it.label == ServerLinkLabel.CONNECTING || it.label == ServerLinkLabel.RECONNECTING
+        snap?.let { HomeDashboardSupport.sortedConnectedServers(it) } ?: emptyList()
     }
     // Every session across connected servers — unlimited, used by the search
     // view so the user can pin any thread.
     val allSessions = remember(snap?.servers, snap?.sessionSummaries) {
-        HomeMemo.allSessions.get(snap?.servers, snap?.sessionSummaries) {
-            snap?.let { HomeDashboardSupport.recentSessions(it, limit = Int.MAX_VALUE) } ?: emptyList()
-        }
+        snap?.let { HomeDashboardSupport.recentSessions(it, limit = Int.MAX_VALUE) } ?: emptyList()
     }
     // Fork lineage map computed from the unfiltered snapshot so a fork
     // whose parent lives on the same server resolves even when later
     // server-scoping drops sessions. Only multi-branch lineages are kept;
     // singletons resolve to `null` at the call site.
     val lineageMap = remember(allSessions) {
-        HomeMemo.lineage.get(allSessions) { HomeDashboardSupport.computeLineageMap(allSessions) }
+        HomeDashboardSupport.computeLineageMap(allSessions)
     }
 
     // Pinned + hidden state. Refreshed when the user mutates via the UI.
@@ -222,10 +211,9 @@ fun HomeDashboardScreen(
     // Home list = pinned first (preserving pin order). Local Studio also keeps
     // recent sessions visible after a pin so newly synced Pi sessions do not
     // disappear behind legacy pinned rows. Hidden threads stay excluded.
-    val homeSessions = remember(pinnedKeys, hiddenKeys, servers, allSessions) {
-        HomeMemo.homeSessions.get(pinnedKeys, hiddenKeys, servers, allSessions) {
-            mergeHomeSessions(pinnedKeys, hiddenKeys, servers, allSessions)
-        }
+    val loadingThreadTitle = stringResource(R.string.home_loading_thread)
+    val homeSessions = remember(pinnedKeys, hiddenKeys, servers, allSessions, loadingThreadTitle) {
+        mergeHomeSessions(pinnedKeys, hiddenKeys, servers, allSessions, loadingThreadTitle)
     }
 
     val scopedServerId = selectedProject?.serverId ?: selectedServerId
@@ -264,13 +252,8 @@ fun HomeDashboardScreen(
     // fresh by AppModel's handleUpdate on SavedAppsChanged (R3), plus a
     // best-effort reload on home re-entry to catch any changes that arrived
     // while we were off-screen.
-    // Once per process: AppModel keeps the flow fresh afterwards, so back
-    // navigation does not reload saved apps from disk.
     LaunchedEffect(Unit) {
-        if (!HomeMemo.savedAppsLoaded) {
-            HomeMemo.savedAppsLoaded = true
-            try { com.litter.android.state.SavedAppsStore.reload(context) } catch (_: Exception) {}
-        }
+        try { com.litter.android.state.SavedAppsStore.reload(context) } catch (_: Exception) {}
     }
     val savedAppsAll by com.litter.android.state.SavedAppsStore.apps.collectAsState()
     var confirmAction by remember { mutableStateOf<ConfirmAction?>(null) }
@@ -302,13 +285,8 @@ fun HomeDashboardScreen(
     var pinchBaseZoom by remember { mutableStateOf<Int?>(null) }
     var pinchAccumulator by remember { mutableStateOf(1f) }
     val haptics = LocalHapticFeedback.current
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    // Home list rules: see HomeListVirtualization.
-    val renderedCount = rememberPagedLimit(listState, recentSessions.size, scopedServerId)
-    val visibleRange = rememberVisibleRange(listState)
-    val hydrationPermits = remember {
-        kotlinx.coroutines.sync.Semaphore(HomeListVirtualization.MAX_CONCURRENT_HYDRATIONS)
-    }
+    val density = LocalDensity.current
+    var topChromeHeight by remember { mutableStateOf(0.dp) }
 
     fun zoomIconFor(level: Int): ImageVector = when (level) {
         // Matches iOS semantics: 1 = most compact (scan), 4 = most detail (deep).
@@ -326,58 +304,56 @@ fun HomeDashboardScreen(
     // without the user opening the thread. Mirrors iOS `hydrateThread` in
     // `LitterApp.swift:990-1006` after commit 52ff299d. The store short-
     // circuits when a listener is already attached, so warm paths stay cheap.
-    // Only pinned rows inside the viewport (+ prefetch) hydrate, at most
-    // MAX_CONCURRENT_HYDRATIONS at a time.
-    val hydrationWindow = HomeListVirtualization.hydrationWindow(
-        firstVisible = visibleRange.first,
-        lastVisible = visibleRange.last,
-        count = minOf(renderedCount, recentSessions.size),
-    )
-    val windowSessions = if (hydrationWindow.isEmpty()) {
-        emptyList()
-    } else {
-        recentSessions.subList(hydrationWindow.first, hydrationWindow.last + 1)
+    val sessionListState = rememberLazyListState()
+    val pageLimit = rememberPagedLimit(sessionListState, recentSessions.size, selectedServerId)
+    val renderedSessions = recentSessions.take(pageLimit)
+    val visibleRange = rememberVisibleRange(sessionListState)
+    val hydrationWindow = HomeListVirtualization.hydrationWindow(visibleRange.first, visibleRange.last, renderedSessions.size)
+    val hydrationSlots = remember { Semaphore(HomeListVirtualization.MAX_CONCURRENT_HYDRATIONS) }
+    val eligiblePins = renderedSessions.slice(hydrationWindow).map {
+        PinnedThreadKey(serverId = it.key.serverId, threadId = it.key.threadId)
     }
-    val visibleIds = windowSessions.map { "${it.key.serverId}/${it.key.threadId}" }
+    val visibleIds = eligiblePins.map { "${it.serverId}/${it.threadId}" }
     val serverHydrationStates = servers
         .sortedBy { it.serverId }
         .joinToString(separator = "|") { server ->
             "${server.serverId}:${server.transportState}:${server.port}"
         }
     LaunchedEffect(visibleIds, pinnedKeys, serverHydrationStates) {
-        val pinnedSet = pinnedKeys.toSet()
+        val byPinnedKey = recentSessions.associateBy {
+            PinnedThreadKey(serverId = it.key.serverId, threadId = it.key.threadId)
+        }
         val serversById = servers.associateBy { it.serverId }
-        for (session in windowSessions) {
-            val pinnedKey = PinnedThreadKey(
-                serverId = session.key.serverId,
-                threadId = session.key.threadId,
+        for (pinnedKey in eligiblePins) {
+            val session = byPinnedKey[pinnedKey]
+            if (session?.isResumed == true) continue
+            val key = session?.key ?: ThreadKey(
+                serverId = pinnedKey.serverId,
+                threadId = pinnedKey.threadId,
             )
-            if (pinnedKey !in pinnedSet) continue
-            if (session.isResumed) continue
-            val key = session.key
             val id = "${key.serverId}/${key.threadId}"
             if (resumingKeys[id] == true) continue
             if (serversById[key.serverId]?.isConnected != true) continue
             resumingKeys[id] = true
             scope.launch {
-                hydrationPermits.acquire()
-                try {
-                    var resumed = runCatching {
-                        appModel.externalResumeThread(key)
-                    }.isSuccess
-                    if (!resumed) {
-                        runCatching { appModel.refreshSessions(listOf(key.serverId)) }
-                        resumed = runCatching {
+                hydrationSlots.withPermit {
+                    try {
+                        var resumed = runCatching {
                             appModel.externalResumeThread(key)
                         }.isSuccess
+                        if (!resumed) {
+                            runCatching { appModel.refreshSessions(listOf(key.serverId)) }
+                            resumed = runCatching {
+                                appModel.externalResumeThread(key)
+                            }.isSuccess
+                        }
+                        if (resumed) {
+                            appModel.loadInitialTurnsIfNeeded(key)
+                        }
+                        appModel.refreshThreadSnapshot(key)
+                    } finally {
+                        resumingKeys.remove(id)
                     }
-                    if (resumed) {
-                        appModel.loadInitialTurnsIfNeeded(key)
-                    }
-                    appModel.refreshThreadSnapshot(key)
-                } finally {
-                    hydrationPermits.release()
-                    resumingKeys.remove(id)
                 }
             }
         }
@@ -416,8 +392,7 @@ fun HomeDashboardScreen(
         isRefreshingThreadSearch = false
     }
 
-    val showOnboardingCoachmarks = sessionsKnown && recentSessions.isEmpty() &&
-        !isComposerActive && !isSearchExpanded
+    val showOnboardingCoachmarks = recentSessions.isEmpty() && !isComposerActive && !isSearchExpanded
     val relativeCoachmarkTargets = coachmarkTargetBounds.mapValues { (_, rect) ->
         rect.relativeTo(coachmarkRootBounds)
     }
@@ -429,12 +404,8 @@ fun HomeDashboardScreen(
     ) {
         // Sessions list fills the whole screen, with top/bottom content padding
         // so items don't sit under the floating chrome.
-        // One set per snapshot instead of a linear server scan in every row.
-        val localServerIds = remember(snap?.servers) {
-            snap?.servers.orEmpty().filter { it.isLocal }.mapTo(HashSet()) { it.serverId }
-        }
         LazyColumn(
-            state = listState,
+            state = sessionListState,
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
@@ -475,26 +446,19 @@ fun HomeDashboardScreen(
                 // insets (edge-to-edge). The measured top offset covers the
                 // floating header/server pills so the first row isn't hidden
                 // behind them when the chrome height changes.
-                // The chrome has a fixed height (HomeTopChromeHeight), so the
-                // first row sits at its final position on the first frame.
                 val sysInsets = WindowInsets.systemBars.asPaddingValues()
                 androidx.compose.foundation.layout.PaddingValues(
-                    top = HomeTopChromeHeight + sysInsets.calculateTopPadding(),
+                    top = if (topChromeHeight > 0.dp) {
+                        topChromeHeight
+                    } else {
+                        72.dp + sysInsets.calculateTopPadding()
+                    },
                     bottom = 72.dp + sysInsets.calculateBottomPadding(),
                 )
             },
         ) {
             if (recentSessions.isNotEmpty()) {
-                // Paged: PAGE_SIZE rows at a time (HomeListVirtualization).
-                items(
-                    if (renderedCount < recentSessions.size) {
-                        recentSessions.subList(0, renderedCount)
-                    } else {
-                        recentSessions
-                    },
-                    key = { "${it.key.serverId}/${it.key.threadId}" },
-                    contentType = { "session" },
-                ) { session ->
+                items(renderedSessions, key = { "${it.key.serverId}/${it.key.threadId}" }) { session ->
                     val id = "${session.key.serverId}/${session.key.threadId}"
                     val isHydrating = !session.isResumed && resumingKeys[id] == true
                     // Row hosts both gestures through one swipe handler:
@@ -531,14 +495,13 @@ fun HomeDashboardScreen(
                             confirmAction = ConfirmAction.ReplyError(msg)
                         },
                         onReply = { replyTargetSession = session },
-                        // No animateItem(): live updates land in place instead
-                        // of sliding rows around at launch.
+                        modifier = Modifier.animateItem(),
                     ) {
                         SessionCanvasRow(
                             session = session,
                             zoomLevel = zoomLevel,
                             isHydrating = isHydrating,
-                            isLocal = session.key.serverId in localServerIds,
+                            isLocal = snap?.servers?.firstOrNull { it.serverId == session.key.serverId }?.isLocal == true,
                             lineage = lineageMap[session.key]?.takeIf { it.hasMultipleBranches },
                             isPinned = sessionIsPinned,
                             onClick = {
@@ -598,7 +561,7 @@ fun HomeDashboardScreen(
                                         onOpenConversation(newKey)
                                     } catch (e: Exception) {
                                         confirmAction = ConfirmAction.ReplyError(
-                                            e.message ?: "Failed to fork thread",
+                                            e.message ?: context.getString(R.string.home_failed_fork_thread),
                                         )
                                     }
                                 }
@@ -607,19 +570,15 @@ fun HomeDashboardScreen(
                     }
                 }
                 if (zoomLevel == 1 && recentSessions.size <= 10) {
-                    item(key = "home-mark-footer", contentType = "footer") {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(LitterSpacing.row),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            LitterMark(size = LitterMarkHeaderSize, color = LitterTheme.textMuted)
-                        }
+                    item(key = "home-cat-footer") {
+                        HomeCatFooter(
+                            playEntrance = !catEntranceFinished,
+                            onEntranceFinished = { catEntranceFinished = true },
+                        )
                     }
                 }
             } else {
-                item(key = "home-empty-spacer", contentType = "spacer") {
+                item {
                     Spacer(Modifier.height(1.dp))
                 }
             }
@@ -633,6 +592,9 @@ fun HomeDashboardScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
+                .onGloballyPositioned {
+                    topChromeHeight = with(density) { it.size.height.toDp() }
+                }
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
                         colors = listOf(
@@ -644,96 +606,75 @@ fun HomeDashboardScreen(
                 )
                 .statusBarsPadding(),
         ) {
-            // Fixed geometry (HomeTopChromeHeight): 8 + 48 header + 2 + 48
-            // pills + 16 fade. Nothing inside may change the chrome height.
-            Spacer(Modifier.height(LitterSpacing.xs))
+            Spacer(Modifier.height(16.dp))
             val tierIcons by com.litter.android.state.TipJarSupporterState.tierIcons
             LaunchedEffect(Unit) {
                 com.litter.android.state.TipJarSupporterState.refresh(context)
             }
             val leftKitties = tierIcons.take(2).filterNotNull()
             val rightKitties = tierIcons.drop(2).filterNotNull()
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(LitterSpacing.touch)
-                    .padding(horizontal = LitterSpacing.xxs),
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Leading actions. The mark is centered independently, so
-                // apps/terminal buttons appearing later never move it.
-                Row(
-                    modifier = Modifier.align(Alignment.CenterStart),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onShowSettings, modifier = Modifier.size(LitterSpacing.touch)) {
+                IconButton(onClick = onShowSettings, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = stringResource(R.string.a11y_settings),
+                        tint = LitterTheme.textSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                if (savedAppsAll.isNotEmpty()) {
+                    IconButton(onClick = onShowApps, modifier = Modifier.size(32.dp)) {
                         Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
+                            Icons.Outlined.GridView,
+                            contentDescription = stringResource(R.string.a11y_apps),
                             tint = LitterTheme.textSecondary,
                             modifier = Modifier.size(20.dp),
                         )
                     }
-                    if (savedAppsAll.isNotEmpty()) {
-                        IconButton(onClick = onShowApps, modifier = Modifier.size(LitterSpacing.touch)) {
-                            Icon(
-                                Icons.Outlined.GridView,
-                                contentDescription = "Apps",
-                                tint = LitterTheme.textSecondary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-                    if (onOpenTerminal != null) {
-                        IconButton(onClick = onOpenTerminal, modifier = Modifier.size(LitterSpacing.touch)) {
-                            Icon(
-                                Icons.Outlined.Terminal,
-                                contentDescription = "Terminal",
-                                tint = LitterTheme.textSecondary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                }
+                if (onOpenTerminal != null) {
+                    IconButton(onClick = onOpenTerminal, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.Outlined.Terminal,
+                            contentDescription = stringResource(R.string.a11y_terminal),
+                            tint = LitterTheme.textSecondary,
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
-                // Mark, with supporter icons in fixed-width slots either side.
+                Spacer(Modifier.weight(1f))
                 Row(
-                    modifier = Modifier.align(Alignment.Center),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.width(SupporterSlotWidth),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        leftKitties.forEach { iconRes ->
-                            androidx.compose.foundation.Image(
-                                painter = androidx.compose.ui.res.painterResource(iconRes),
-                                contentDescription = "Supporter",
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clickable { showTipJar = true },
-                            )
-                        }
+                    leftKitties.forEach { iconRes ->
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(iconRes),
+                            contentDescription = stringResource(R.string.a11y_supporter),
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clickable { showTipJar = true },
+                        )
                     }
-                    LitterMark(
-                        size = LitterMarkHeaderSize,
-                        modifier = Modifier.padding(horizontal = LitterSpacing.xs),
-                    )
-                    Row(
-                        modifier = Modifier.width(SupporterSlotWidth),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.Start),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        rightKitties.forEach { iconRes ->
-                            androidx.compose.foundation.Image(
-                                painter = androidx.compose.ui.res.painterResource(iconRes),
-                                contentDescription = "Supporter",
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clickable { showTipJar = true },
-                            )
-                        }
+                    if (leftKitties.isNotEmpty()) Spacer(Modifier.width(4.dp))
+                    com.litter.android.ui.AnimatedLogo(size = 64.dp)
+                    if (rightKitties.isNotEmpty()) Spacer(Modifier.width(4.dp))
+                    rightKitties.forEach { iconRes ->
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(iconRes),
+                            contentDescription = stringResource(R.string.a11y_supporter),
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clickable { showTipJar = true },
+                        )
                     }
                 }
+                Spacer(Modifier.weight(1f))
                 // Zoom cycle button. Cycles 1→2→3→4→3→2→1 via direction flip at
                 // the bounds. Mirrors iOS HomeDashboardView.swift:186-203.
                 IconButton(
@@ -748,13 +689,11 @@ fun HomeDashboardScreen(
                         }
                         DashboardZoomPrefs.setLevel(context, next)
                     },
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .size(LitterSpacing.touch),
+                    modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
                         imageVector = zoomIconFor(zoomLevel),
-                        contentDescription = "Dashboard zoom",
+                        contentDescription = stringResource(R.string.a11y_dashboard_zoom),
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(20.dp),
                     )
@@ -763,26 +702,15 @@ fun HomeDashboardScreen(
             Spacer(Modifier.height(2.dp))
 
             ServerPillRow(
-                servers = serverEntries,
+                servers = servers,
                 selectedServerId = selectedProject?.serverId ?: selectedServerId,
-                onTap = { entry ->
-                    val live = entry.snapshot
-                    if (live != null && entry.label == null) {
-                        onSelectServer(live)
-                    } else {
-                        // Not up yet: a tap asks for a reconnect instead.
-                        scope.launch {
-                            lifecycleController.reconnectServer(context, appModel, entry.serverId)
-                        }
-                    }
-                },
+                onTap = onSelectServer,
                 onReconnect = { server ->
                     scope.launch {
                         lifecycleController.reconnectServer(context, appModel, server.serverId)
                     }
                 },
-                onRestartAppServer = { entry ->
-                    val server = entry.snapshot ?: return@ServerPillRow
+                onRestartAppServer = { server ->
                     scope.launch {
                         try {
                             if (server.isLocal) {
@@ -794,28 +722,17 @@ fun HomeDashboardScreen(
                             appModel.refreshSnapshot()
                         } catch (error: Exception) {
                             confirmAction = ConfirmAction.ReplyError(
-                                error.message ?: "Unable to restart app server.",
+                                error.message ?: context.getString(R.string.home_failed_restart_server),
                             )
                         }
                     }
                 },
-                onRename = { entry ->
-                    entry.snapshot?.let { server ->
-                        renameText = server.displayName
-                        renameTarget = server
-                    }
+                onRename = { server ->
+                    renameText = server.displayName
+                    renameTarget = server
                 },
-                onRemove = { entry ->
-                    val server = entry.snapshot
-                    if (server != null) {
-                        confirmAction = ConfirmAction.DisconnectServer(server)
-                    } else {
-                        scope.launch {
-                            SavedServerStore.remove(context, entry.serverId)
-                            HomeMemo.invalidateRememberedServers()
-                            appModel.refreshSnapshot()
-                        }
-                    }
+                onRemove = { server ->
+                    confirmAction = ConfirmAction.DisconnectServer(server)
                 },
                 onAdd = onShowDiscovery,
                 onAddBoundsChanged = { coachmarkTargetBounds[CoachmarkTarget.AddServer] = it },
@@ -879,7 +796,7 @@ fun HomeDashboardScreen(
                     ) {
                         Icon(
                             imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                            contentDescription = "Close search",
+                            contentDescription = stringResource(R.string.a11y_close_search),
                             tint = LitterTheme.textSecondary,
                         )
                     }
@@ -887,7 +804,8 @@ fun HomeDashboardScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .padding(horizontal = 12.dp),
                 ) {
                     ThreadSearchResults(
                         sessions = allSessions,
@@ -909,16 +827,6 @@ fun HomeDashboardScreen(
                                 }
                                 isRefreshingThreadSearch = false
                             }
-                        },
-                        onOpen = { session ->
-                            isSearchExpanded = false
-                            searchQuery = ""
-                            selectedSearchRuntimeKind = null
-                            appModel.launchState.updateCurrentCwd(session.cwd)
-                            onOpenConversation(session.key)
-                        },
-                        onArchive = { session ->
-                            confirmAction = ConfirmAction.ArchiveSession(session)
                         },
                         onPin = { session ->
                             pinThreadOnHome(session.key)
@@ -975,10 +883,6 @@ fun HomeDashboardScreen(
                     // there isn't a duplicate search bar at the bottom.
                     isSearchExpanded -> {}
                     isComposerActive -> {
-                        val serverForModels = selectedProject?.serverId
-                            ?: selectedServerId
-                            ?: servers.firstOrNull { !it.isLocal }?.serverId
-                            ?: servers.firstOrNull()?.serverId
                         // Model + project chips sit above the composer input,
                         // mirroring iOS `HomeDashboardView.swift:273-288`. The
                         // model chip opens a bottom sheet with model/effort
@@ -994,6 +898,17 @@ fun HomeDashboardScreen(
                             ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val serverForModels = selectedProject?.serverId
+                                ?: selectedServerId
+                                ?: servers.firstOrNull { !it.isLocal }?.serverId
+                                ?: servers.firstOrNull()?.serverId
+                            HomeModelChip(
+                                serverId = serverForModels,
+                                disabled = serverForModels.isNullOrBlank(),
+                                onSheetStateChange = { open ->
+                                    suppressComposerCollapse = open
+                                },
+                            )
                             ProjectChip(
                                 project = selectedProject,
                                 disabled = servers.isEmpty(),
@@ -1017,16 +932,6 @@ fun HomeDashboardScreen(
                             }
                         }
                         HomeComposerBar(
-                            modelPill = {
-                                HomeModelChip(
-                                    serverId = serverForModels,
-                                    disabled = serverForModels.isNullOrBlank(),
-                                    onSheetStateChange = { open ->
-                                        suppressComposerCollapse = open
-                                    },
-                                    asPill = true,
-                                )
-                            },
                             project = selectedProject,
                             onThreadCreated = { key ->
                                 pinThreadOnHome(key)
@@ -1084,7 +989,7 @@ fun HomeDashboardScreen(
                                 ) {
                                     Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Default.Mic,
-                                        contentDescription = "Start realtime voice",
+                                        contentDescription = stringResource(R.string.a11y_start_realtime_voice),
                                         tint = voiceIconTint,
                                         modifier = Modifier.size(20.dp),
                                     )
@@ -1105,7 +1010,7 @@ fun HomeDashboardScreen(
                             ) {
                                 Icon(
                                     imageVector = androidx.compose.material.icons.Icons.Default.Add,
-                                    contentDescription = "New message",
+                                    contentDescription = stringResource(R.string.a11y_new_message),
                                     tint = LitterTheme.textPrimary,
                                     modifier = Modifier.size(22.dp),
                                 )
@@ -1125,7 +1030,7 @@ fun HomeDashboardScreen(
                             ) {
                                 Icon(
                                     imageVector = androidx.compose.material.icons.Icons.Outlined.Search,
-                                    contentDescription = "Search threads",
+                                    contentDescription = stringResource(R.string.a11y_search_threads),
                                     tint = LitterTheme.textSecondary,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -1137,12 +1042,7 @@ fun HomeDashboardScreen(
         }
 
         if (showOnboardingCoachmarks) {
-            Box(
-                modifier = Modifier.matchParentSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                LitterMark(size = 96.dp, color = LitterTheme.textMuted, fadeIn = true)
-            }
+            EmptyHomeFatCat(modifier = Modifier.matchParentSize())
             OnboardingCoachmarks(
                 targets = relativeCoachmarkTargets,
                 modifier = Modifier.matchParentSize(),
@@ -1160,7 +1060,7 @@ fun HomeDashboardScreen(
                     sendQuickReplyTurn(appModel, threadKey, text)
                 }.onFailure { err ->
                     confirmAction = ConfirmAction.ReplyError(
-                        err.message ?: "Failed to send reply",
+                        err.message ?: context.getString(R.string.home_failed_send_reply),
                     )
                 }
             },
@@ -1168,10 +1068,22 @@ fun HomeDashboardScreen(
     }
 
     confirmAction?.let { action ->
+        val actionTitle = when (action) {
+            is ConfirmAction.ArchiveSession -> stringResource(R.string.home_delete_session)
+            is ConfirmAction.DisconnectServer -> stringResource(R.string.home_disconnect_server)
+            is ConfirmAction.ReplyError -> stringResource(R.string.home_reply_failed)
+        }
+        val actionMessage = when (action) {
+            is ConfirmAction.ArchiveSession ->
+                stringResource(R.string.home_delete_session_confirmation)
+            is ConfirmAction.DisconnectServer ->
+                stringResource(R.string.home_disconnect_server_confirmation, action.server.displayName)
+            is ConfirmAction.ReplyError -> action.reason
+        }
         AlertDialog(
             onDismissRequest = { confirmAction = null },
-            title = { Text(action.title) },
-            text = { Text(action.message) },
+            title = { Text(actionTitle) },
+            text = { Text(actionMessage) },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
@@ -1195,7 +1107,6 @@ fun HomeDashboardScreen(
                             }
                             is ConfirmAction.DisconnectServer -> {
                                 SavedServerStore.remove(context, action.server.serverId)
-                                HomeMemo.invalidateRememberedServers()
                                 appModel.sshSessionStore.close(action.server.serverId)
                                 appModel.serverBridge.disconnectServer(action.server.serverId)
                                 appModel.refreshSnapshot()
@@ -1207,12 +1118,12 @@ fun HomeDashboardScreen(
                     }
                     confirmAction = null
                 }) {
-                    Text("Confirm", color = LitterTheme.danger)
+                    Text(stringResource(R.string.common_confirm), color = LitterTheme.danger)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmAction = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
         )
@@ -1220,12 +1131,12 @@ fun HomeDashboardScreen(
     renameTarget?.let { server ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename Server") },
+            title = { Text(stringResource(R.string.settings_rename_server)) },
             text = {
                 OutlinedTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.settings_name)) },
                     singleLine = true,
                 )
             },
@@ -1239,12 +1150,12 @@ fun HomeDashboardScreen(
                     }
                     renameTarget = null
                 }) {
-                    Text("Save")
+                    Text(stringResource(R.string.common_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { renameTarget = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             },
         )
@@ -1260,8 +1171,247 @@ fun HomeDashboardScreen(
     }
 }
 
-private val HomeTopChromeHeight = 122.dp
-private val SupporterSlotWidth = 64.dp
+@Composable
+private fun HomeCatFooter(
+    playEntrance: Boolean,
+    onEntranceFinished: () -> Unit,
+) {
+    val context = LocalContext.current
+    var showingLoop by remember(playEntrance) { mutableStateOf(!playEntrance) }
+    var transmissionActive by remember { mutableStateOf(false) }
+    val transmissionFrameIndex = rememberCatTransmissionFrameIndex(transmissionActive)
+    val normalResourceId = if (showingLoop) R.drawable.home_cat else R.drawable.home_cat_entrance
+    val normalDrawable = remember(context, normalResourceId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ImageDecoder.decodeDrawable(
+                ImageDecoder.createSource(context.resources, normalResourceId),
+            )
+        } else {
+            ContextCompat.getDrawable(context, normalResourceId)
+        }
+    }
+    val transmissionDrawables = remember(context) {
+        CatTransmissionFrames.map { ContextCompat.getDrawable(context, it) }
+    }
+    val drawable = if (transmissionActive) {
+        transmissionDrawables.getOrNull(transmissionFrameIndex)
+    } else {
+        normalDrawable
+    }
+
+    LaunchedEffect(showingLoop) {
+        if (!showingLoop) {
+            kotlinx.coroutines.delay(HOME_CAT_ENTRANCE_DURATION_MS)
+            showingLoop = true
+            onEntranceFinished()
+        }
+    }
+
+    DisposableEffect(drawable) {
+        (drawable as? Animatable)?.start()
+        onDispose {
+            (drawable as? Animatable)?.stop()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                ImageView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setImageDrawable(drawable)
+                    (drawable as? Animatable)?.start()
+                }
+            },
+            update = { view ->
+                view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                view.scaleType = if (transmissionActive) {
+                    ImageView.ScaleType.CENTER_CROP
+                } else {
+                    ImageView.ScaleType.FIT_CENTER
+                }
+                view.setImageDrawable(drawable)
+                (drawable as? Animatable)?.start()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .catTransmissionPress { transmissionActive = it },
+        )
+    }
+}
+
+private const val HOME_CAT_ENTRANCE_DURATION_MS = 11_100L
+private const val CAT_TRANSMISSION_FRAME_DURATION_MS = 82L
+private val CatTransmissionFrames = intArrayOf(
+    R.drawable.cat_transmission_01,
+    R.drawable.cat_transmission_02,
+    R.drawable.cat_transmission_03,
+    R.drawable.cat_transmission_04,
+    R.drawable.cat_transmission_05,
+    R.drawable.cat_transmission_06,
+)
+
+@Composable
+private fun rememberCatTransmissionFrameIndex(active: Boolean): Int {
+    var frameIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(active) {
+        frameIndex = 0
+        if (!active) return@LaunchedEffect
+        while (true) {
+            delay(CAT_TRANSMISSION_FRAME_DURATION_MS)
+            frameIndex = (frameIndex + 1) % CatTransmissionFrames.size
+        }
+    }
+    return frameIndex
+}
+
+private fun Modifier.catTransmissionPress(onActiveChange: (Boolean) -> Unit): Modifier =
+    pointerInput(Unit) {
+        val holdTimeoutMs = ViewConfiguration.getLongPressTimeout().toLong()
+        val touchSlop = viewConfiguration.touchSlop
+        awaitPointerEventScope {
+            while (true) {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val pointerId = down.id
+                val start = down.position
+                var active = false
+                try {
+                    val cancelledBeforeHold = withTimeoutOrNull(holdTimeoutMs) {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Final)
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                                ?: return@withTimeoutOrNull true
+                            if (
+                                !change.pressed ||
+                                change.isConsumed ||
+                                distanceFromStart(change.position, start) > touchSlop
+                            ) {
+                                return@withTimeoutOrNull true
+                            }
+                        }
+                    } == true
+                    if (!cancelledBeforeHold) {
+                        active = true
+                        onActiveChange(true)
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Final)
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (
+                                change == null ||
+                                !change.pressed ||
+                                change.isConsumed ||
+                                distanceFromStart(change.position, start) > touchSlop
+                            ) {
+                                break
+                            }
+                        }
+                    }
+                } finally {
+                    if (active) {
+                        onActiveChange(false)
+                    }
+                }
+            }
+        }
+    }
+
+private fun distanceFromStart(current: Offset, start: Offset): Float {
+    return hypot(current.x - start.x, current.y - start.y)
+}
+
+@Composable
+private fun EmptyHomeFatCat(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var showingLoop by remember { mutableStateOf(false) }
+    var transmissionActive by remember { mutableStateOf(false) }
+    val transmissionFrameIndex = rememberCatTransmissionFrameIndex(transmissionActive)
+    val normalResourceId = if (showingLoop) R.drawable.home_cat else R.drawable.home_cat_entrance
+    val normalDrawable = remember(context, normalResourceId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ImageDecoder.decodeDrawable(
+                ImageDecoder.createSource(context.resources, normalResourceId),
+            )
+        } else {
+            ContextCompat.getDrawable(context, normalResourceId)
+        }
+    }
+    val transmissionDrawables = remember(context) {
+        CatTransmissionFrames.map { ContextCompat.getDrawable(context, it) }
+    }
+    val drawable = if (transmissionActive) {
+        transmissionDrawables.getOrNull(transmissionFrameIndex)
+    } else {
+        normalDrawable
+    }
+
+    LaunchedEffect(showingLoop) {
+        if (!showingLoop) {
+            kotlinx.coroutines.delay(HOME_CAT_ENTRANCE_DURATION_MS)
+            showingLoop = true
+        }
+    }
+
+    DisposableEffect(drawable) {
+        (drawable as? Animatable)?.start()
+        onDispose {
+            (drawable as? Animatable)?.stop()
+        }
+    }
+
+    BoxWithConstraints(modifier = modifier) {
+        val w = maxWidth
+        val h = maxHeight
+        val catWidth = (w * 0.55f).coerceIn(180.dp, 260.dp)
+        val catHeight = catWidth * (202f / 360f)
+        val offsetX = (w - catWidth) / 2f
+        val offsetY = (h * 0.42f) - (catHeight / 2f)
+        Box(
+            modifier = Modifier
+                .offset(x = offsetX, y = offsetY)
+                .size(width = catWidth, height = catHeight)
+                .catTransmissionPress { transmissionActive = it },
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    ImageView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        isClickable = false
+                        isFocusable = false
+                        setImageDrawable(drawable)
+                        (drawable as? Animatable)?.start()
+                    }
+                },
+                update = { view ->
+                    view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    view.scaleType = if (transmissionActive) {
+                        ImageView.ScaleType.CENTER_CROP
+                    } else {
+                        ImageView.ScaleType.FIT_CENTER
+                    }
+                    view.setImageDrawable(drawable)
+                    (drawable as? Animatable)?.start()
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
 
 /**
  * Merge rule:
@@ -1278,6 +1428,7 @@ internal fun mergeHomeSessions(
     hidden: List<PinnedThreadKey>,
     servers: List<AppServerSnapshot>,
     allSessions: List<AppSessionSummary>,
+    loadingThreadTitle: String,
 ): List<AppSessionSummary> {
     val hiddenSet = hidden.toSet()
     val candidates = allSessions.filter {
@@ -1291,7 +1442,7 @@ internal fun mergeHomeSessions(
         val pinnedSessions = pinned.mapNotNull { key ->
             if (key in hiddenSet) return@mapNotNull null
             byKey[key] ?: serversById[key.serverId]?.let { server ->
-                placeholderPinnedSession(key, server)
+                placeholderPinnedSession(key, server, loadingThreadTitle)
             }
         }
         val pinnedSet = pinned.toSet()
@@ -1318,6 +1469,7 @@ internal fun mergeHomeSessions(
 private fun placeholderPinnedSession(
     pinned: PinnedThreadKey,
     server: AppServerSnapshot,
+    loadingThreadTitle: String,
 ): AppSessionSummary = AppSessionSummary(
     key = uniffi.codex_mobile_client.ThreadKey(
         serverId = pinned.serverId,
@@ -1334,7 +1486,7 @@ private fun placeholderPinnedSession(
     },
     serverDisplayName = server.displayName,
     serverHost = server.host,
-    title = "Loading thread",
+    title = loadingThreadTitle,
     preview = "",
     cwd = "",
     model = "",
@@ -1363,23 +1515,9 @@ private fun placeholderPinnedSession(
 )
 
 private sealed class ConfirmAction {
-    abstract val title: String
-    abstract val message: String
-
-    data class ArchiveSession(val session: AppSessionSummary) : ConfirmAction() {
-        override val title = "Delete Session"
-        override val message = "Are you sure you want to delete this session?"
-    }
-
-    data class DisconnectServer(val server: AppServerSnapshot) : ConfirmAction() {
-        override val title = "Disconnect Server"
-        override val message = "Disconnect from ${server.displayName}?"
-    }
-
-    data class ReplyError(val reason: String) : ConfirmAction() {
-        override val title = "Reply Failed"
-        override val message = reason
-    }
+    data class ArchiveSession(val session: AppSessionSummary) : ConfirmAction()
+    data class DisconnectServer(val server: AppServerSnapshot) : ConfirmAction()
+    data class ReplyError(val reason: String) : ConfirmAction()
 }
 
 private fun Rect.relativeTo(root: Rect): Rect {
@@ -1389,4 +1527,55 @@ private fun Rect.relativeTo(root: Rect): Rect {
         right = right - root.left,
         bottom = bottom - root.top,
     )
+}
+
+@Composable
+private fun HomeAppTakeoverRow(
+    app: SavedApp,
+    extraCount: Int,
+    onClick: () -> Unit,
+) {
+    val monogram = app.title.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val subtitle = buildString {
+        append(app.appId.ifBlank { "app" })
+        if (extraCount > 0) append(" · +$extraCount more")
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(LitterTheme.surface, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(LitterTheme.accent.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = monogram,
+                color = LitterTheme.accent,
+                fontSize = LitterTextStyle.headline.scaled,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = app.title.ifBlank { stringResource(R.string.home_saved_app) },
+                color = LitterTheme.textPrimary,
+                fontSize = LitterTextStyle.callout.scaled,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = subtitle,
+                color = LitterTheme.textMuted,
+                fontSize = LitterTextStyle.caption2.scaled,
+                fontFamily = LitterTheme.monoFont,
+            )
+        }
+    }
 }

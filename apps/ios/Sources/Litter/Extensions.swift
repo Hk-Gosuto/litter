@@ -79,6 +79,12 @@ enum LitterTheme {
     static var textOnAccent: Color   { adaptive(light: light.textOnAccent, dark: dark.textOnAccent) }
     static var codeBackground: Color { adaptive(light: light.codeBackground, dark: dark.codeBackground) }
 
+    static var overlayScrim: Color {
+        colorScheme == .dark
+            ? Color.black.opacity(0.5)
+            : Color.black.opacity(0.3)
+    }
+
     static var gradientColors: [Color] {
         [
             adaptive(light: light.background, dark: dark.background),
@@ -124,58 +130,10 @@ enum LitterTheme {
         )
     }
 
-    // MARK: Litter Quiet roles
-    //
-    // Semantic aliases over the resolved theme so views can speak in the
-    // design's vocabulary (meta, raised, rule) while the user-selected theme
-    // keeps supplying the actual colors in light and dark.
-
-    /// Mono metadata text: timestamps, server · project, counts.
-    static var meta: Color { textMuted }
-    /// Raised surfaces only: code, widgets, sheets, menus, composer.
-    static var raised: Color { codeBackground }
-    /// 2pt rule beside user messages.
-    static var userRule: Color { textMuted.opacity(0.45) }
-    /// Faint 1pt line between whole turns.
-    static var turnDivider: Color { separator.opacity(0.6) }
-
     static var headerScrim: [Color] {
         let bgColor = adaptive(light: light.background, dark: dark.background)
         return [bgColor.opacity(0.7), bgColor.opacity(0.3), .clear]
     }
-}
-
-// MARK: - Litter Quiet layout tokens
-
-/// Spacing scale: 4 / 8 / 12 / 20 / 32. Margins are 20; turns sit 32 apart.
-enum LitterSpace {
-    static let xs: CGFloat = 4
-    static let s: CGFloat = 8
-    static let m: CGFloat = 12
-    static let l: CGFloat = 20
-    static let xl: CGFloat = 32
-    static let margin: CGFloat = 20
-    /// Max width of the conversation column (transcript and composer) on
-    /// wide surfaces, so text stays centered at a fixed reading width.
-    static let readableColumn: CGFloat = 760
-
-    /// Transcript column width for a container: the full width minus the
-    /// page margins on a phone, capped at `readableColumn` on wide screens.
-    static func readableColumnWidth(for containerWidth: CGFloat) -> CGFloat {
-        max(0, min(readableColumn, containerWidth - margin * 2))
-    }
-    static let betweenTurns: CGFloat = 32
-    /// Smallest point size used for any text.
-    static let minText: CGFloat = 13
-    /// Minimum hit target for tappable controls.
-    static let hitTarget: CGFloat = 44
-}
-
-/// Corner radii for raised surfaces.
-enum LitterRadius {
-    static let raised: CGFloat = 14
-    static let sheet: CGFloat = 16
-    static let composer: CGFloat = 26
 }
 
 enum FontFamilyOption: String, CaseIterable, Identifiable {
@@ -371,17 +329,11 @@ enum LitterFont {
     }
 
     static var conversationBodyPointSize: CGFloat {
-        // The system body metric follows Dynamic Type (17pt at the default
-        // size). Conversation prose is the reading surface, so it uses the
-        // full body size; `conversationBodyLineSpacing` opens the leading to
-        // roughly 1.45.
-        max(UIFont.preferredFont(forTextStyle: .body).pointSize, 15)
-    }
-
-    /// Extra leading that takes body text from the font's natural ~1.2 line
-    /// height to roughly 1.45.
-    static var conversationBodyLineSpacing: CGFloat {
-        (conversationBodyPointSize * 0.22).rounded()
+        // The system body metric follows Dynamic Type. Keep chat deliberately
+        // one point tighter than a settings/form screen so long assistant
+        // replies stay comfortable rather than reading like accessibility
+        // display text on a phone.
+        max(UIFont.preferredFont(forTextStyle: .body).pointSize - 1, 15)
     }
 
     static var conversationDiffPointSize: CGFloat {
@@ -455,19 +407,6 @@ extension View {
     func litterMonoFont(size: CGFloat, weight: Font.Weight = .regular) -> some View {
         modifier(ScaledMonoFontModifier(size: size, weight: weight))
     }
-
-    /// Metadata style: mono 13 (footnote, so it follows Dynamic Type), gray.
-    func litterMeta(_ color: Color = LitterTheme.meta) -> some View {
-        modifier(ScaledMonoStyleFontModifier(style: .footnote, weight: .regular))
-            .foregroundStyle(color)
-    }
-
-    /// Lowercase mono section label ("now", "today", "general").
-    func litterSectionLabel() -> some View {
-        litterMeta()
-            .textCase(.lowercase)
-            .accessibilityAddTraits(.isHeader)
-    }
 }
 
 private struct ScaledSizeFontModifier: ViewModifier {
@@ -509,19 +448,6 @@ private struct ScaledMonoFontModifier: ViewModifier {
     }
 }
 
-private struct ScaledMonoStyleFontModifier: ViewModifier {
-    @Environment(\.textScale) private var textScale
-    @Environment(\.fontPreferenceObserver) private var fontPreferenceObserver
-    let style: Font.TextStyle
-    let weight: Font.Weight
-
-    func body(content: Content) -> some View {
-        content
-            .font(LitterFont.monospaced(style, weight: weight, scale: textScale))
-            .id(fontPreferenceObserver.revision)
-    }
-}
-
 private extension Font.TextStyle {
     var uiTextStyle: UIFont.TextStyle {
         switch self {
@@ -538,6 +464,26 @@ private extension Font.TextStyle {
         case .caption2: return .caption2
         @unknown default: return .body
         }
+    }
+}
+
+func serverIconName(for server: DiscoveredServer) -> String {
+    if server.source == .local { return "iphone" }
+
+    if let os = server.os?.lowercased() {
+        if os.contains("windows") { return "pc" }
+        if os.contains("raspbian") { return "cpu" }
+        if os.contains("ubuntu") || os.contains("debian")
+            || os.contains("fedora") || os.contains("red hat")
+            || os.contains("freebsd") || os.contains("linux") { return "server.rack" }
+    }
+
+    switch server.source {
+    case .local: return "iphone"
+    case .bonjour: return "macbook"
+    case .ssh: return "terminal"
+    case .tailscale: return "network"
+    case .manual: return "server.rack"
     }
 }
 
@@ -618,29 +564,6 @@ struct GlassCapsuleModifier: ViewModifier {
             content
                 .background(LitterTheme.surfaceLight)
                 .clipShape(Capsule())
-        }
-    }
-}
-
-/// Quiet raised fill for small circular/capsule controls (matches the
-/// composer card): no glass, no stroke, no shadow.
-struct RaisedCapsuleModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .background(Capsule(style: .continuous).fill(LitterTheme.composerControl))
-            .contentShape(Capsule(style: .continuous))
-    }
-}
-
-extension ToolbarContent {
-    /// Opts a toolbar item out of iOS 26's shared glass capsule so its
-    /// glyph sits directly on the background.
-    @ToolbarContentBuilder
-    func litterPlainToolbarItem() -> some ToolbarContent {
-        if #available(iOS 26.0, *) {
-            self.sharedBackgroundVisibility(.hidden)
-        } else {
-            self
         }
     }
 }
@@ -744,20 +667,4 @@ enum MessageLinks {
         let trimmed = display.count > 40 ? String(display.prefix(40)) + "…" : display
         return "Copy \(trimmed)"
     }
-}
-
-// MARK: - Litter Quiet composer roles
-
-extension LitterTheme {
-    /// Fill of the raised composer card.
-    static var composerFill: Color { raised }
-    /// 1pt outline around the composer card, a touch lighter than its fill.
-    static var composerOutline: Color { textPrimary.opacity(0.10) }
-    /// Fill of the round/capsule controls sitting on the composer card.
-    static var composerControl: Color { textPrimary.opacity(0.07) }
-}
-
-extension LitterSpace {
-    /// Inner padding of the composer card.
-    static let composerInset: CGFloat = 14
 }

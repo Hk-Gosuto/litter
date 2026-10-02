@@ -57,11 +57,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.sigkitten.litter.android.R
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -160,7 +162,7 @@ fun AlleycatAddServerSheet(
                     agents = emptyList()
                     selectedAgentNames = emptySet()
                     isLoadingAgents = false
-                    agentError = e.message ?: "Unable to list agents"
+                    agentError = e.message ?: context.getString(R.string.alleycat_list_agents_failed)
                 }
             }
         }
@@ -183,7 +185,7 @@ fun AlleycatAddServerSheet(
             parsedParams = null
             agents = emptyList()
             selectedAgentNames = emptySet()
-            parseError = e.message ?: "Invalid pairing payload"
+            parseError = e.message ?: context.getString(R.string.alleycat_invalid_pairing)
         }
     }
 
@@ -268,7 +270,7 @@ fun AlleycatAddServerSheet(
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "connectRemoteOverAlleycat failed", e)
                 isConnecting = false
-                connectError = e.message ?: "Unable to connect"
+                connectError = e.message ?: context.getString(R.string.alleycat_connect_failed)
             }
         }
     }
@@ -300,30 +302,34 @@ fun AlleycatAddServerSheet(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = if (pairingMode == AlleycatPairingMode.LocalStudio) {
-                    "Connect Local Studio"
-                } else {
-                    "Add Remote Host"
-                },
+                text = stringResource(
+                    if (pairingMode == AlleycatPairingMode.LocalStudio) {
+                        R.string.alleycat_connect_local_studio
+                    } else {
+                        R.string.alleycat_add_remote_host
+                    },
+                ),
                 color = LitterTheme.textPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onDismiss, enabled = !isConnecting) {
-                Text("Cancel", color = LitterTheme.textPrimary)
+                Text(stringResource(R.string.common_cancel), color = LitterTheme.accent)
             }
         }
 
-        SectionHeader(label = "Pairing")
+        SectionHeader(label = stringResource(R.string.discovery_pairing))
         Text(
-            text = if (pairingMode == AlleycatPairingMode.LocalStudio) {
-                "In Local Studio, open Profile → Phone connection. Scan its QR code or paste Copy connection JSON."
-            } else {
-                "Run Kittylitter on the host, then scan its QR code or paste the JSON it prints. The scanner includes an installation command you can copy."
-            },
+            text = stringResource(
+                if (pairingMode == AlleycatPairingMode.LocalStudio) {
+                    R.string.alleycat_local_studio_instructions
+                } else {
+                    R.string.alleycat_kittylitter_instructions
+                },
+            ),
             color = LitterTheme.textSecondary,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
         )
         OutlinedButton(
             onClick = ::requestCameraAndScan,
@@ -332,25 +338,31 @@ fun AlleycatAddServerSheet(
             Icon(
                 imageVector = Icons.Default.QrCodeScanner,
                 contentDescription = null,
-                tint = LitterTheme.textPrimary,
+                tint = LitterTheme.accent,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (parsedParams == null) "Scan Pairing QR" else "Rescan QR",
-                color = LitterTheme.textPrimary,
+                text = stringResource(
+                    if (parsedParams == null) {
+                        R.string.alleycat_scan_pairing_qr
+                    } else {
+                        R.string.alleycat_rescan_qr
+                    },
+                ),
+                color = LitterTheme.accent,
             )
         }
         if (cameraDenied) {
             Text(
-                text = "Camera permission is required to scan a pairing QR. Open Settings to grant access, or paste the JSON below.",
+                text = stringResource(R.string.alleycat_camera_permission),
                 color = LitterTheme.warning,
-                fontSize = 13.sp,
+                fontSize = 11.sp,
             )
             Text(
-                text = "Open Settings",
-                color = LitterTheme.textPrimary,
-                fontSize = 13.sp,
+                text = stringResource(R.string.alleycat_open_settings),
+                color = LitterTheme.accent,
+                fontSize = 12.sp,
                 modifier = Modifier
                     .padding(top = 4.dp)
                     .clickable { openAppSettings(context) },
@@ -359,7 +371,7 @@ fun AlleycatAddServerSheet(
 
         DisclosureRow(
             expanded = showPaste,
-            label = "Paste Pairing JSON",
+            label = stringResource(R.string.discovery_paste_pairing_json),
             onToggle = { showPaste = !showPaste },
         )
         if (showPaste) {
@@ -371,7 +383,7 @@ fun AlleycatAddServerSheet(
                         text = "{\"v\":1,\"node_id\":\"...\",\"token\":\"...\",\"relay\":\"https://...\"}",
                         color = LitterTheme.textMuted,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
+                        fontSize = 11.sp,
                     )
                 },
                 minLines = 3,
@@ -391,31 +403,37 @@ fun AlleycatAddServerSheet(
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = null,
-                        tint = LitterTheme.textPrimary,
+                        tint = LitterTheme.accent,
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Paste from Clipboard", color = LitterTheme.textPrimary)
+                    Text(stringResource(R.string.discovery_paste_clipboard), color = LitterTheme.accent)
                 }
                 TextButton(
                     onClick = { handleScannedPayload(pasteJson) },
                     enabled = pasteJson.trim().isNotEmpty(),
                 ) {
                     Text(
-                        text = if (parsedParams == null) "Parse JSON" else "Reparse JSON",
-                        color = LitterTheme.textPrimary,
+                        text = stringResource(
+                            if (parsedParams == null) {
+                                R.string.alleycat_parse_json
+                            } else {
+                                R.string.alleycat_reparse_json
+                            },
+                        ),
+                        color = LitterTheme.accent,
                     )
                 }
             }
         }
 
         parseError?.let { message ->
-            Text(message, color = LitterTheme.warning, fontSize = 13.sp)
+            Text(message, color = LitterTheme.warning, fontSize = 12.sp)
         }
 
         val params = parsedParams
         if (params != null) {
-            SectionHeader(label = "Scanned Host")
+            SectionHeader(label = stringResource(R.string.discovery_scanned_host))
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -436,13 +454,13 @@ fun AlleycatAddServerSheet(
             OutlinedTextField(
                 value = displayName,
                 onValueChange = { displayName = it },
-                label = { Text("display name (optional)") },
+                label = { Text(stringResource(R.string.discovery_display_name_optional)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SectionHeader(label = "Agents", modifier = Modifier.weight(1f))
+                SectionHeader(label = stringResource(R.string.discovery_agents), modifier = Modifier.weight(1f))
                 if (availableAgents.isNotEmpty()) {
                     TextButton(
                         onClick = {
@@ -455,8 +473,8 @@ fun AlleycatAddServerSheet(
                     ) {
                         Text(
                             text = if (selectedAgents.size == availableAgents.size) "None" else "All",
-                            color = LitterTheme.textPrimary,
-                            fontSize = 13.sp,
+                            color = LitterTheme.accent,
+                            fontSize = 12.sp,
                         )
                     }
                 }
@@ -475,15 +493,15 @@ fun AlleycatAddServerSheet(
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
-                            color = LitterTheme.textPrimary,
+                            color = LitterTheme.accent,
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Loading agents", color = LitterTheme.textSecondary, fontSize = 13.sp)
+                        Text(stringResource(R.string.discovery_loading_agents), color = LitterTheme.textSecondary, fontSize = 12.sp)
                     }
                     availableAgents.isEmpty() -> Text(
-                        text = "No agents are available on this host.",
+                        text = stringResource(R.string.alleycat_no_agents),
                         color = LitterTheme.textMuted,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         modifier = Modifier.padding(8.dp),
                     )
                     else -> availableAgents.forEach { agent ->
@@ -506,15 +524,15 @@ fun AlleycatAddServerSheet(
         }
 
         agentError?.let { message ->
-            Text(message, color = LitterTheme.warning, fontSize = 13.sp)
+            Text(message, color = LitterTheme.warning, fontSize = 12.sp)
         }
 
         Button(
             onClick = ::connect,
             enabled = canConnect,
             colors = ButtonDefaults.buttonColors(
-                containerColor = LitterTheme.textPrimary.copy(alpha = 0.18f),
-                contentColor = LitterTheme.textPrimary,
+                containerColor = LitterTheme.accent.copy(alpha = 0.18f),
+                contentColor = LitterTheme.accent,
             ),
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -522,15 +540,15 @@ fun AlleycatAddServerSheet(
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
-                    color = LitterTheme.textPrimary,
+                    color = LitterTheme.accent,
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            Text("Connect")
+            Text(stringResource(R.string.common_connect))
         }
 
         connectError?.let { message ->
-            Text(message, color = LitterTheme.danger, fontSize = 13.sp)
+            Text(message, color = LitterTheme.danger, fontSize = 12.sp)
         }
     }
 }
@@ -591,11 +609,11 @@ private fun AgentRow(
             Text(
                 text = wireLabel(agent.wire),
                 color = LitterTheme.textSecondary,
-                fontSize = 13.sp,
+                fontSize = 11.sp,
             )
         }
         if (!agent.available) {
-            Text("Unavailable", color = LitterTheme.textMuted, fontSize = 13.sp)
+            Text(stringResource(R.string.common_unavailable), color = LitterTheme.textMuted, fontSize = 11.sp)
         } else {
             Checkbox(
                 checked = selected,
@@ -612,7 +630,7 @@ private fun SectionHeader(label: String, modifier: Modifier = Modifier) {
     Text(
         text = label.uppercase(),
         color = LitterTheme.textSecondary,
-        fontSize = 13.sp,
+        fontSize = 10.sp,
         fontWeight = FontWeight.SemiBold,
         modifier = modifier.padding(top = 4.dp),
     )
@@ -624,13 +642,13 @@ private fun PreviewRow(label: String, value: String) {
         Text(
             text = label,
             color = LitterTheme.textSecondary,
-            fontSize = 13.sp,
+            fontSize = 11.sp,
             modifier = Modifier.width(96.dp),
         )
         Text(
             text = value,
             color = LitterTheme.textPrimary,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
         )
     }
@@ -646,7 +664,7 @@ private fun DisclosureRow(
         Text(
             text = (if (expanded) "▾ " else "▸ ") + label,
             color = LitterTheme.textSecondary,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -685,7 +703,7 @@ fun alleycatWireStorageValue(wire: AppAlleycatAgentWire): String = when (wire) {
     AppAlleycatAgentWire.JSONL -> "jsonl"
 }
 
-private const val PAIR_COMMAND = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.11/kittylitter-npm-package.tar.gz"
+private const val PAIR_COMMAND = "npx --yes https://github.com/0xSero/litter/releases/download/v0.3.10/kittylitter-npm-package.tar.gz"
 
 @Composable
 private fun QrScannerScreen(
@@ -775,7 +793,7 @@ private fun QrScannerScreen(
                         ),
                 ) {
                     Text(
-                        text = "Cancel",
+                        text = stringResource(R.string.common_cancel),
                         color = androidx.compose.ui.graphics.Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -830,17 +848,21 @@ private fun InstructionsCard(
                 Spacer(Modifier.width(10.dp))
             }
             Text(
-                text = if (pairingMode == AlleycatPairingMode.LocalStudio) {
-                    "Scan Local Studio Profile QR"
-                } else "Pair with kittylitter",
+                text = stringResource(
+                    if (pairingMode == AlleycatPairingMode.LocalStudio) {
+                        R.string.alleycat_scan_local_studio_profile
+                    } else {
+                        R.string.discovery_pair_kittylitter
+                    },
+                ),
                 color = androidx.compose.ui.graphics.Color.White,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             )
         }
         if (pairingMode == AlleycatPairingMode.LocalStudio) {
-            StepRow(number = "1", title = "In Local Studio, open Profile → Phone connection.")
-            StepRow(number = "2", title = "Point this camera at the Profile QR code.")
+            StepRow(number = "1", title = stringResource(R.string.alleycat_local_studio_step_profile))
+            StepRow(number = "2", title = stringResource(R.string.alleycat_local_studio_step_scan))
             TextButton(onClick = onPasteConnectionJSON) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
@@ -849,12 +871,15 @@ private fun InstructionsCard(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text("Paste connection JSON", color = androidx.compose.ui.graphics.Color.White)
+                Text(
+                    stringResource(R.string.alleycat_paste_connection_json),
+                    color = androidx.compose.ui.graphics.Color.White,
+                )
             }
         } else {
-            StepRow(number = "1", title = "On the host you want to connect to, run:")
+            StepRow(number = "1", title = stringResource(R.string.discovery_pair_step_host))
             CommandRow()
-            StepRow(number = "2", title = "Point this camera at the QR code it prints.")
+            StepRow(number = "2", title = stringResource(R.string.discovery_pair_step_camera))
         }
     }
 }
@@ -868,13 +893,13 @@ private fun StepRow(number: String, title: String) {
         Box(
             modifier = Modifier
                 .size(20.dp)
-                .background(LitterTheme.textPrimary, androidx.compose.foundation.shape.CircleShape),
+                .background(LitterTheme.accent, androidx.compose.foundation.shape.CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = number,
                 color = androidx.compose.ui.graphics.Color.Black,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -935,7 +960,9 @@ private fun CommandRow() {
         ) {
             Icon(
                 imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                contentDescription = if (copied) "Copied" else "Copy command",
+                contentDescription = stringResource(
+                    if (copied) R.string.alleycat_copied else R.string.alleycat_copy_command,
+                ),
                 tint = androidx.compose.ui.graphics.Color.White,
                 modifier = Modifier.size(16.dp),
             )
@@ -946,9 +973,9 @@ private fun CommandRow() {
 @Composable
 private fun FramingHint() {
     Text(
-        text = "Hold steady — the QR code is detected automatically.",
+        text = stringResource(R.string.alleycat_hold_steady),
         color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.75f),
-        fontSize = 13.sp,
+        fontSize = 12.sp,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         modifier = Modifier
             .fillMaxWidth()

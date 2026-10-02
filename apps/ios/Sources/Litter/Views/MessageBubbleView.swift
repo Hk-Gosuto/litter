@@ -107,54 +107,45 @@ struct UserBubble: View, Equatable {
         lhs.maxVisibleCharacters == rhs.maxVisibleCharacters
     }
 
-    // ChatGPT pattern: the user's turn is a right-aligned, softly filled
-    // bubble (max ~80% width); images sit above it, also right-aligned.
     var body: some View {
-        VStack(alignment: .trailing, spacing: compact ? LitterSpace.xs : LitterSpace.s) {
-            ForEach(Array(images.chunked(into: 3).enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 6) {
-                    ForEach(row) { img in
-                        bubbleImage(img)
-                    }
-                }
-            }
-            if !text.isEmpty {
-                HStack(spacing: 0) {
-                Spacer(minLength: 56)
-                VStack(alignment: .leading, spacing: LitterSpace.xs) {
-                    FormattedText(text: visibleText)
-                        .litterFont(size: contentFontSize)
-                        .lineSpacing(LitterFont.conversationBodyLineSpacing)
-                        .foregroundColor(LitterTheme.textPrimary)
-                        .textSelection(.enabled)
-
-                    if shouldLimitText {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                expandedLongText.toggle()
-                            }
-                        } label: {
-                            Text(expandedLongText ? "Show less" : "Show more")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(LitterTheme.textSecondary)
-                                .frame(minHeight: LitterSpace.hitTarget, alignment: .leading)
-                                .contentShape(Rectangle())
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: compact ? 30 : 60)
+            VStack(alignment: .trailing, spacing: compact ? 4 : 8) {
+                ForEach(Array(images.chunked(into: 3).enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 6) {
+                        ForEach(row) { img in
+                            bubbleImage(img)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(expandedLongText ? "Show less user message" : "Show more user message")
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(LitterTheme.composerControl)
-                )
+                if !text.isEmpty {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        FormattedText(text: visibleText)
+                            .litterFont(size: contentFontSize)
+                            .foregroundColor(LitterTheme.textPrimary)
+                            .textSelection(.enabled)
+
+                        if shouldLimitText {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    expandedLongText.toggle()
+                                }
+                            } label: {
+                                Text(expandedLongText ? "Show less" : "Show more")
+                                    .litterFont(.caption2, weight: .semibold)
+                                    .foregroundColor(LitterTheme.accent)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(expandedLongText ? "Show less user message" : "Show more user message")
+                        }
+                    }
+                    .padding(.horizontal, compact ? 12 : 18)
+                    .padding(.vertical, compact ? 8 : 14)
+                    .modifier(GlassRectModifier(cornerRadius: compact ? 14 : 18, tint: LitterTheme.accent.opacity(0.3)))
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.bottom, compact ? LitterSpace.s : LitterSpace.l)
+        .padding(.bottom, 14)
         .onChange(of: text) { _, _ in
             expandedLongText = false
         }
@@ -169,7 +160,7 @@ struct UserBubble: View, Equatable {
                         .resizable()
                         .scaledToFill()
                         .frame(width: 100, height: 100)
-                        .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     if let ui = state.imageContainer?.image {
                         thumb.draggable(Image(uiImage: ui)) {
                             Image(uiImage: ui)
@@ -285,6 +276,7 @@ struct AssistantBubble: View, Equatable {
                 bubbleContent
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            Spacer(minLength: compact ? 8 : 20)
         }
     }
 
@@ -334,6 +326,7 @@ struct AssistantBlocksBubble: View {
             .transaction { $0.animation = nil }
             .modifier(MessageTextContextMenu(payload: .segments(segments)))
             .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: compact ? 8 : 20)
         }
     }
 
@@ -491,6 +484,7 @@ struct StreamingAssistantBubble: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 20)
         }
     }
 }
@@ -657,9 +651,8 @@ private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdow
     // primary foreground rather than the muted metadata color so long replies
     // retain contrast on dark themes.
     theme.foregroundColor = LitterTheme.textPrimary
-    theme.lineSpacing = LitterFont.conversationBodyLineSpacing
-    theme.paragraphSpacing = LitterSpace.m
-    theme.blockSpacing = LitterSpace.m
+    theme.paragraphSpacing = 8
+    theme.blockSpacing = 8
 
     theme.headingStyleSet = HeadingStyleSet(
         h1: HeadingStyle(font: LitterFont.markdownHeadingFont(size: bodySize * 1.43, weight: .bold), fontSize: bodySize * 1.43, weight: .bold,
@@ -681,18 +674,18 @@ private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdow
     )
 
     theme.codeBlock = CodeBlockStyle(
-        backgroundColor: LitterTheme.raised,
+        backgroundColor: LitterTheme.codeBackground.opacity(0.8),
         textColor: LitterTheme.textPrimary,
         font: .custom(LitterFont.codeFontName, size: codeSize),
         fontSize: codeSize,
-        cornerRadius: LitterRadius.raised,
+        cornerRadius: 8,
         showLanguageLabel: false,
         showCopyButton: false
     )
 
     theme.blockquote = BlockquoteStyle(
-        borderColor: LitterTheme.userRule,
-        borderWidth: 2,
+        borderColor: LitterTheme.border,
+        borderWidth: 3,
         textColor: LitterTheme.textSecondary,
         padding: EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 4)
     )
@@ -720,7 +713,7 @@ private func litterContentTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdow
     theme.link = LinkStyle(color: LitterTheme.linkColor, underline: true)
 
     theme.thematicBreak = ThematicBreakStyle(
-        color: LitterTheme.turnDivider,
+        color: LitterTheme.border,
         verticalPadding: 12
     )
 
@@ -755,18 +748,18 @@ private func litterSystemTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdown
     )
 
     theme.codeBlock = CodeBlockStyle(
-        backgroundColor: LitterTheme.raised,
+        backgroundColor: LitterTheme.codeBackground.opacity(0.8),
         textColor: LitterTheme.textPrimary,
         font: .custom(LitterFont.codeFontName, size: codeSize),
         fontSize: codeSize,
-        cornerRadius: LitterRadius.raised,
+        cornerRadius: 8,
         showLanguageLabel: false,
         showCopyButton: false
     )
 
     theme.blockquote = BlockquoteStyle(
-        borderColor: LitterTheme.userRule,
-        borderWidth: 2,
+        borderColor: LitterTheme.border,
+        borderWidth: 3,
         textColor: LitterTheme.textSecondary,
         padding: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 4)
     )
@@ -794,7 +787,7 @@ private func litterSystemTheme(bodySize: CGFloat, codeSize: CGFloat) -> Markdown
     theme.link = LinkStyle(color: LitterTheme.linkColor, underline: true)
 
     theme.thematicBreak = ThematicBreakStyle(
-        color: LitterTheme.turnDivider,
+        color: LitterTheme.border,
         verticalPadding: 8
     )
 
@@ -828,13 +821,12 @@ struct LitterCodeBlockRenderer: CodeBlockRenderer {
                 }
             }
             .background(configuration.theme.codeBlock.backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: configuration.theme.codeBlock.cornerRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: configuration.theme.codeBlock.cornerRadius))
+            .modifier(GlassRectModifier(cornerRadius: 8))
             .modifier(CodeBlockTerminalContextMenu(code: configuration.code))
         } else {
-            // Code is a raised surface: the theme's code background and a
-            // 14pt radius carry it. No glass layer or border on top.
             DefaultCodeBlockRenderer().makeBody(configuration: configuration)
-                .clipShape(RoundedRectangle(cornerRadius: configuration.theme.codeBlock.cornerRadius, style: .continuous))
+                .modifier(GlassRectModifier(cornerRadius: 8))
                 .modifier(CodeBlockTerminalContextMenu(code: configuration.code))
         }
     }
@@ -1264,7 +1256,6 @@ private struct ScaledContentMarkdownModifier: ViewModifier {
             )
             .codeSyntaxHighlighter(sharedHighlighter)
             .codeBlockRenderer(LitterCodeBlockRenderer())
-            .lineSpacing((scaledBody * 0.22).rounded())
             .id(fontPreferenceObserver.revision)
         if selectionEnabled {
             themed.textSelection(.enabled)

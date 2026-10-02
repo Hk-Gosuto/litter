@@ -118,7 +118,7 @@ struct HomeDashboardServer: Identifiable, Equatable {
         case .error:
             return ("offline", LitterTheme.danger)
         case .idle:
-            return ("offline", LitterTheme.meta)
+            return ("offline", LitterTheme.textMuted)
         }
     }
 

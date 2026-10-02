@@ -37,9 +37,14 @@ fun RecentUserMessageLine(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Text(
+            text = ">",
+            color = LitterTheme.accent.copy(alpha = 0.7f),
+            fontSize = LitterTextStyle.body.scaled,
+        )
         FormattedText(
             text = message,
-            color = LitterTheme.textSecondary,
+            color = LitterTheme.textSecondary.copy(alpha = 0.9f),
             fontSize = LitterTextStyle.body.scaled,
             maxLines = 1,
         )

@@ -64,10 +64,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -86,10 +86,6 @@ import com.litter.android.state.SavedAppsStore
 import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.LitterTextStyle
-import com.litter.android.ui.LitterQuiet
-import com.litter.android.ui.LitterRadius
-import com.litter.android.ui.LitterSpacing
-import com.litter.android.ui.LitterType
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalTextScale
 import com.litter.android.ui.scaled
@@ -272,37 +268,36 @@ private fun UserMessageRow(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val userRule = LitterQuiet.userRule
 
-    // Litter Quiet user turn: plain text behind a 2dp left rule with a small
-    // mono "you" label. Long-press opens the action menu (Edit / Fork /
-    // Copy); selection is disabled here so the long-press reaches the menu.
-    Box(
+    // Right-aligned user bubble matching iOS `UserBubble`: accent-tinted
+    // rounded rect that hugs content width, with a 60dp minimum gutter on
+    // the left so long messages wrap before reaching that edge.
+    //
+    // Long-press opens an action menu (Edit / Fork / Copy). Text selection is
+    // disabled on user bubbles because Compose's SelectionContainer would
+    // consume the long-press gesture before our handler sees it; copy is
+    // exposed via the menu instead.
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = LitterSpacing.xxs, bottom = LitterSpacing.sm),
+            .padding(top = 10.dp, bottom = 14.dp),
+        horizontalArrangement = Arrangement.End,
     ) {
         Box {
             Column(
+                horizontalAlignment = Alignment.End,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .padding(start = 60.dp)
+                    .background(
+                        LitterTheme.accent.copy(alpha = 0.3f),
+                        RoundedCornerShape(18.dp),
+                    )
                     .combinedClickable(
                         onClick = {},
                         onLongClick = { showMenu = true },
                     )
-                    .drawBehind {
-                        drawRect(
-                            color = userRule,
-                            size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height),
-                        )
-                    }
-                    .padding(start = LitterSpacing.sm, top = LitterSpacing.xxs, bottom = LitterSpacing.xxs),
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
             ) {
-                Text(
-                    text = "you",
-                    style = LitterType.meta,
-                    modifier = Modifier.padding(bottom = LitterSpacing.xxs),
-                )
                 LimitedUserMessageText(data.text)
                 // Inline images from data URIs
                 for (uri in data.imageDataUris) {
@@ -318,11 +313,11 @@ private fun UserMessageRow(
                                 .data(it)
                                 .crossfade(false)
                                 .build(),
-                            contentDescription = "Attached image",
+                            contentDescription = stringResource(R.string.a11y_attached_image),
                             modifier = Modifier
                                 .padding(top = 4.dp)
                                 .heightIn(max = 200.dp)
-                                .clip(LitterRadius.raisedShape),
+                                .clip(RoundedCornerShape(8.dp)),
                         )
                     }
                 }
@@ -333,18 +328,18 @@ private fun UserMessageRow(
             ) {
                 if (onEdit != null) {
                     DropdownMenuItem(
-                        text = { Text("Edit Message") },
+                        text = { Text(stringResource(R.string.conversation_edit_message)) },
                         onClick = { showMenu = false; onEdit(itemId) },
                     )
                 }
                 if (onFork != null) {
                     DropdownMenuItem(
-                        text = { Text("Fork From Here") },
+                        text = { Text(stringResource(R.string.conversation_fork_from_here)) },
                         onClick = { showMenu = false; onFork(itemId) },
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Copy") },
+                    text = { Text(stringResource(R.string.common_copy)) },
                     onClick = {
                         showMenu = false
                         val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -373,12 +368,15 @@ private fun LimitedUserMessageText(text: String) {
 
     if (isLong) {
         Text(
-            text = if (expanded) "show less" else "show more",
-            style = LitterType.meta,
+            text = stringResource(
+                if (expanded) R.string.conversation_show_less else R.string.conversation_show_more,
+            ),
+            color = LitterTheme.accent,
+            fontSize = LitterTextStyle.caption2.scaled,
+            fontWeight = FontWeight.SemiBold,
             modifier = Modifier
-                .padding(top = LitterSpacing.xxs)
-                .clickable { expanded = !expanded }
-                .padding(vertical = LitterSpacing.xxs),
+                .padding(top = 4.dp)
+                .clickable { expanded = !expanded },
         )
     }
 }
@@ -462,8 +460,8 @@ private fun AssistantMessageRow(
             }
             Text(
                 text = label,
-                color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.footnote.scaled,
+                color = LitterTheme.accent,
+                fontSize = LitterTextStyle.caption2.scaled,
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.height(2.dp))
@@ -517,8 +515,10 @@ private fun AssistantRenderBlocks(
                 is AppMessageRenderBlock.InlineImage -> {
                     InlineChatImage(
                         data = block.data,
-                        contentDescription = "Assistant image ${index + 1}",
-                        maxHeight = 300.dp,
+                        contentDescription = stringResource(
+                            R.string.a11y_assistant_image_number,
+                            index + 1,
+                        ),
                     )
                 }
                 is AppMessageRenderBlock.LocalImage -> {
@@ -583,7 +583,7 @@ private fun CodeReviewFindingCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface.copy(alpha = 0.72f), LitterRadius.raisedShape)
+            .background(LitterTheme.surface.copy(alpha = 0.72f), RoundedCornerShape(22.dp))
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -595,7 +595,7 @@ private fun CodeReviewFindingCard(
                 Text(
                     text = "P${priority.toInt()}",
                     color = priorityTint,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption2.scaled,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .background(priorityTint.copy(alpha = 0.12f), RoundedCornerShape(999.dp))
@@ -613,7 +613,7 @@ private fun CodeReviewFindingCard(
             )
 
             Text(
-                text = "Dismiss",
+                text = stringResource(R.string.common_dismiss),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.callout.scaled,
                 fontWeight = FontWeight.Medium,
@@ -653,14 +653,12 @@ private fun ReasoningRow(
             .fillMaxWidth()
             .padding(vertical = 4.dp),
     ) {
-        // Subdued prose: smaller body text in the muted tone, so the chain
-        // reads as secondary to the answer without mono/italic noise.
         Text(
             text = reasoningText,
-            color = LitterTheme.textMuted,
-            fontSize = LitterTextStyle.subheadline.scaled,
-            fontFamily = LitterTheme.bodyFont,
-            lineHeight = LitterTextStyle.subheadline.scaled * 1.4f,
+            color = LitterTheme.textSecondary,
+            fontSize = LitterTextStyle.body.scaled,
+            fontFamily = LitterTheme.monoFont,
+            fontStyle = FontStyle.Italic,
         )
     }
 }
@@ -680,9 +678,9 @@ private fun CommandExecutionRow(
             ?.trim('\n')
             ?.takeIf { it.isNotBlank() }
             ?: if (data.status == AppOperationStatus.PENDING || data.status == AppOperationStatus.IN_PROGRESS) {
-                "Waiting for output…"
+                stringResource(R.string.timeline_waiting_output)
             } else {
-                "No output"
+                stringResource(R.string.timeline_no_output)
             }
     val isRunning = data.status == AppOperationStatus.PENDING || data.status == AppOperationStatus.IN_PROGRESS
     val displayedCommand = remember(data.command) { displayCommandText(data.command) }
@@ -701,48 +699,57 @@ private fun CommandExecutionRow(
         outputScrollState.animateScrollTo(outputScrollState.maxValue)
     }
 
-    // Tool calls read as one expandable mono line; the output opens in a
-    // raised code surface underneath.
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .background(LitterTheme.surface, RoundedCornerShape(12.dp))
+            .border(0.5.dp, LitterTheme.border, RoundedCornerShape(12.dp))
             .clickable { expanded = !expanded }
-            .padding(vertical = LitterSpacing.xs),
+            .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
+                text = "$",
+                color = LitterTheme.warning,
+                fontFamily = LitterTheme.monoFont,
+                fontSize = LitterTextStyle.caption.scaled,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
                 text = if (expanded) displayedCommand else collapsedCommand,
-                style = LitterType.meta,
                 color = LitterTheme.textSystem,
+                fontFamily = LitterTheme.monoFont,
+                fontSize = LitterTextStyle.body.scaled,
                 maxLines = if (expanded) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             )
-            val trailing = buildString {
-                data.durationMs?.takeIf { it > 0 }?.let { append(" · ").append(formatDuration(it)) }
-                if (data.status == AppOperationStatus.FAILED) append(" · failed")
-                append(if (expanded) " ‹" else " ›")
+            data.durationMs?.takeIf { it > 0 }?.let { ms ->
+                Spacer(Modifier.width(6.dp))
+                DurationChip(formatDuration(ms), statusTint(data.status))
             }
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = trailing,
-                style = LitterType.meta,
-                color = if (data.status == AppOperationStatus.FAILED) LitterQuiet.error else LitterQuiet.meta,
-                maxLines = 1,
+                text = if (expanded) "▲" else "▼",
+                color = LitterTheme.warning,
+                fontSize = LitterTextStyle.caption2.scaled,
+                fontWeight = FontWeight.Bold,
             )
         }
 
         if (expanded) {
-            Spacer(Modifier.height(LitterSpacing.xs))
+            Spacer(Modifier.height(6.dp))
             LimitedToolTextBlock(outputText, previewFromTail = isRunning) { display ->
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 116.dp)
-                        .background(LitterQuiet.raised, LitterRadius.raisedShape)
-                        .padding(horizontal = LitterSpacing.sm, vertical = LitterSpacing.xs),
+                        .background(LitterTheme.codeBackground, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
                     SelectableConversationText {
                         Text(
@@ -826,7 +833,7 @@ private fun buildFileChangeSummary(
             withStyle(SpanStyle(color = LitterTheme.textSecondary)) {
                 append("$verb ")
             }
-            withStyle(SpanStyle(color = LitterTheme.textPrimary)) {
+            withStyle(SpanStyle(color = LitterTheme.accent)) {
                 append(filename)
             }
             withStyle(SpanStyle(color = LitterTheme.success)) {
@@ -889,7 +896,7 @@ private fun TodoListRow(
                 }
                 val color = when (step.status) {
                     HydratedPlanStepStatus.COMPLETED -> LitterTheme.success
-                    HydratedPlanStepStatus.IN_PROGRESS -> LitterTheme.textSecondary
+                    HydratedPlanStepStatus.IN_PROGRESS -> LitterTheme.accent
                     HydratedPlanStepStatus.PENDING -> LitterTheme.textMuted
                 }
                 Text(text = icon, color = color, fontSize = LitterTextStyle.footnote.scaled)
@@ -916,9 +923,9 @@ private fun ProposedPlanRow(
             .padding(vertical = 4.dp),
     ) {
         Text(
-            text = "Plan",
-            color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.footnote.scaled,
+            text = stringResource(R.string.timeline_plan),
+            color = LitterTheme.accent,
+            fontSize = LitterTextStyle.caption.scaled,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(4.dp))
@@ -980,9 +987,9 @@ private fun ScreenshotPreview(bytes: ByteArray) {
     val context = LocalContext.current
     Column {
         Text(
-            text = "SCREENSHOT",
+            text = stringResource(R.string.timeline_screenshot),
             color = LitterTheme.textSecondary,
-            fontSize = 13.scaled,
+            fontSize = 10f.scaled,
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(4.dp))
@@ -991,11 +998,11 @@ private fun ScreenshotPreview(bytes: ByteArray) {
                 .data(bytes)
                 .crossfade(false)
                 .build(),
-            contentDescription = "Computer Use screenshot",
+            contentDescription = stringResource(R.string.conversation_computer_use_screenshot),
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(LitterRadius.raisedShape)
+                .clip(RoundedCornerShape(10.dp))
                 .background(LitterTheme.codeBackground),
         )
     }
@@ -1009,23 +1016,26 @@ private fun AccessibilityTreeSection(text: String) {
     val display = if (expanded || lines.size <= previewLineCount) {
         text
     } else {
-        lines.take(previewLineCount).joinToString("\n") + "\n… (${lines.size - previewLineCount} more lines)"
+        lines.take(previewLineCount).joinToString("\n") + "\n" +
+            stringResource(R.string.timeline_more_lines, lines.size - previewLineCount)
     }
 
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "ACCESSIBILITY TREE",
+                text = stringResource(R.string.timeline_accessibility_tree),
                 color = LitterTheme.textSecondary,
-                fontSize = 13.scaled,
+                fontSize = 10f.scaled,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
             if (lines.size > previewLineCount) {
                 Text(
-                    text = if (expanded) "Show less" else "Show more",
-                    color = LitterTheme.textSecondary,
-                    fontSize = 13.scaled,
+                    text = stringResource(
+                        if (expanded) R.string.conversation_show_less else R.string.conversation_show_more,
+                    ),
+                    color = LitterTheme.accent,
+                    fontSize = 10f.scaled,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.clickable { expanded = !expanded },
                 )
@@ -1035,11 +1045,11 @@ private fun AccessibilityTreeSection(text: String) {
         Text(
             text = display,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.footnote.scaled,
+            fontSize = LitterTextStyle.caption2.scaled,
             fontFamily = BerkeleyMono,
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(LitterRadius.raisedShape)
+                .clip(RoundedCornerShape(8.dp))
                 .background(LitterTheme.codeBackground)
                 .padding(10.dp),
         )
@@ -1078,7 +1088,7 @@ private fun DynamicToolCallRow(
         durationMs = data.durationMs,
     ) {
         if (metadata.isNotEmpty()) {
-            KeyValueSection(label = "Metadata", entries = metadata)
+            KeyValueSection(label = stringResource(R.string.conversation_metadata), entries = metadata)
         }
         data.argumentsJson?.takeIf { it.isNotBlank() }?.let { CodeSection("Arguments", it) }
         data.contentSummary?.takeIf { it.isNotBlank() }?.let { InlineTextSection("Result", it) }
@@ -1156,7 +1166,7 @@ private fun GeneratedImageSection(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                .background(LitterTheme.codeBackground, RoundedCornerShape(10.dp))
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -1167,12 +1177,12 @@ private fun GeneratedImageSection(
                             .data(pngBytes)
                             .crossfade(false)
                             .build(),
-                        contentDescription = "Generated image",
+                        contentDescription = stringResource(R.string.a11y_generated_image),
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 360.dp)
-                            .clip(LitterRadius.raisedShape),
+                            .clip(RoundedCornerShape(8.dp)),
                     )
                 }
                 data.status == AppOperationStatus.IN_PROGRESS ||
@@ -1181,9 +1191,9 @@ private fun GeneratedImageSection(
                 }
                 else -> {
                     Text(
-                        text = "Image unavailable",
+                        text = stringResource(R.string.timeline_image_unavailable),
                         color = LitterTheme.textMuted,
-                        fontSize = LitterTextStyle.footnote.scaled,
+                        fontSize = LitterTextStyle.caption.scaled,
                         modifier = Modifier.padding(vertical = 20.dp),
                     )
                 }
@@ -1194,14 +1204,77 @@ private fun GeneratedImageSection(
 
 @Composable
 private fun GeneratedImageLoadingTile() {
-    // Static mono status: the turn's own streaming state already signals work.
-    Text(
-        text = "generating image…",
-        style = LitterType.meta,
+    val transition = rememberInfiniteTransition(label = "image-generation-loading")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "image-generation-pulse",
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = LitterSpacing.xs),
-    )
+            .padding(vertical = 20.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(48.dp)
+                .scale(0.98f + pulse * 0.05f)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            LitterTheme.accent.copy(alpha = 0.16f + pulse * 0.08f),
+                            LitterTheme.warning.copy(alpha = 0.10f),
+                        ),
+                    ),
+                    RoundedCornerShape(12.dp),
+                )
+                .border(
+                    0.5.dp,
+                    LitterTheme.accent.copy(alpha = 0.28f + pulse * 0.12f),
+                    RoundedCornerShape(12.dp),
+                ),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.HourglassEmpty,
+                contentDescription = null,
+                tint = LitterTheme.accent,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
+        Text(
+            text = stringResource(R.string.timeline_generating_image),
+            color = LitterTheme.textPrimary,
+            fontSize = LitterTextStyle.caption.scaled,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            listOf(28.dp, 42.dp, 28.dp).forEachIndexed { index, width ->
+                Box(
+                    modifier = Modifier
+                        .width(width)
+                        .height(4.dp)
+                        .alpha((0.38f + pulse * 0.62f - index * 0.14f).coerceIn(0.24f, 1f))
+                        .background(
+                            LitterTheme.accent.copy(alpha = 0.42f),
+                            RoundedCornerShape(999.dp),
+                        ),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1217,8 +1290,8 @@ private fun RevisedPromptSection(prompt: String) {
             if (isLong) {
                 Text(
                     text = if (expanded) "Show less" else "Show more",
-                    color = LitterTheme.textSecondary,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    color = LitterTheme.accent,
+                    fontSize = LitterTextStyle.caption2.scaled,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.clickable { expanded = !expanded },
                 )
@@ -1230,7 +1303,7 @@ private fun RevisedPromptSection(prompt: String) {
             fontSize = LitterTextStyle.body.scaled,
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                .background(LitterTheme.codeBackground, RoundedCornerShape(8.dp))
                 .padding(10.dp),
         )
     }
@@ -1246,7 +1319,7 @@ private fun ImageResultSection(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                .background(LitterTheme.codeBackground, RoundedCornerShape(10.dp))
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -1290,7 +1363,7 @@ private fun WidgetRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface, LitterRadius.raisedShape)
+            .background(LitterTheme.surface, RoundedCornerShape(12.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1314,7 +1387,7 @@ private fun WidgetRow(
                         else -> AppOperationStatus.IN_PROGRESS
                     }
                 ),
-                fontSize = LitterTextStyle.footnote.scaled,
+                fontSize = LitterTextStyle.caption2.scaled,
                 fontWeight = FontWeight.Medium,
             )
         }
@@ -1398,7 +1471,7 @@ private fun WidgetRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(widgetHeight)
-                .clip(LitterRadius.raisedShape),
+                .clip(RoundedCornerShape(10.dp)),
             update = { webView ->
                 val html = data.widgetHtml
                 val lastEscaped = webView.getTag(R.id.widget_webview_last_escaped) as? String
@@ -1478,19 +1551,19 @@ private fun SavedAsAppChip(
         Icon(
             imageVector = Icons.Filled.GridView,
             contentDescription = null,
-            tint = LitterTheme.textSecondary,
+            tint = LitterTheme.accent,
             modifier = Modifier.size(10.dp),
         )
         Text(
-            text = "Saved as",
-            color = LitterTheme.textSecondary,
-            fontSize = 13.sp,
+            text = stringResource(R.string.timeline_saved_as),
+            color = LitterTheme.accent,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
         )
         Text(
             text = slug,
-            color = LitterTheme.textSecondary,
-            fontSize = 13.sp,
+            color = LitterTheme.accent,
+            fontSize = 11.sp,
             fontFamily = LitterTheme.monoFont,
             fontWeight = FontWeight.SemiBold,
         )
@@ -1504,12 +1577,12 @@ private fun UserInputResponseRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface, LitterRadius.raisedShape)
+            .background(LitterTheme.surface, RoundedCornerShape(12.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = "Requested Input",
+            text = stringResource(R.string.timeline_requested_input),
             color = LitterTheme.textPrimary,
             fontSize = LitterTextStyle.body.scaled,
             fontWeight = FontWeight.SemiBold,
@@ -1521,7 +1594,7 @@ private fun UserInputResponseRow(
                     Text(
                         text = header.uppercase(),
                         color = LitterTheme.textMuted,
-                        fontSize = LitterTextStyle.footnote.scaled,
+                        fontSize = LitterTextStyle.caption2.scaled,
                         fontWeight = FontWeight.Bold,
                     )
                 }
@@ -1532,7 +1605,11 @@ private fun UserInputResponseRow(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = question.answer.ifBlank { "No answer provided" },
+                    text = if (question.answer.isBlank()) {
+                        stringResource(R.string.timeline_no_answer)
+                    } else {
+                        question.answer
+                    },
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.body.scaled,
                 )
@@ -1548,11 +1625,11 @@ private fun TurnDiffRow(
     data: uniffi.codex_mobile_client.HydratedTurnDiffData,
 ) {
     ToolCardShell(
-        summary = "Turn Diff",
+        summary = stringResource(R.string.timeline_turn_diff),
         accent = LitterTheme.toolCallFileChange,
         status = AppOperationStatus.COMPLETED,
     ) {
-        DiffSection(label = "Diff", content = data.diff)
+        DiffSection(label = stringResource(R.string.conversation_diff), content = data.diff)
     }
 }
 
@@ -1563,24 +1640,43 @@ private fun DividerRow(
 ) {
     val label = when (data) {
         is uniffi.codex_mobile_client.HydratedDividerData.ContextCompaction ->
-            if (data.isComplete && !isLiveTurn) "Context compacted" else "Compacting context\u2026"
+            if (data.isComplete && !isLiveTurn) {
+                stringResource(R.string.timeline_context_compacted)
+            } else {
+                stringResource(R.string.timeline_compacting_context)
+            }
         is uniffi.codex_mobile_client.HydratedDividerData.ModelRerouted -> {
             val route = data.fromModel?.takeIf { it.isNotBlank() }?.let { "$it -> ${data.toModel}" }
-                ?: "Routed to ${data.toModel}"
+                ?: stringResource(R.string.timeline_routed_to, data.toModel)
             val reason = data.reason?.takeIf { it.isNotBlank() }
             if (reason != null) "$route | $reason" else route
         }
-        is uniffi.codex_mobile_client.HydratedDividerData.ReviewEntered -> "Review started"
-        is uniffi.codex_mobile_client.HydratedDividerData.ReviewExited -> "Review ended"
+        is uniffi.codex_mobile_client.HydratedDividerData.ReviewEntered ->
+            stringResource(R.string.timeline_review_started)
+        is uniffi.codex_mobile_client.HydratedDividerData.ReviewExited ->
+            stringResource(R.string.timeline_review_ended)
     }
 
-    Text(
-        text = label.lowercase(),
-        style = LitterType.meta,
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = LitterSpacing.xs),
-    )
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = LitterTheme.divider,
+        )
+        Text(
+            text = "  $label  ",
+            color = LitterTheme.textMuted,
+            fontSize = LitterTextStyle.caption2.scaled,
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = LitterTheme.divider,
+        )
+    }
 }
 
 // ── Note ─────────────────────────────────────────────────────────────────────
@@ -1592,7 +1688,7 @@ private fun NoteRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface, LitterRadius.raisedShape)
+            .background(LitterTheme.surface, RoundedCornerShape(8.dp))
             .padding(8.dp),
     ) {
         Text(
@@ -1619,7 +1715,7 @@ private fun ErrorRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface, LitterRadius.raisedShape)
+            .background(LitterTheme.surface, RoundedCornerShape(8.dp))
             .padding(8.dp),
     ) {
         SelectableConversationText {
@@ -2038,14 +2134,14 @@ private fun CodeBlockSegment(
             Text(
                 text = it.uppercase(),
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.footnote.scaled,
+                fontSize = LitterTextStyle.caption2.scaled,
                 fontWeight = FontWeight.Bold,
             )
         }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                .background(LitterTheme.codeBackground, RoundedCornerShape(8.dp))
                 .padding(10.dp),
         ) {
             if (isDiffLanguage(language)) {
@@ -2084,34 +2180,35 @@ private fun ToolCardShell(
         mutableStateOf(defaultExpanded || status == AppOperationStatus.FAILED)
     }
 
-    // One expandable mono line: "summary · 1.2s ›". Healthy states show no
-    // icon; failures add a single colored word.
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .background(LitterTheme.surface, RoundedCornerShape(12.dp))
+            .border(0.5.dp, LitterTheme.border, RoundedCornerShape(12.dp))
             .clickable { expanded = !expanded }
-            .padding(vertical = LitterSpacing.xs),
+            .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusIcon(status)
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = summaryAnnotated ?: AnnotatedString(summary),
-                style = LitterType.meta,
                 color = LitterTheme.textSystem,
+                fontSize = LitterTextStyle.body.scaled,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             )
-            val failed = status == AppOperationStatus.FAILED
-            val trailing = buildString {
-                durationMs?.takeIf { it > 0 }?.let { append(" · ").append(formatDuration(it)) }
-                if (failed) append(" · failed")
-                append(if (expanded) " ‹" else " ›")
+            durationMs?.takeIf { it > 0 }?.let { ms ->
+                Spacer(Modifier.width(8.dp))
+                DurationChip(formatDuration(ms), statusTint(status))
             }
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = trailing,
-                style = LitterType.meta,
-                color = if (failed) LitterQuiet.error else LitterQuiet.meta,
-                maxLines = 1,
+                text = if (expanded) "▲" else "▼",
+                color = accent,
+                fontSize = LitterTextStyle.caption2.scaled,
+                fontWeight = FontWeight.Bold,
             )
         }
 
@@ -2119,8 +2216,8 @@ private fun ToolCardShell(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = LitterSpacing.xs),
-                verticalArrangement = Arrangement.spacedBy(LitterSpacing.xs),
+                    .padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 content = content,
             )
         }
@@ -2142,8 +2239,10 @@ private fun collapseCommandText(command: String): String {
 @Composable
 private fun SectionLabel(text: String) {
     Text(
-        text = text.lowercase(),
-        style = LitterType.meta,
+        text = text.uppercase(),
+        color = LitterTheme.textSecondary,
+        fontSize = LitterTextStyle.caption2.scaled,
+        fontWeight = FontWeight.Bold,
     )
 }
 
@@ -2158,7 +2257,7 @@ private fun CodeSection(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                    .background(LitterTheme.codeBackground, RoundedCornerShape(8.dp))
                     .padding(10.dp),
             ) {
                 Text(
@@ -2189,7 +2288,7 @@ private fun InlineTextSection(
                 fontSize = LitterTextStyle.body.scaled,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                    .background(LitterTheme.codeBackground, RoundedCornerShape(8.dp))
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             )
         }
@@ -2207,7 +2306,7 @@ private fun KeyValueSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.surface.copy(alpha = 0.6f), LitterRadius.raisedShape)
+                .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -2245,7 +2344,7 @@ private fun ListSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.surface.copy(alpha = 0.6f), LitterRadius.raisedShape)
+                .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -2278,7 +2377,7 @@ private fun ProgressSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(LitterTheme.surface.copy(alpha = 0.6f), LitterRadius.raisedShape)
+                .background(LitterTheme.surface.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -2320,7 +2419,7 @@ private fun DiffSection(
                 fontSize = LitterTextStyle.caption.sp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(LitterTheme.codeBackground, LitterRadius.raisedShape)
+                    .background(LitterTheme.codeBackground, RoundedCornerShape(8.dp))
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         }
@@ -2348,9 +2447,11 @@ private fun LimitedToolTextBlock(
     if (isLong) {
         TextButton(onClick = { expanded = !expanded }) {
             Text(
-                text = if (expanded) "Show less" else "Show more",
-                color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.footnote.scaled,
+                text = stringResource(
+                    if (expanded) R.string.conversation_show_less else R.string.conversation_show_more,
+                ),
+                color = LitterTheme.accent,
+                fontSize = LitterTextStyle.caption2.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -2370,13 +2471,15 @@ private fun RichDynamicToolResult(
                             Icon(
                                 if (item.isLocal) Icons.Default.PhoneAndroid else Icons.Default.Dns,
                                 contentDescription = null,
-                                tint = LitterTheme.textSecondary,
+                                tint = LitterTheme.accent,
                                 modifier = Modifier.size(18.dp),
                             )
                         },
                         title = item.name,
                         subtitle = item.hostname,
-                        trailing = if (item.isConnected) "Connected" else "Offline",
+                        trailing = stringResource(
+                            if (item.isConnected) R.string.timeline_connected else R.string.timeline_offline,
+                        ),
                         statusDotColor = if (item.isConnected) LitterTheme.success else LitterTheme.textMuted,
                     )
                 }
@@ -2394,11 +2497,15 @@ private fun RichDynamicToolResult(
                             Icon(
                                 Icons.AutoMirrored.Filled.Chat,
                                 contentDescription = null,
-                                tint = LitterTheme.textSecondary,
+                                tint = LitterTheme.accent,
                                 modifier = Modifier.size(18.dp),
                             )
                         },
-                        title = item.title.ifBlank { "Untitled session" },
+                        title = if (item.title.isBlank()) {
+                            stringResource(R.string.conversation_untitled_session)
+                        } else {
+                            item.title
+                        },
                         subtitle = subtitle,
                         trailing = null,
                         statusDotColor = null,
@@ -2428,7 +2535,7 @@ private fun SessionServerCard(
         Box(
             modifier = Modifier
                 .size(32.dp)
-                .background(LitterTheme.accent.copy(alpha = 0.12f), LitterRadius.raisedShape),
+                .background(LitterTheme.accent.copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center,
         ) {
             icon()
@@ -2445,7 +2552,7 @@ private fun SessionServerCard(
                 Text(
                     text = subtitle,
                     color = LitterTheme.textMuted,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption.scaled,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -2468,7 +2575,7 @@ private fun SessionServerCard(
                     Text(
                         text = it,
                         color = LitterTheme.textMuted,
-                        fontSize = LitterTextStyle.footnote.scaled,
+                        fontSize = LitterTextStyle.caption.scaled,
                     )
                 }
             }
@@ -2548,13 +2655,13 @@ internal fun StatusIcon(status: AppOperationStatus) {
             CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
                 strokeWidth = 2.dp,
-                color = LitterTheme.textSecondary,
+                color = LitterTheme.accent,
             )
         }
         AppOperationStatus.COMPLETED -> {
             Icon(
                 Icons.Default.CheckCircle,
-                contentDescription = "Completed",
+                contentDescription = stringResource(R.string.common_completed),
                 tint = LitterTheme.success,
                 modifier = Modifier.size(14.dp),
             )
@@ -2570,7 +2677,7 @@ internal fun StatusIcon(status: AppOperationStatus) {
         AppOperationStatus.FAILED -> {
             Icon(
                 Icons.Default.Error,
-                contentDescription = "Failed",
+                contentDescription = stringResource(R.string.common_failed),
                 tint = LitterTheme.danger,
                 modifier = Modifier.size(14.dp),
             )
@@ -2578,7 +2685,7 @@ internal fun StatusIcon(status: AppOperationStatus) {
         else -> {
             Icon(
                 Icons.Default.HourglassEmpty,
-                contentDescription = "Unknown",
+                contentDescription = stringResource(R.string.common_unknown),
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(14.dp),
             )
@@ -2592,6 +2699,22 @@ private fun statusTint(status: AppOperationStatus): Color {
         AppOperationStatus.IN_PROGRESS -> LitterTheme.warning
         AppOperationStatus.FAILED -> LitterTheme.danger
         else -> LitterTheme.textMuted
+    }
+}
+
+@Composable
+private fun DurationChip(text: String, tint: Color) {
+    Box(
+        modifier = Modifier
+            .background(tint.copy(alpha = 0.10f), RoundedCornerShape(999.dp))
+            .border(0.5.dp, tint.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = text,
+            color = tint,
+            fontSize = LitterTextStyle.caption2.scaled,
+        )
     }
 }
 

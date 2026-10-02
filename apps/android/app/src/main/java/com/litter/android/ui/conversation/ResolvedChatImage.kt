@@ -105,7 +105,7 @@ internal fun ResolvedChatImage(
             is ResolvedChatImageState.Failed -> Text(
                 text = current.message,
                 color = LitterTheme.danger,
-                fontSize = LitterTextStyle.footnote.scaled,
+                fontSize = LitterTextStyle.caption.scaled,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 24.dp),
             )
         }

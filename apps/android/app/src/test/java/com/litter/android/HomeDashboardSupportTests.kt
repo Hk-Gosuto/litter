@@ -48,6 +48,7 @@ class HomeDashboardSupportTests {
             hidden = emptyList(),
             servers = listOf(server),
             allSessions = listOf(session("studio", "recent", "local-studio")),
+            loadingThreadTitle = "Loading thread",
         )
 
         assertEquals(listOf("stale", "recent"), result.map { it.key.threadId })
@@ -63,6 +64,7 @@ class HomeDashboardSupportTests {
             hidden = emptyList(),
             servers = listOf(server),
             allSessions = listOf(session("codex", "recent", "codex")),
+            loadingThreadTitle = "Loading thread",
         )
 
         assertEquals(listOf("stale"), result.map { it.key.threadId })

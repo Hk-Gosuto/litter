@@ -3,8 +3,11 @@ package com.litter.android.ui
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.ComponentActivity
+import com.litter.android.util.EdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -21,9 +24,8 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.em
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
-import com.litter.android.util.EdgeToEdge
 import com.sigkitten.litter.android.R
 
 object LitterTheme {
@@ -162,12 +164,10 @@ private fun litterTextStyle(
     fontFamily: FontFamily,
     fontWeight: FontWeight,
     fontSize: androidx.compose.ui.unit.TextUnit,
-    lineHeight: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
 ) = TextStyle(
     fontFamily = fontFamily,
     fontWeight = fontWeight,
     fontSize = fontSize,
-    lineHeight = lineHeight,
     platformStyle = LitterPlatformTextStyle,
 )
 
@@ -177,63 +177,61 @@ private fun buildTypography(fontFamily: FontFamily) =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 22.sp,
+                fontSize = 20.sp,
             ),
         titleMedium =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Medium,
-                fontSize = 17.sp,
+                fontSize = 16.sp,
             ),
         titleSmall =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Medium,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
             ),
         headlineSmall =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 28.sp,
+                fontSize = 20.sp,
             ),
         bodyLarge =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Normal,
-                fontSize = 17.sp,
-                lineHeight = 1.45.em,
+                fontSize = 16.sp,
             ),
         bodyMedium =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Normal,
-                fontSize = 15.sp,
-                lineHeight = 1.4.em,
+                fontSize = 14.sp,
             ),
         bodySmall =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Normal,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
             ),
         labelLarge =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
+                fontSize = 12.sp,
             ),
         labelMedium =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
+                fontSize = 11.sp,
             ),
         labelSmall =
             litterTextStyle(
                 fontFamily = fontFamily,
                 fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
+                fontSize = 10.sp,
             ),
     )
 
@@ -397,3 +395,17 @@ private tailrec fun Context.findActivity(): ComponentActivity? =
         is ContextWrapper -> baseContext.findActivity()
         else -> null
     }
+
+@Preview(showBackground = true, backgroundColor = 0xFF000000)
+@Composable
+private fun LitterThemePreview() {
+    LitterAppTheme {
+        Surface(color = LitterTheme.background) {
+            Text(
+                text = "Litter Theme",
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}

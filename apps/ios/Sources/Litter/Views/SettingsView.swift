@@ -6,6 +6,8 @@ struct SettingsView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.textScale) private var textScale
+    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.defaultValue
+    @AppStorage("fontFamily") private var fontFamily = FontFamilyOption.mono.rawValue
     @AppStorage("collapseTurns") private var collapseTurns = false
     @AppStorage(ConversationDisplayPreferenceKey.reasoning) private var reasoningDisplayMode = ConversationDetailDisplayMode.collapsed.rawValue
     @AppStorage(ConversationDisplayPreferenceKey.commands) private var commandDisplayMode = ConversationDetailDisplayMode.collapsed.rawValue
@@ -24,55 +26,28 @@ struct SettingsView: View {
         NavigationStack {
             ZStack {
                 LitterTheme.backgroundGradient.ignoresSafeArea()
-                // One plain grouped list. Every row opens its settings
-                // directly (no pages that only hold another link); rarely
-                // used switches live under a single "Advanced" row.
-                List {
+                Form {
+                    supportSection
+                    localAISection
+                    appearanceSection
+                    languageSection
+                    fontSection
+                    conversationSection
+                    petSection
+                    experimentalSection
+                    accountSection
                     Section {
-                        category("Computers", "desktopcomputer", value: computersValue, id: "settings.category.computers") {
-                            settingsPage("Computers") { serversSection }
-                        }
-                        category("Harnesses", "cpu", id: "settings.category.harnesses") {
-                            HarnessSettingsView()
-                        }
-                        category("Account", "person.crop.circle", value: accountValue, id: "settings.category.account") {
-                            settingsPage("Account") { accountSection }
-                        }
-                    } header: {
-                        settingsHeader("Connections")
+                        NavigationLink("Harnesses") { HarnessSettingsView() }
+                            .litterFont(.footnote)
+                            .foregroundStyle(LitterTheme.textPrimary)
+                            .listRowBackground(LitterTheme.surface.opacity(0.6))
                     }
-                    Section {
-                        category("Appearance", "paintbrush", id: "settings.category.appearance") {
-                            AppearanceSettingsView()
-                        }
-                        category("Conversation", "text.bubble", id: "settings.category.conversation") {
-                            settingsPage("Conversation") { conversationSection }
-                        }
-                    } header: {
-                        settingsHeader("Interface")
-                    }
-                    Section {
-                        category("Advanced", "slider.horizontal.3", id: "settings.category.advanced") {
-                            settingsPage("Advanced") { advancedSections }
-                        }
-                        category("Tip the Kitty", "heart", id: "settings.category.support") {
-                            TipJarView()
-                        }
-                    } header: {
-                        settingsHeader("More")
-                    } footer: {
-                        if let versionLabel {
-                            Text(versionLabel)
-                                .litterMeta()
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, LitterSpace.m)
-                        }
-                    }
+                    serversSection
                 }
                 .scrollContentBackground(.hidden)
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .task {
                 // Mirror the server projections out of the snapshot from a
                 // non-body context. `AppSnapshotObserver` re-runs this on every
@@ -91,9 +66,7 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
-                        .foregroundColor(LitterTheme.textPrimary)
-                        .accessibilityIdentifier("settings.done")
+                        .foregroundColor(LitterTheme.accent)
                 }
             }
             .sheet(item: $activeServerSheet) { sheet in
@@ -129,7 +102,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .alert("Couldn't update computer", isPresented: Binding(
+            .alert("Server Update Failed", isPresented: Binding(
                 get: { serverEditError != nil },
                 set: { if !$0 { serverEditError = nil } }
             )) {
@@ -169,115 +142,272 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Root row values
+    // MARK: - Appearance Section
 
-    private var computersValue: String? {
-        connectedServers.isEmpty ? nil : "\(connectedServers.count)"
-    }
-
-    private var accountValue: String? {
-        guard let accountServer else { return nil }
-        switch accountServer.account {
-        case .chatgpt(let email, _)?:
-            return email.isEmpty ? "ChatGPT" : email
-        case .apiKey?:
-            return "API key"
-        case nil:
-            return "Not signed in"
+    private var appearanceSection: some View {
+        Section {
+            NavigationLink {
+                AppearanceSettingsView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "paintbrush")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("Appearance")
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Theme")
+                .foregroundColor(LitterTheme.textSecondary)
         }
     }
 
-    private var versionLabel: String? {
-        let info = Bundle.main.infoDictionary
-        guard let version = info?["CFBundleShortVersionString"] as? String else { return nil }
-        if let build = info?["CFBundleVersion"] as? String, !build.isEmpty {
-            return "Litter \(version) (\(build))"
+    // MARK: - Language Section
+
+    private var languageSection: some View {
+        Section {
+            Picker(selection: $appLanguage) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.nativeDisplayName).tag(language.rawValue)
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "globe")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("App Language")
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(LitterTheme.accent)
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Language")
+                .foregroundColor(LitterTheme.textSecondary)
         }
-        return "Litter \(version)"
     }
 
     // MARK: - Conversation Section
 
     private var conversationSection: some View {
-        Group {
-            Section {
-                Toggle(isOn: $collapseTurns) {
-                    SettingsRowText(
-                        title: "Collapse earlier turns",
-                        subtitle: "Long conversations collapse automatically"
-                    )
+        Section {
+            Toggle(isOn: $collapseTurns) {
+                HStack(spacing: 10) {
+                    Image(systemName: "rectangle.compress.vertical")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Collapse Turns")
+                            .litterFont(.subheadline)
+                            .foregroundColor(LitterTheme.textPrimary)
+                        Text("Collapse previous turns into cards; large conversations collapse automatically")
+                            .litterFont(.caption)
+                            .foregroundColor(LitterTheme.textSecondary)
+                    }
                 }
-                .tint(LitterTheme.accent)
-                .settingsRowBackground()
             }
+            .tint(LitterTheme.accent)
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
 
-            Section {
-                transcriptDisplayPicker(title: "Thinking", selection: $reasoningDisplayMode)
-                transcriptDisplayPicker(title: "Commands", selection: $commandDisplayMode)
-                transcriptDisplayPicker(title: "Tools", selection: $toolDisplayMode)
-            } header: {
-                settingsHeader("Show in transcript")
-            } footer: {
-                Text("Tools covers MCP, web, image, and file-change cards.")
-                    .litterFont(.footnote)
-                    .foregroundColor(LitterTheme.textMuted)
-            }
+            transcriptDisplayPicker(
+                title: "Internal Thinking",
+                subtitle: "Reasoning and analysis blocks",
+                systemImage: "brain.head.profile",
+                selection: $reasoningDisplayMode
+            )
+
+            transcriptDisplayPicker(
+                title: "Commands",
+                subtitle: "Shell commands and command output",
+                systemImage: "terminal",
+                selection: $commandDisplayMode
+            )
+
+            transcriptDisplayPicker(
+                title: "Tools",
+                subtitle: "MCP, web, image, and file-change cards",
+                systemImage: "wrench.and.screwdriver",
+                selection: $toolDisplayMode
+            )
+        } header: {
+            Text("Conversation")
+                .foregroundColor(LitterTheme.textSecondary)
         }
     }
 
     private func transcriptDisplayPicker(
-        title: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        systemImage: String,
         selection: Binding<String>
     ) -> some View {
         Picker(selection: selection) {
             ForEach(ConversationDetailDisplayMode.allCases) { mode in
-                Text(mode.displayName).tag(mode.rawValue)
+                Text(LocalizedStringKey(mode.displayName)).tag(mode.rawValue)
             }
         } label: {
-            Text(title)
-                .litterFont(.body)
-                .foregroundColor(LitterTheme.textPrimary)
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .foregroundColor(LitterTheme.accent)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                    Text(subtitle)
+                        .litterFont(.caption)
+                        .foregroundColor(LitterTheme.textSecondary)
+                }
+            }
         }
         .pickerStyle(.menu)
-        .tint(LitterTheme.textSecondary)
-        .settingsRowBackground()
+        .tint(LitterTheme.accent)
+        .listRowBackground(LitterTheme.surface.opacity(0.6))
     }
 
-    // MARK: - Advanced
+    // MARK: - Font Section
 
-    /// Rarely used switches in one place: experimental features, the wake
-    /// pet, debug mode and the Local Studio link.
-    private var advancedSections: some View {
-        Group {
-            ExperimentalFeatureSections()
-
-            Section {
-                NavigationLink {
-                    PetSettingsView()
+    private var fontSection: some View {
+        Section {
+            ForEach(FontFamilyOption.allCases) { option in
+                Button {
+                    fontFamily = option.rawValue
+                    ThemeManager.shared.syncFontPreference()
+                    FontPreferenceObserver.shared.didChange()
                 } label: {
-                    SettingsRowLabel(
-                        title: "Wake Pet",
-                        systemImage: "pawprint",
-                        value: PetOverlayController.shared.selectedPet?.displayName
-                    )
-                }
-                .accessibilityIdentifier("settings.category.pets")
-                .settingsRowBackground()
-
-                Link(destination: URL(string: "https://localstudio.ai")!) {
-                    HStack(spacing: LitterSpace.m) {
-                        SettingsRowLabel(title: "Local Studio", systemImage: "sparkles", value: "localstudio.ai")
-                        Image(systemName: "arrow.up.right")
-                            .litterFont(.footnote, weight: .semibold)
-                            .foregroundColor(LitterTheme.textMuted)
-                            .accessibilityHidden(true)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(LocalizedStringKey(option.displayName))
+                                .litterFont(.subheadline)
+                                .foregroundColor(LitterTheme.textPrimary)
+                            Text("The quick brown fox")
+                                .font(LitterFont.sampleFont(family: option, size: 14))
+                                .foregroundColor(LitterTheme.textSecondary)
+                        }
+                        Spacer()
+                        if fontFamily == option.rawValue {
+                            Image(systemName: "checkmark")
+                                .litterFont(.subheadline, weight: .semibold)
+                                .foregroundColor(LitterTheme.accentStrong)
+                        }
                     }
                 }
-                .accessibilityIdentifier("settings.category.localai")
-                .settingsRowBackground()
-            } header: {
-                settingsHeader("Extras")
+                .listRowBackground(LitterTheme.surface.opacity(0.6))
             }
+        } header: {
+            Text("Font")
+                .foregroundColor(LitterTheme.textSecondary)
+        }
+    }
+
+    // MARK: - Experimental Section
+
+    private var petSection: some View {
+        Section {
+            NavigationLink {
+                PetSettingsView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "pawprint.fill")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Wake Pet")
+                            .litterFont(.subheadline)
+                            .foregroundColor(LitterTheme.textPrimary)
+                        if let pet = PetOverlayController.shared.selectedPet {
+                            Text(pet.displayName)
+                                .litterFont(.caption)
+                                .foregroundColor(LitterTheme.textSecondary)
+                        }
+                    }
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Pet")
+                .foregroundColor(LitterTheme.textSecondary)
+        }
+    }
+
+    // MARK: - Experimental Section
+
+    private var experimentalSection: some View {
+        Section {
+            NavigationLink {
+                ExperimentalFeaturesView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "flask")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("Experimental Features")
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Experimental")
+                .foregroundColor(LitterTheme.textSecondary)
+        }
+    }
+
+    // MARK: - Support Section
+
+    private var supportSection: some View {
+        Section {
+            NavigationLink {
+                TipJarView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "pawprint.fill")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("Tip the Kitty")
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Support")
+                .foregroundColor(LitterTheme.textSecondary)
+        }
+    }
+
+    // MARK: - Local AI Section
+
+    private var localAISection: some View {
+        Section {
+            Link(destination: URL(string: "https://localstudio.ai")!) {
+                HStack(spacing: 10) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Local Studio")
+                            .litterFont(.subheadline)
+                            .foregroundColor(LitterTheme.textPrimary)
+                        Text("localstudio.ai")
+                            .litterFont(.caption)
+                            .foregroundColor(LitterTheme.textSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .litterFont(.caption, weight: .semibold)
+                        .foregroundColor(LitterTheme.textMuted)
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Local AI")
+                .foregroundColor(LitterTheme.textSecondary)
         }
     }
 
@@ -293,120 +423,65 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Layout helpers
+    // MARK: - Servers Section
 
-    private func settingsHeader(_ title: String) -> some View {
-        SettingsSectionHeader(title)
-    }
-
-    private func category<Destination: View>(
-        _ title: String,
-        _ symbol: String,
-        value: String? = nil,
-        id: String,
-        @ViewBuilder destination: @escaping () -> Destination
-    ) -> some View {
-        NavigationLink {
-            destination()
-        } label: {
-            SettingsRowLabel(title: title, systemImage: symbol, value: value)
-        }
-        .accessibilityIdentifier(id)
-        .settingsRowBackground()
-    }
-
-    private func settingsPage<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        ZStack {
-            LitterTheme.backgroundGradient.ignoresSafeArea()
-            Form { content() }
-                .scrollContentBackground(.hidden)
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    /// Computers: the one place to add, edit and remove hosts (iOS Settings
-    /// list pattern — tap to edit, swipe or long-press to remove).
     private var serversSection: some View {
         Section {
-            ForEach(connectedServers, id: \.id) { conn in
-                Button {
-                    activeServerSheet = .edit(conn)
-                } label: {
-                    HStack(spacing: LitterSpace.m) {
-                        StatusDot(state: conn.statusDotState, size: 8)
-                            .frame(width: SettingsRowLabel.iconWidth)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(conn.displayName)
-                                .litterFont(.body)
-                                .foregroundColor(LitterTheme.textPrimary)
-                                .lineLimit(1)
-                            if let word = conn.connectionWord {
-                                Text(word.text)
-                                    .litterFont(.footnote)
-                                    .foregroundColor(word.color)
-                            } else {
-                                Text(conn.sourceLabel)
-                                    .litterFont(.footnote)
-                                    .foregroundColor(LitterTheme.textSecondary)
+            if connectedServers.isEmpty {
+                Text("No servers connected")
+                    .litterFont(.footnote)
+                    .foregroundColor(LitterTheme.textMuted)
+                    .listRowBackground(LitterTheme.surface.opacity(0.6))
+            } else {
+                ForEach(connectedServers, id: \.id) { conn in
+                    HStack {
+                        Button {
+                            activeServerSheet = .edit(conn)
+                        } label: {
+                            HStack {
+                                Image(systemName: conn.isLocal ? "iphone" : "server.rack")
+                                    .foregroundColor(LitterTheme.accent)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(conn.displayName)
+                                        .litterFont(.footnote)
+                                        .foregroundColor(LitterTheme.textPrimary)
+                                    Text(conn.health.displayLabel)
+                                        .litterFont(.caption)
+                                        .foregroundColor(conn.health.accentColor)
+                                }
+                                Spacer()
                             }
                         }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .litterFont(.footnote, weight: .semibold)
-                            .foregroundColor(LitterTheme.textMuted)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("settings.computerRow")
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    if !conn.isLocal {
-                        Button(role: .destructive) {
+                        .buttonStyle(.plain)
+                        Button("Remove") {
                             removeServer(conn)
-                        } label: {
-                            Label("Remove", systemImage: "trash")
                         }
+                        .litterFont(.caption)
+                        .foregroundColor(LitterTheme.danger)
+                        .buttonStyle(.borderless)
                     }
+                    .listRowBackground(LitterTheme.surface.opacity(0.6))
                 }
-                .contextMenu {
-                    Button {
-                        activeServerSheet = .edit(conn)
-                    } label: {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                    if !conn.isLocal {
-                        Button(role: .destructive) {
-                            removeServer(conn)
-                        } label: {
-                            Label("Remove", systemImage: "trash")
-                        }
-                    }
-                }
-                .settingsRowBackground()
             }
 
             Button {
                 activeServerSheet = .add
             } label: {
-                HStack(spacing: LitterSpace.m) {
-                    Image(systemName: "plus")
-                        .litterFont(.body)
-                        .frame(width: SettingsRowLabel.iconWidth)
-                    Text("Add computer")
-                        .litterFont(.body)
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("Add Server")
+                        .litterFont(.footnote)
+                        .foregroundColor(LitterTheme.accent)
+                    Spacer()
                 }
-                .foregroundColor(LitterTheme.accent)
             }
-            .accessibilityIdentifier("settings.addComputer")
-            .settingsRowBackground()
-        } footer: {
-            Text("Pair a computer running kittylitter, Local Studio, or reachable over SSH. Swipe a computer to remove it.")
-                .litterFont(.footnote)
-                .foregroundColor(LitterTheme.textMuted)
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Servers")
+                .foregroundColor(LitterTheme.textSecondary)
         }
     }
 
@@ -610,26 +685,26 @@ private enum SettingsServerConnectionMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .local:
-            return "Local"
+            return AppLanguage.localizedString("Local")
         case .ssh:
-            return "SSH"
+            return AppLanguage.localizedString("SSH")
         case .directCodex:
-            return "Codex"
+            return AppLanguage.localizedString("Codex")
         case .websocket:
-            return "WebSocket"
+            return AppLanguage.localizedString("WebSocket")
         }
     }
 
     var formHeader: String {
         switch self {
         case .local:
-            return "Local Runtime"
+            return AppLanguage.localizedString("Local Runtime")
         case .ssh:
-            return "SSH Host"
+            return AppLanguage.localizedString("SSH Host")
         case .directCodex:
-            return "Codex Server"
+            return AppLanguage.localizedString("Codex Server")
         case .websocket:
-            return "Codex URL"
+            return AppLanguage.localizedString("Codex URL")
         }
     }
 }
@@ -646,17 +721,17 @@ private enum SettingsServerConnectionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName:
-            return "Name cannot be empty."
+            return AppLanguage.localizedString("Server name cannot be empty.")
         case .emptyHost:
-            return "Host cannot be empty."
+            return AppLanguage.localizedString("Host cannot be empty.")
         case .invalidCodexPort, .missingCodexPort:
-            return "Codex port must be a valid number."
+            return AppLanguage.localizedString("Codex port must be a valid number.")
         case .invalidSSHPort:
-            return "SSH port must be a valid number."
+            return AppLanguage.localizedString("SSH port must be a valid number.")
         case .invalidWakeMAC:
-            return "Wake MAC must look like aa:bb:cc:dd:ee:ff."
+            return AppLanguage.localizedString("Wake MAC must look like aa:bb:cc:dd:ee:ff.")
         case .invalidWebsocketURL:
-            return "Enter a valid ws:// or wss:// URL."
+            return AppLanguage.localizedString("Enter a valid ws:// or wss:// URL.")
         }
     }
 }
@@ -741,15 +816,15 @@ private struct SettingsServerConnectionEditor: View {
                 }
                 .scrollContentBackground(.hidden)
             }
-            .navigationTitle("Edit Computer")
+            .navigationTitle("Edit Server")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Cancel") { dismiss() }
-                        .foregroundColor(LitterTheme.textPrimary)
+                        .foregroundColor(LitterTheme.accent)
                 }
             }
-            .alert("Check the details", isPresented: Binding(
+            .alert("Invalid Server", isPresented: Binding(
                 get: { validationError != nil },
                 set: { if !$0 { validationError = nil } }
             )) {
@@ -762,24 +837,25 @@ private struct SettingsServerConnectionEditor: View {
 
     private var nameSection: some View {
         Section {
-            TextField("Name", text: $displayName)
-                .litterFont(.body)
+            TextField("Server name", text: $displayName)
+                .litterFont(.footnote)
                 .foregroundColor(LitterTheme.textPrimary)
         } header: {
-            SettingsSectionHeader("Name")
+            Text("Name")
+                .foregroundColor(LitterTheme.textSecondary)
         }
-        .settingsRowBackground()
+        .listRowBackground(LitterTheme.surface.opacity(0.6))
     }
 
     private var connectionSection: some View {
         Section {
             if isSpecialPairedServer {
                 Text("This paired server uses saved pairing metadata. Edit its display name here, or remove and add it again to change the pairing.")
-                    .litterFont(.footnote)
+                    .litterFont(.caption)
                     .foregroundColor(LitterTheme.textSecondary)
             } else if connectionMode == .local {
                 Text("This device's local runtime is managed automatically.")
-                    .litterFont(.footnote)
+                    .litterFont(.caption)
                     .foregroundColor(LitterTheme.textSecondary)
             } else {
                 Picker("Connection Type", selection: $connectionMode) {
@@ -795,23 +871,23 @@ private struct SettingsServerConnectionEditor: View {
                 case .ssh:
                     hostField
                     TextField("ssh port", text: $sshPort)
-                        .litterFont(.body)
+                        .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textPrimary)
                         .keyboardType(.numberPad)
                     TextField("wake MAC (optional)", text: $wakeMAC)
-                        .litterFont(.body)
+                        .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textPrimary)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                 case .directCodex:
                     hostField
                     TextField("codex port", text: $codexPort)
-                        .litterFont(.body)
+                        .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textPrimary)
                         .keyboardType(.numberPad)
                 case .websocket:
                     TextField("ws://host:port or wss://...", text: $websocketURL)
-                        .litterFont(.body)
+                        .litterFont(.footnote)
                         .foregroundColor(LitterTheme.textPrimary)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
@@ -819,7 +895,8 @@ private struct SettingsServerConnectionEditor: View {
                 }
             }
         } header: {
-            SettingsSectionHeader(connectionMode.formHeader)
+            Text(connectionMode.formHeader)
+                .foregroundColor(LitterTheme.textSecondary)
         } footer: {
             if !isSpecialPairedServer, connectionMode == .websocket {
                 Text("Prefer SSH when possible. If you run codex manually, bind loopback and tunnel it yourself; do not expose it directly to the internet unless you know what you are doing.")
@@ -827,12 +904,12 @@ private struct SettingsServerConnectionEditor: View {
                     .foregroundColor(LitterTheme.textMuted)
             }
         }
-        .settingsRowBackground()
+        .listRowBackground(LitterTheme.surface.opacity(0.6))
     }
 
     private var hostField: some View {
         TextField("hostname or IP", text: $host)
-            .litterFont(.body)
+            .litterFont(.footnote)
             .foregroundColor(LitterTheme.textPrimary)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled(true)
@@ -843,18 +920,22 @@ private struct SettingsServerConnectionEditor: View {
             Button("Save") {
                 submit(reconnect: false)
             }
-            .foregroundColor(LitterTheme.textPrimary)
-            .litterFont(.body)
+            .foregroundColor(LitterTheme.accent)
+            .litterFont(.subheadline)
 
             if !isSpecialPairedServer {
-                Button(connectionMode == .local ? "Save & Restart" : "Save & Reconnect") {
+                Button(
+                    AppLanguage.localizedString(
+                        connectionMode == .local ? "Save & Restart" : "Save & Reconnect"
+                    )
+                ) {
                     submit(reconnect: true)
                 }
-                .foregroundColor(LitterTheme.textPrimary)
-                .litterFont(.body)
+                .foregroundColor(LitterTheme.accent)
+                .litterFont(.subheadline)
             }
         }
-        .settingsRowBackground()
+        .listRowBackground(LitterTheme.surface.opacity(0.6))
     }
 
     private func submit(reconnect: Bool) {
@@ -1023,13 +1104,17 @@ private struct SettingsConnectionAccountSection: View {
     var body: some View {
         Section {
             HStack(spacing: 12) {
+                Circle()
+                    .fill(authColor)
+                    .frame(width: 10, height: 10)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(authTitle)
-                        .litterFont(.body)
+                        .litterFont(.subheadline)
                         .foregroundColor(LitterTheme.textPrimary)
                     if let sub = authSubtitle {
                         Text(sub)
-                            .litterMeta(authColor)
+                            .litterFont(.caption)
+                            .foregroundColor(LitterTheme.textSecondary)
                     }
                 }
                 Spacer()
@@ -1037,24 +1122,24 @@ private struct SettingsConnectionAccountSection: View {
                     Button("Logout") {
                         Task { await logout() }
                     }
-                    .litterFont(.footnote)
+                    .litterFont(.caption)
                     .foregroundColor(LitterTheme.danger)
                 }
             }
-            .settingsRowBackground()
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
 
             if server.isLocal, hasStoredApiKey {
                 Text("Local OpenAI API key is saved.")
-                    .litterFont(.footnote)
-                    .foregroundColor(LitterTheme.textPrimary)
-                    .settingsRowBackground()
+                    .litterFont(.caption)
+                    .foregroundColor(LitterTheme.accent)
+                    .listRowBackground(LitterTheme.surface.opacity(0.6))
             }
 
             if server.isLocal, hasStoredBaseURL {
                 Text("OpenAI-compatible base URL is saved.")
-                    .litterFont(.footnote)
-                    .foregroundColor(LitterTheme.textPrimary)
-                    .settingsRowBackground()
+                    .litterFont(.caption)
+                    .foregroundColor(LitterTheme.accent)
+                    .listRowBackground(LitterTheme.surface.opacity(0.6))
             }
 
             if server.isLocal, !isChatGPTAccount {
@@ -1071,12 +1156,12 @@ private struct SettingsConnectionAccountSection: View {
                         }
                         Image(systemName: "person.crop.circle.badge.checkmark")
                         Text("Login with ChatGPT")
-                            .litterFont(.body)
+                            .litterFont(.subheadline)
                     }
-                    .foregroundColor(LitterTheme.textPrimary)
+                    .foregroundColor(LitterTheme.accent)
                 }
                 .disabled(isAuthWorking)
-                .settingsRowBackground()
+                .listRowBackground(LitterTheme.surface.opacity(0.6))
             }
 
             if server.isLocal, allowsLocalEnvApiKey {
@@ -1084,11 +1169,11 @@ private struct SettingsConnectionAccountSection: View {
                     VStack(alignment: .leading, spacing: 6) {
                         if hasStoredApiKey {
                             Text("OpenAI API key saved in the local environment.")
-                                .litterFont(.footnote)
+                                .litterFont(.caption)
                                 .foregroundColor(LitterTheme.textSecondary)
                         } else if isChatGPTAccount {
                             Text("Save an API key in the local Codex environment.")
-                                .litterFont(.footnote)
+                                .litterFont(.caption)
                                 .foregroundColor(LitterTheme.textSecondary)
                         }
                         SecureField("sk-...", text: $apiKey)
@@ -1106,22 +1191,26 @@ private struct SettingsConnectionAccountSection: View {
                             isAuthWorking = false
                         }
                     } label: {
-                        Text(hasStoredApiKey ? "Update API Key" : "Save API Key")
+                        Text(
+                            AppLanguage.localizedString(
+                                hasStoredApiKey ? "Update API Key" : "Save API Key"
+                            )
+                        )
                     }
-                    .litterFont(.footnote)
-                    .foregroundColor(LitterTheme.textPrimary)
+                    .litterFont(.caption)
+                    .foregroundColor(LitterTheme.accent)
                     .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty || isAuthWorking)
                 }
-                .settingsRowBackground()
+                .listRowBackground(LitterTheme.surface.opacity(0.6))
 
                 VStack(alignment: .leading, spacing: 8) {
                     if hasStoredBaseURL {
                         Text("Custom OpenAI-compatible endpoint saved for the local Codex server.")
-                            .litterFont(.footnote)
+                            .litterFont(.caption)
                             .foregroundColor(LitterTheme.textSecondary)
                     } else {
                         Text("Optional OpenAI-compatible endpoint for local models.")
-                            .litterFont(.footnote)
+                            .litterFont(.caption)
                             .foregroundColor(LitterTheme.textSecondary)
                     }
                     HStack(spacing: 8) {
@@ -1139,10 +1228,14 @@ private struct SettingsConnectionAccountSection: View {
                                 isAuthWorking = false
                             }
                         } label: {
-                            Text(hasStoredBaseURL ? "Update Base URL" : "Save Base URL")
+                            Text(
+                                AppLanguage.localizedString(
+                                    hasStoredBaseURL ? "Update Base URL" : "Save Base URL"
+                                )
+                            )
                         }
-                        .litterFont(.footnote)
-                        .foregroundColor(LitterTheme.textPrimary)
+                        .litterFont(.caption)
+                        .foregroundColor(LitterTheme.accent)
                         .disabled(openAIBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAuthWorking)
                     }
                     if hasStoredBaseURL {
@@ -1153,22 +1246,23 @@ private struct SettingsConnectionAccountSection: View {
                                 isAuthWorking = false
                             }
                         }
-                        .litterFont(.footnote)
+                        .litterFont(.caption)
                         .foregroundColor(LitterTheme.danger)
                         .disabled(isAuthWorking)
                     }
                 }
-                .settingsRowBackground()
+                .listRowBackground(LitterTheme.surface.opacity(0.6))
             }
 
             if let authError {
                 Text(authError)
-                    .litterFont(.footnote)
+                    .litterFont(.caption)
                     .foregroundColor(LitterTheme.danger)
-                    .settingsRowBackground()
+                    .listRowBackground(LitterTheme.surface.opacity(0.6))
             }
         } header: {
-            SettingsSectionHeader("Account")
+            Text("Account")
+                .foregroundColor(LitterTheme.textSecondary)
         }
         .task(id: server.serverId) {
             refreshStoredCredentialFlags()
@@ -1193,10 +1287,14 @@ private struct SettingsConnectionAccountSection: View {
 
     private var authColor: Color {
         switch server.account {
-        case .chatgpt?, .apiKey?:
-            return LitterTheme.textSecondary
-        case nil where server.isLocal && (hasStoredChatGPTTokens || hasStoredApiKey):
-            return LitterTheme.meta
+        case .chatgpt?:
+            return LitterTheme.accent
+        case .apiKey?:
+            return Color(hex: "#00AAFF")
+        case nil where server.isLocal && hasStoredChatGPTTokens:
+            return LitterTheme.accent.opacity(0.7)
+        case nil where server.isLocal && hasStoredApiKey:
+            return Color(hex: "#00AAFF").opacity(0.7)
         case nil:
             return LitterTheme.textMuted
         }
@@ -1207,26 +1305,26 @@ private struct SettingsConnectionAccountSection: View {
         case .chatgpt(let email, _)?:
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
-            return "API Key"
+            return AppLanguage.localizedString("API Key")
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return "ChatGPT"
         case nil where server.isLocal && hasStoredApiKey:
-            return "API Key"
+            return AppLanguage.localizedString("API Key")
         case nil:
-            return "Not logged in"
+            return AppLanguage.localizedString("Not logged in")
         }
     }
 
     private var authSubtitle: String? {
         switch server.account {
         case .chatgpt?:
-            return "ChatGPT account"
+            return AppLanguage.localizedString("ChatGPT account")
         case .apiKey?:
-            return "OpenAI API key"
+            return AppLanguage.localizedString("OpenAI API key")
         case nil where server.isLocal && hasStoredChatGPTTokens:
-            return "Stored locally; restoring session"
+            return AppLanguage.localizedString("Stored locally; restoring session")
         case nil where server.isLocal && hasStoredApiKey:
-            return "Saved locally; refreshing local account"
+            return AppLanguage.localizedString("Saved locally; refreshing local account")
         case nil:
             return nil
         }
@@ -1234,7 +1332,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func loginWithChatGPT() async {
         guard server.isLocal else {
-            authError = "Settings login is only available for the local server."
+            authError = AppLanguage.localizedString("Settings login is only available for the local server.")
             return
         }
         do {
@@ -1282,7 +1380,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func saveApiKey(_ key: String) async {
         guard server.isLocal else {
-            authError = "API keys can only be saved for the local server."
+            authError = AppLanguage.localizedString("API keys can only be saved for the local server.")
             return
         }
         do {
@@ -1294,7 +1392,7 @@ private struct SettingsConnectionAccountSection: View {
             try await appModel.restartLocalServer()
             refreshStoredCredentialFlags()
             guard hasStoredApiKey else {
-                authError = "API key did not persist locally."
+                authError = AppLanguage.localizedString("API key did not persist locally.")
                 return
             }
         } catch {
@@ -1304,11 +1402,11 @@ private struct SettingsConnectionAccountSection: View {
 
     private func saveBaseURL(_ rawBaseURL: String) async {
         guard server.isLocal else {
-            authError = "Base URL can only be saved for the local server."
+            authError = AppLanguage.localizedString("Base URL can only be saved for the local server.")
             return
         }
         guard let baseURL = normalizedOpenAIBaseURL(rawBaseURL) else {
-            authError = "Enter a valid http or https base URL."
+            authError = AppLanguage.localizedString("Enter a valid http or https base URL.")
             return
         }
         do {
@@ -1317,7 +1415,7 @@ private struct SettingsConnectionAccountSection: View {
             try await appModel.restartLocalServer()
             refreshStoredCredentialFlags()
             guard hasStoredBaseURL else {
-                authError = "Base URL did not persist locally."
+                authError = AppLanguage.localizedString("Base URL did not persist locally.")
                 return
             }
             openAIBaseURL = ""
@@ -1328,7 +1426,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func clearBaseURL() async {
         guard server.isLocal else {
-            authError = "Base URL can only be cleared for the local server."
+            authError = AppLanguage.localizedString("Base URL can only be cleared for the local server.")
             return
         }
         do {
@@ -1355,7 +1453,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private func logout() async {
         guard server.isLocal else {
-            authError = "Settings logout is only available for the local server."
+            authError = AppLanguage.localizedString("Settings logout is only available for the local server.")
             return
         }
         do {
@@ -1375,11 +1473,12 @@ private struct SettingsDisconnectedAccountSection: View {
     var body: some View {
         Section {
             Text("Connect a computer to view its account.")
-                .litterFont(.footnote)
+                .litterFont(.caption)
                 .foregroundColor(LitterTheme.textMuted)
-                .settingsRowBackground()
+                .listRowBackground(LitterTheme.surface.opacity(0.6))
         } header: {
-            SettingsSectionHeader("Account")
+            Text("Account")
+                .foregroundColor(LitterTheme.textSecondary)
         }
     }
 }
@@ -1388,82 +1487,10 @@ private func isSettingsSlingshotURL(_ rawURL: String) -> Bool {
     URL(string: rawURL)?.scheme?.lowercased() == "slingshot"
 }
 
-// MARK: - Shared settings rows
-
-/// Icon + title + optional trailing value: the one row shape used by every
-/// settings list (T3/iOS Settings pattern).
-struct SettingsRowLabel: View {
-    static let iconWidth: CGFloat = 26
-
-    let title: String
-    var systemImage: String? = nil
-    var value: String? = nil
-
-    var body: some View {
-        HStack(spacing: LitterSpace.m) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .litterFont(.body)
-                    .foregroundStyle(LitterTheme.textSecondary)
-                    .frame(width: Self.iconWidth)
-                    .accessibilityHidden(true)
-            }
-            Text(title)
-                .litterFont(.body)
-                .foregroundStyle(LitterTheme.textPrimary)
-                .lineLimit(1)
-                .layoutPriority(1)
-            Spacer(minLength: LitterSpace.s)
-            if let value, !value.isEmpty {
-                Text(value)
-                    .litterFont(.body)
-                    .foregroundStyle(LitterTheme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
+#if DEBUG
+#Preview("Settings") {
+    LitterPreviewScene(includeBackground: false) {
+        SettingsView()
     }
 }
-
-/// Sentence-case section title shared by every settings list.
-struct SettingsSectionHeader: View {
-    let title: String
-
-    init(_ title: String) {
-        self.title = title
-    }
-
-    var body: some View {
-        Text(title)
-            .litterFont(.footnote, weight: .medium)
-            .foregroundColor(LitterTheme.textSecondary)
-            .textCase(nil)
-            .accessibilityAddTraits(.isHeader)
-    }
-}
-
-/// Title with an optional one-line explanation, for toggles and pickers.
-struct SettingsRowText: View {
-    let title: String
-    var subtitle: String? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .litterFont(.body)
-                .foregroundColor(LitterTheme.textPrimary)
-            if let subtitle {
-                Text(subtitle)
-                    .litterFont(.footnote)
-                    .foregroundColor(LitterTheme.textSecondary)
-            }
-        }
-    }
-}
-
-extension View {
-    /// Row fill shared by every settings list.
-    func settingsRowBackground() -> some View {
-        listRowBackground(LitterTheme.surface.opacity(0.6))
-    }
-}
+#endif

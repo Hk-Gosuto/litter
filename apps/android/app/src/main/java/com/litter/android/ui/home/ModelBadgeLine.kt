@@ -16,12 +16,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.common.AgentIconView
 import com.litter.android.ui.common.runtimeLabel
 import com.litter.android.ui.scaled
+import com.sigkitten.litter.android.R
 import uniffi.codex_mobile_client.AppSessionSummary
 
 /**
@@ -41,7 +43,7 @@ fun ModelBadgeLine(
     val agentLabel = session.agentDisplayLabel?.trim()?.takeIf { it.isNotEmpty() }
 
     Row(
-        modifier = modifier.padding(top = 4.dp),
+        modifier = modifier.padding(top = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -51,6 +53,12 @@ fun ModelBadgeLine(
         ) {
             BadgeText(text = timeAgo, color = LitterTheme.textMuted.copy(alpha = 0.8f))
             SeparatorDot()
+            Icon(
+                imageVector = Icons.Outlined.Storage,
+                contentDescription = null,
+                tint = LitterTheme.accent.copy(alpha = 0.5f),
+                modifier = Modifier.size(10.dp),
+            )
             BadgeText(
                 text = HomeDashboardSupport.runtimeLabel(session.agentRuntimeKind),
                 color = LitterTheme.accent.copy(alpha = 0.75f),
@@ -63,6 +71,7 @@ fun ModelBadgeLine(
             )
             if (model.isNotEmpty()) {
                 SeparatorDot()
+                AgentIconView(kind = session.agentRuntimeKind, sizeDp = 12)
                 BadgeText(
                     text = model,
                     color = LitterTheme.textSecondary.copy(alpha = 0.7f),
@@ -72,7 +81,10 @@ fun ModelBadgeLine(
             }
             if (session.isFork) {
                 SeparatorDot()
-                BadgeText(text = "fork", color = LitterTheme.textSecondary)
+                BadgeText(
+                    text = stringResource(R.string.sessions_fork),
+                    color = LitterTheme.warning.copy(alpha = 0.8f),
+                )
             }
             if (session.isSubagent && agentLabel != null) {
                 SeparatorDot()
@@ -121,4 +133,4 @@ private fun SeparatorDot() {
     )
 }
 
-private const val BADGE_FONT_SP = 13f
+private const val BADGE_FONT_SP = 10f

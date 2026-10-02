@@ -38,7 +38,7 @@
 "onboarding_new_thread" = "开始新对话";
 "onboarding_type_message" = "或直接输入消息";
 "onboarding_realtime_voice" = "实时语音";
-"onboarding_voice_key" = "需要在设置中配置 OpenAI 密钥";
+"onboarding_voice_key" = "连接支持实时语音的远程电脑";
 "Settings" = "设置";
 "Done" = "完成";
 "Server Update Failed" = "服务器更新失败";

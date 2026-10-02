@@ -6,7 +6,7 @@ struct ConversationComposerContextBarView: View {
     let contextPercent: Int64?
 
     var body: some View {
-        HStack(spacing: LitterSpace.m) {
+        HStack(spacing: 4) {
             if let primary = rateLimits?.primary {
                 RateLimitBadgeView(
                     label: formatWindowLabel(primary),
@@ -30,7 +30,7 @@ struct ConversationComposerContextBarView: View {
         }
         // Keep the composer chrome height stable even when no badges are available.
         .frame(maxWidth: .infinity, minHeight: 16, alignment: .trailing)
-        .padding(.horizontal, LitterSpace.margin)
+        .padding(.horizontal, 12)
         .padding(.top, -2)
         .padding(.trailing, LitterPlatform.isRegularSurface(horizontalSizeClass: horizontalSizeClass) ? 12 : 40)
     }
@@ -51,7 +51,7 @@ struct ConversationComposerContextBarView: View {
         switch percent {
         case ...15: return LitterTheme.danger
         case ...35: return LitterTheme.warning
-        default: return LitterTheme.meta
+        default: return LitterTheme.success
         }
     }
 }

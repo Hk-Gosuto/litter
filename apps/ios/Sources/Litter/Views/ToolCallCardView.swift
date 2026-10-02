@@ -34,37 +34,45 @@ struct ToolCallCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Litter Quiet: a tool call is one expandable mono line. Status
-            // only shows when it needs attention (running / failed).
-            HStack(alignment: .firstTextBaseline, spacing: LitterSpace.s) {
+            HStack(spacing: 8) {
+                Image(systemName: model.kind.iconName)
+                    .litterFont(size: 12, weight: .semibold)
+                    .foregroundColor(kindAccent)
+
                 if let attributedSummary = model.attributedSummary {
                     Text(attributedSummary)
-                        .litterMonoFont(size: summaryFontSize)
+                        .litterFont(size: summaryFontSize)
                         .lineLimit(1)
                 } else {
                     Text(model.summary)
-                        .litterMonoFont(size: summaryFontSize)
-                        .foregroundColor(LitterTheme.textSecondary)
+                        .litterFont(size: summaryFontSize)
+                        .foregroundColor(LitterTheme.textSystem)
                         .lineLimit(1)
                 }
 
-                Spacer(minLength: LitterSpace.s)
+                Spacer()
 
                 if let duration = model.duration, !duration.isEmpty {
                     Text(duration)
-                        .litterMeta()
+                        .litterFont(.caption2)
+                        .foregroundColor(durationStatusColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(durationStatusColor.opacity(0.10))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(durationStatusColor.opacity(0.22), lineWidth: 0.5)
+                        )
                         .accessibilityLabel(durationAccessibilityLabel(duration))
                 }
-                if let statusWord {
-                    Text(statusWord)
-                        .litterMeta(durationStatusColor)
-                }
 
-                Text(resolvedExpanded ? "⌄" : "›")
-                    .litterMeta()
-                    .accessibilityHidden(true)
+                Image(systemName: resolvedExpanded ? "chevron.up" : "chevron.down")
+                    .litterFont(size: 11, weight: .medium)
+                    .foregroundColor(LitterTheme.textMuted)
             }
-            .frame(minHeight: 32)
             .contentShape(Rectangle())
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -88,6 +96,14 @@ struct ToolCallCardView: View {
                 .transition(.toolCallDetailReveal)
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(LitterTheme.surface)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(LitterTheme.border, lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .animation(.spring(duration: 0.32, bounce: 0.12), value: resolvedExpanded)
         .onChange(of: model.status) { _, newStatus in
             if newStatus == .failed {
@@ -118,25 +134,16 @@ struct ToolCallCardView: View {
 
     private var resolvedExpanded: Bool { expanded }
 
-    /// Healthy (completed) calls show nothing; problems get one word.
-    private var statusWord: String? {
-        switch model.status {
-        case .inProgress: return "running"
-        case .failed: return "failed"
-        case .completed, .unknown: return nil
-        }
-    }
-
     private var durationStatusColor: Color {
         switch model.status {
         case .completed:
-            return LitterTheme.meta
+            return LitterTheme.success
         case .inProgress:
-            return LitterTheme.meta
+            return LitterTheme.warning
         case .failed:
             return LitterTheme.danger
         case .unknown:
-            return LitterTheme.meta
+            return LitterTheme.textSecondary
         }
     }
 
@@ -195,7 +202,7 @@ struct ToolCallCardView: View {
                     }
                     .padding(8)
                     .background(LitterTheme.surface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         case .code(let label, let language, let content):
@@ -229,7 +236,7 @@ struct ToolCallCardView: View {
                     }
                     .padding(8)
                     .background(LitterTheme.surface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         case .progress(let label, let items):
@@ -258,15 +265,16 @@ struct ToolCallCardView: View {
                     }
                     .padding(8)
                     .background(LitterTheme.surface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
     }
 
     private func sectionLabel(_ label: String) -> some View {
-        Text(label)
-            .litterSectionLabel()
+        Text(label.uppercased())
+            .litterFont(.caption2, weight: .bold)
+            .foregroundColor(LitterTheme.textSecondary)
     }
 
     private func codeLikeSection(id: String, label: String, language: String, content: String) -> some View {
@@ -288,7 +296,7 @@ struct ToolCallCardView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(LitterTheme.codeBackground.opacity(0.72))
-                .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .fixedSize(horizontal: false, vertical: true)
             longTextToggle(for: content, id: id)
         }
@@ -309,7 +317,7 @@ struct ToolCallCardView: View {
                         sectionLabel(label)
                         Spacer(minLength: 0)
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .litterFont(size: 13, weight: .medium)
+                            .litterFont(size: 10, weight: .medium)
                             .foregroundColor(LitterTheme.textMuted)
                     }
                     .contentShape(Rectangle())
@@ -329,7 +337,7 @@ struct ToolCallCardView: View {
                     .padding(.vertical, 6)
                 }
                 .background(LitterTheme.codeBackground.opacity(0.72))
-                .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 longTextToggle(for: content, id: id)
             }
         }
@@ -560,3 +568,13 @@ private struct ToolCallImagePreview: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Tool Call Card") {
+    ZStack {
+        LitterTheme.backgroundGradient.ignoresSafeArea()
+        ToolCallCardView(model: LitterPreviewData.sampleToolCallModel)
+            .padding(20)
+    }
+}
+#endif

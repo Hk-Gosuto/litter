@@ -56,19 +56,18 @@ final class PerformanceHelpersTests: XCTestCase {
     func testAcknowledgedUserIdentityDoesNotReplaceAssistantScrollTarget() {
         let now = Date()
         let assistant = makeAssistantItem(text: "Reply", turnId: "a", turnIndex: 0, timestamp: now)
-        var projection = ConversationTranscriptProjection()
+        var projection: [ConversationCollectionEntry] = []
         func update(userID: String) {
             let turns = TranscriptTurn.build(from: [
                 makeUserItem(id: userID, text: "Prompt", turnId: "a", turnIndex: 0, timestamp: now),
                 assistant
             ], threadStatus: .thinking, expandedRecentTurnCount: .max)
-            projection.update(turns: turns, expandedTurnIDs: [], reasoning: .collapsed,
-                              commands: .collapsed, tools: .collapsed)
+            projection = ConversationCollectionProjection.build(turns: turns, expandedTurnIDs: []) { $0.items.map { .item($0) } }
         }
         update(userID: "optimistic")
-        let assistantTarget = projection.entries[1].id
+        let assistantTarget = projection[1].id
         update(userID: "acknowledged")
-        XCTAssertEqual(projection.entries[1].id, assistantTarget)
+        XCTAssertEqual(projection[1].id, assistantTarget)
     }
 
     func testStreamingDoesNotMergeDifferentAuthoritativeTurns() {
@@ -89,11 +88,10 @@ final class PerformanceHelpersTests: XCTestCase {
         let turn = TranscriptTurn.build(from: [
             makeUserItem(text: "Resume", turnId: "a", turnIndex: 0, timestamp: Date())
         ], threadStatus: .thinking)[0].withCollapsedByDefault(true)
-        var projection = ConversationTranscriptProjection()
-        projection.update(turns: [turn], expandedTurnIDs: [], reasoning: .collapsed,
-                          commands: .collapsed, tools: .collapsed)
-        XCTAssertEqual(projection.entries.count, 2)
-        guard case .row = projection.entries[0].content else {
+        var projection: [ConversationCollectionEntry] = []
+        projection = ConversationCollectionProjection.build(turns: [turn], expandedTurnIDs: []) { $0.items.map { .item($0) } }
+        XCTAssertEqual(projection.count, 2)
+        guard case .timeline = projection[0].content else {
             return XCTFail("A resumed live turn must not be hidden behind a summary")
         }
     }
@@ -104,28 +102,27 @@ final class PerformanceHelpersTests: XCTestCase {
         items += (0..<500).map { index in
             makeAssistantItem(text: "Message \(index)", turnId: "a", turnIndex: 0, timestamp: now)
         }
-        var projection = ConversationTranscriptProjection()
+        var projection: [ConversationCollectionEntry] = []
         func update(_ turns: [TranscriptTurn], expanded: Set<String> = []) {
-            projection.update(turns: turns, expandedTurnIDs: expanded,
-                              reasoning: .collapsed, commands: .collapsed, tools: .collapsed)
+            projection = ConversationCollectionProjection.build(turns: turns, expandedTurnIDs: expanded) { $0.items.map { .item($0) } }
         }
         let initial = TranscriptTurn.build(from: items, threadStatus: .ready, expandedRecentTurnCount: .max)
         update(initial)
-        let previousIDs = projection.entries.map(\.id)
+        let previousIDs = projection.map(\.id)
         XCTAssertEqual(previousIDs.count, 501)
         XCTAssertEqual(Set(previousIDs).count, 501)
-        XCTAssertEqual(Set(projection.turnIDByEntryID.values), [initial[0].id])
+        XCTAssertEqual(Set(projection.map(\.turnID)), [initial[0].id])
 
         items.append(makeUserItem(text: "Follow up", turnId: "b", turnIndex: 1, timestamp: now))
         let next = TranscriptTurn.build(from: items, threadStatus: .thinking, expandedRecentTurnCount: 1)
         let preserved = TranscriptTurn.preservingCollapseState(in: next, from: initial)
         update(preserved)
-        XCTAssertEqual(Array(projection.entries.prefix(previousIDs.count).map(\.id)), previousIDs)
-        XCTAssertEqual(projection.entries.count, 503) // Prior rows, follow-up, typing footer.
+        XCTAssertEqual(Array(projection.prefix(previousIDs.count).map(\.id)), previousIDs)
+        XCTAssertEqual(projection.count, 502) // The original renderer draws typing within the final row.
 
         // An explicit expansion of a restored collapsed turn also survives updates.
         update(next, expanded: [next[0].id])
-        XCTAssertEqual(Array(projection.entries.prefix(previousIDs.count).map(\.id)), previousIDs)
+        XCTAssertEqual(Array(projection.prefix(previousIDs.count).map(\.id)), previousIDs)
     }
 
     func testInfiniteScrollPrefetchesBeforeTheVisibleCacheEdge() {

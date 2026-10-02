@@ -80,7 +80,7 @@ fun InlineHandoffView(
                     Text(
                         text = content.v1.text,
                         color = LitterTheme.textPrimary,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         modifier = Modifier.padding(vertical = 2.dp),
                     )
                 }
@@ -110,7 +110,7 @@ fun InlineHandoffView(
                     Text(
                         text = content.v1.summary.joinToString(" "),
                         color = LitterTheme.textMuted,
-                        fontSize = 13.sp,
+                        fontSize = 11.sp,
                         fontStyle = FontStyle.Italic,
                         modifier = Modifier.padding(vertical = 1.dp),
                     )
@@ -120,7 +120,7 @@ fun InlineHandoffView(
                     Text(
                         text = "$ ${content.v1.command}",
                         color = LitterTheme.toolCallCommand,
-                        fontSize = 13.sp,
+                        fontSize = 11.sp,
                         modifier = Modifier.padding(vertical = 1.dp),
                     )
                 }
@@ -132,7 +132,7 @@ fun InlineHandoffView(
                             content.v1.path.substringAfterLast('/'),
                         ),
                         color = LitterTheme.textMuted,
-                        fontSize = 13.sp,
+                        fontSize = 11.sp,
                         modifier = Modifier.padding(vertical = 1.dp),
                     )
                 }
@@ -141,7 +141,7 @@ fun InlineHandoffView(
                     Text(
                         text = content.v1.body,
                         color = LitterTheme.danger,
-                        fontSize = 13.sp,
+                        fontSize = 11.sp,
                         modifier = Modifier.padding(vertical = 1.dp),
                     )
                 }

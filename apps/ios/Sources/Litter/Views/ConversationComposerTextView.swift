@@ -279,7 +279,6 @@ struct ConversationComposerTextView: UIViewRepresentable {
 
         private var lastHighlightedText: String?
         private var lastHighlightNames: Set<String> = []
-        private var hasAppliedHighlight = false
 
         func invalidateMentionHighlight() {
             lastHighlightedText = nil
@@ -289,18 +288,6 @@ struct ConversationComposerTextView: UIViewRepresentable {
             let names = parent.mentionHighlightNames
             let text = textView.text ?? ""
             if text == lastHighlightedText, names == lastHighlightNames { return }
-            // Common typing path: no skill names to highlight and nothing was
-            // highlighted before. Re-coloring the full text storage here
-            // invalidated TextKit layout for the entire draft on every
-            // keystroke, which scales with draft length.
-            if names.isEmpty, !hasAppliedHighlight {
-                lastHighlightedText = text
-                lastHighlightNames = names
-                if textView.typingAttributes[.foregroundColor] == nil {
-                    textView.typingAttributes[.foregroundColor] = UIColor(LitterTheme.textPrimary)
-                }
-                return
-            }
             lastHighlightedText = text
             lastHighlightNames = names
 
@@ -310,14 +297,12 @@ struct ConversationComposerTextView: UIViewRepresentable {
             let accentColor = UIColor(LitterTheme.success)
             storage.beginEditing()
             storage.addAttribute(.foregroundColor, value: baseColor, range: fullRange)
-            hasAppliedHighlight = false
             if !names.isEmpty {
                 for token in SkillMentionTokens.matches(in: text)
                 where names.contains(token.name.lowercased()) {
                     let clamped = NSIntersectionRange(token.range, fullRange)
                     guard clamped.length > 0 else { continue }
                     storage.addAttribute(.foregroundColor, value: accentColor, range: clamped)
-                    hasAppliedHighlight = true
                 }
             }
             storage.endEditing()

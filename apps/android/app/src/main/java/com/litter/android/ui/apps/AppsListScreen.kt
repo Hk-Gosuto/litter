@@ -148,7 +148,7 @@ fun AppsListScreen(
                         leadingAction = SwipeAction(
                             icon = Icons.Filled.Edit,
                             label = "rename",
-                            tint = LitterTheme.textPrimary,
+                            tint = LitterTheme.accent,
                             onTrigger = {
                                 renameText = app.title
                                 renameTarget = app
@@ -216,7 +216,7 @@ private fun AppRow(
             Text(
                 text = relativeTime(app.updatedAtMs),
                 color = LitterTheme.textMuted,
-                fontSize = LitterTextStyle.footnote.scaled,
+                fontSize = LitterTextStyle.caption2.scaled,
             )
         }
     }
@@ -263,8 +263,8 @@ private fun EmptyState() {
 @Composable
 private fun monogramTint(id: String): Color {
     val palette = listOf(
-        LitterTheme.textPrimary,
-        LitterTheme.textPrimary,
+        LitterTheme.accent,
+        LitterTheme.accentStrong,
         LitterTheme.success,
         LitterTheme.warning,
         LitterTheme.danger,

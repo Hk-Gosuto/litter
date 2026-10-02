@@ -36,7 +36,7 @@ final class LitterUITests: XCTestCase {
         app.buttons["multiturn.followup"].tap()
         XCTAssertTrue(app.staticTexts["FOLLOWUP_ANSWER_1"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["HISTORY_MESSAGE_499"].exists)
-        app.scrollViews.firstMatch.swipeDown()
+        (app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.scrollViews.firstMatch).swipeDown()
         let history = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "HISTORY_MESSAGE_"))
         XCTAssertTrue(history.firstMatch.exists)
         XCTAssertFalse(app.buttons["Show Less"].exists)

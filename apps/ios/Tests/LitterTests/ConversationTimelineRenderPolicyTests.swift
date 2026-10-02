@@ -6,9 +6,8 @@ final class ConversationTimelineRenderPolicyTests: XCTestCase {
         let before = assistantItem(text: "Draft")
         let after = assistantItem(text: "Corrected")
 
-        XCTAssertFalse(ConversationTimelineRowDescriptor.item(before) == .item(after))
-        XCTAssertEqual(before.id, after.id)
-        XCTAssertNotEqual(before.renderDigest, after.renderDigest)
+        XCTAssertFalse(ConversationTimelineItemRenderPolicy.equivalent(before, after, rendererDriven: false))
+        XCTAssertTrue(ConversationTimelineItemRenderPolicy.equivalent(before, after, rendererDriven: true))
     }
 
     func testMathStreamingUsesSnapshotContentUpdates() {
@@ -16,7 +15,7 @@ final class ConversationTimelineRenderPolicyTests: XCTestCase {
         let after = assistantItem(text: "Inline $x$ and more")
 
         XCTAssertFalse(StreamingAssistantBubble.usesStreamingMarkdownRenderer(itemId: before.id, text: "Inline $x$"))
-        XCTAssertFalse(ConversationTimelineRowDescriptor.item(before) == .item(after))
+        XCTAssertFalse(ConversationTimelineItemRenderPolicy.equivalent(before, after, rendererDriven: false))
     }
 
     func testStreamSwitchesToSnapshotUpdatesWhenMathAppears() {
@@ -29,17 +28,17 @@ final class ConversationTimelineRenderPolicyTests: XCTestCase {
         let before = ConversationItem(id: "item", content: .user(.init(text: "Before", images: [])))
         let after = ConversationItem(id: "item", content: .user(.init(text: "After", images: [])))
 
-        XCTAssertFalse(ConversationTimelineRowDescriptor.item(before) == .item(after))
+        XCTAssertFalse(ConversationTimelineItemRenderPolicy.equivalent(before, after, rendererDriven: true))
     }
 
-    func testAssistantLabelChangeInvalidatesTheRowDescriptor() {
+    func testStreamingAssistantLabelChangeInvalidatesTheRow() {
         let before = assistantItem(text: "Working")
         let after = ConversationItem(
             id: "item",
             content: .assistant(.init(text: "Working", agentNickname: "sam", agentRole: nil, phase: nil))
         )
 
-        XCTAssertFalse(ConversationTimelineRowDescriptor.item(before) == .item(after))
+        XCTAssertFalse(ConversationTimelineItemRenderPolicy.equivalent(before, after, rendererDriven: true))
     }
 
     private func assistantItem(text: String) -> ConversationItem {

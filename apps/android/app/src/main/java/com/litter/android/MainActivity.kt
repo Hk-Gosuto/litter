@@ -1,7 +1,5 @@
 package com.litter.android
 
-import android.content.res.Configuration
-import com.litter.android.util.EdgeToEdge
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -11,6 +9,7 @@ import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.litter.android.util.EdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
@@ -72,12 +71,12 @@ class MainActivity : ComponentActivity() {
         // (Theme.App.Starting) to the Compose AnimatedSplashScreen without a
         // theme-background flash between them.
         installSplashScreen()
-        super.onCreate(savedInstanceState)
         EdgeToEdge.apply(
             this,
-            darkBars = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES,
+            darkBars = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES,
         )
+        super.onCreate(savedInstanceState)
         OpenAIApiKeyStore(applicationContext).applyToEnvironment()
         ExperimentalFeatures.initialize(applicationContext)
         PetOverlayController.initialize(applicationContext)

@@ -342,3 +342,13 @@ struct SSHLoginSheet: View {
         passphrase = ""
     }
 }
+
+#if DEBUG
+#Preview("SSH Login") {
+    SSHLoginSheet(
+        server: LitterPreviewData.sampleSSHServer,
+        autoLoadSavedCredentials: false,
+        initialUsername: "builder"
+    ) { _ in }
+}
+#endif

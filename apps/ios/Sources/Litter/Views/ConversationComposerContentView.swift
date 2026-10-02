@@ -272,14 +272,18 @@ private struct ConversationComposerFileChipStrip: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(files) { file in
-                    HStack(spacing: LitterSpace.s) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc")
+                            .litterFont(size: 10, weight: .semibold)
+                            .foregroundStyle(LitterTheme.accent)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(file.label)
-                                .litterFont(size: 15)
+                                .litterFont(.caption, weight: .semibold)
                                 .foregroundStyle(LitterTheme.textPrimary)
                                 .lineLimit(1)
                             Text(file.path)
-                                .litterMeta()
+                                .litterFont(size: 10)
+                                .foregroundStyle(LitterTheme.textMuted)
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: 180, alignment: .leading)
@@ -287,19 +291,21 @@ private struct ConversationComposerFileChipStrip: View {
                             onRemove(file)
                         } label: {
                             Image(systemName: "xmark")
-                                .litterFont(size: 13, weight: .semibold)
-                                .foregroundStyle(LitterTheme.meta)
-                                .frame(width: 32, height: 32)
-                                .contentShape(Rectangle())
+                                .litterFont(size: 9, weight: .bold)
+                                .foregroundStyle(LitterTheme.accent)
+                                .padding(3)
+                                .background(Circle().fill(LitterTheme.accent.opacity(0.18)))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Remove file \(file.label)")
+                        .accessibilityLabel(
+                            AppLanguage.localizedString("Remove file %@", file.label)
+                        )
                     }
-                    .padding(.leading, LitterSpace.m)
-                    .padding(.vertical, LitterSpace.xs)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
                     .background(
-                        RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous)
-                            .fill(LitterTheme.raised)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(LitterTheme.surfaceLight.opacity(0.72))
                     )
                 }
             }
@@ -315,27 +321,33 @@ private struct ConversationComposerPluginChipStrip: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(plugins, id: \.path) { plugin in
-                    HStack(spacing: LitterSpace.xs) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "puzzlepiece.extension.fill")
+                            .litterFont(size: 10, weight: .semibold)
+                            .foregroundStyle(LitterTheme.accent)
                         Text(plugin.displayTitle)
-                            .litterFont(size: 15)
-                            .foregroundStyle(LitterTheme.textPrimary)
+                            .litterFont(.caption, weight: .semibold)
+                            .foregroundStyle(LitterTheme.accent)
                             .lineLimit(1)
                         Button {
                             onRemove(plugin)
                         } label: {
                             Image(systemName: "xmark")
-                                .litterFont(size: 13, weight: .semibold)
-                                .foregroundStyle(LitterTheme.meta)
-                                .frame(width: 32, height: 32)
-                                .contentShape(Rectangle())
+                                .litterFont(size: 9, weight: .bold)
+                                .foregroundStyle(LitterTheme.accent)
+                                .padding(3)
+                                .background(Circle().fill(LitterTheme.accent.opacity(0.18)))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Remove plugin \(plugin.displayTitle)")
+                        .accessibilityLabel(
+                            AppLanguage.localizedString("Remove plugin %@", plugin.displayTitle)
+                        )
                     }
-                    .padding(.leading, LitterSpace.m)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                     .background(
-                        RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous)
-                            .fill(LitterTheme.raised)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(LitterTheme.accent.opacity(0.12))
                     )
                 }
             }
@@ -350,35 +362,34 @@ struct ConversationComposerModeChip: View {
     private var label: String {
         switch mode {
         case .plan:
-            return "Plan"
+            return AppLanguage.localizedString("Plan")
         case .`default`:
-            return "Default"
+            return AppLanguage.localizedString("Default")
         }
     }
 
-    private var foreground: Color { LitterTheme.textPrimary }
+    private var foreground: Color {
+        mode == .plan ? Color.black : LitterTheme.textPrimary
+    }
 
-    private var background: Color { LitterTheme.composerControl }
+    private var background: Color {
+        mode == .plan ? LitterTheme.accent : LitterTheme.surfaceLight
+    }
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 6) {
-                Text(label.lowercased())
-                    .litterMonoFont(size: 13, weight: mode == .plan ? .semibold : .regular)
+                Text(label)
+                    .litterFont(.caption, weight: .semibold)
                 Image(systemName: "chevron.up.chevron.down")
-                    .litterFont(size: 11, weight: .semibold)
-                    .foregroundStyle(LitterTheme.meta)
+                    .litterFont(size: 10, weight: .semibold)
             }
             .foregroundStyle(foreground)
-            .padding(.horizontal, LitterSpace.m)
-            .frame(height: 30)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Capsule().fill(background))
-            .frame(minHeight: LitterSpace.hitTarget)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.leading, LitterSpace.xs)
-        .accessibilityLabel("Mode: \(label)")
     }
 }
 
@@ -393,7 +404,9 @@ private struct ConversationComposerPlanProgressView: View {
     private var currentStepText: String {
         guard let step = currentStep?.step.trimmingCharacters(in: .whitespacesAndNewlines),
               !step.isEmpty else {
-            return progress.plan.isEmpty ? "No plan task" : "Plan complete"
+            return AppLanguage.localizedString(
+                progress.plan.isEmpty ? "No plan task" : "Plan complete"
+            )
         }
         return step
     }
@@ -417,7 +430,11 @@ private struct ConversationComposerPlanProgressView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Collapse plan progress" : "Expand plan progress")
+            .accessibilityLabel(
+                AppLanguage.localizedString(
+                    isExpanded ? "Collapse plan progress" : "Expand plan progress"
+                )
+            )
 
             if isExpanded {
                 expandedContent
@@ -425,21 +442,28 @@ private struct ConversationComposerPlanProgressView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(LitterSpace.m)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous)
-                .fill(LitterTheme.raised)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LitterTheme.codeBackground.opacity(0.92))
         )
     }
 
     private var headerContent: some View {
         Group {
-            Text("plan · \(completedCount)/\(progress.plan.count)")
-                .litterMeta()
+            Image(systemName: "list.bullet.clipboard")
+                .litterFont(size: 12, weight: .semibold)
+                .foregroundStyle(LitterTheme.accent)
+            Text(AppLanguage.localizedString(isExpanded ? "Plan Progress" : "Plan"))
+                .litterFont(.caption, weight: .semibold)
+                .foregroundStyle(LitterTheme.textPrimary)
+            Text("\(completedCount)/\(progress.plan.count)")
+                .litterMonoFont(size: 11, weight: .semibold)
+                .foregroundStyle(LitterTheme.textSecondary)
 
             if !isExpanded {
                 Text(currentStepText)
-                    .litterFont(size: 15)
+                    .litterFont(.caption)
                     .foregroundStyle(LitterTheme.textPrimary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -448,9 +472,9 @@ private struct ConversationComposerPlanProgressView: View {
                 Spacer(minLength: 0)
             }
 
-            Text(isExpanded ? "⌄" : "›")
-                .litterMeta()
-                .accessibilityHidden(true)
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .litterFont(size: 10, weight: .semibold)
+                .foregroundStyle(LitterTheme.textMuted)
         }
     }
 
@@ -459,34 +483,49 @@ private struct ConversationComposerPlanProgressView: View {
         if let explanation = progress.explanation?.trimmingCharacters(in: .whitespacesAndNewlines),
            !explanation.isEmpty {
             Text(explanation)
-                .litterFont(size: 15)
+                .litterFont(.caption)
                 .foregroundStyle(LitterTheme.textSecondary)
         }
 
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(progress.plan.enumerated()), id: \.offset) { index, step in
-                HStack(alignment: .firstTextBaseline, spacing: LitterSpace.s) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: iconName(for: step.status))
+                        .litterFont(size: 11, weight: .semibold)
+                        .foregroundStyle(iconColor(for: step.status))
+                        .padding(.top, 2)
                     Text("\(index + 1).")
-                        .litterMeta()
+                        .litterMonoFont(size: 11, weight: .semibold)
+                        .foregroundStyle(LitterTheme.textMuted)
+                        .padding(.top, 1)
                     Text(step.step)
-                        .litterFont(size: 15)
-                        .foregroundStyle(step.status == .completed ? LitterTheme.textSecondary : LitterTheme.textPrimary)
+                        .litterFont(.caption)
+                        .foregroundStyle(LitterTheme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if let word = statusWord(for: step.status) {
-                        Text(word)
-                            .litterMeta()
-                    }
                 }
-                .accessibilityElement(children: .combine)
             }
         }
     }
 
-    private func statusWord(for status: AppPlanStepStatus) -> String? {
+    private func iconName(for status: AppPlanStepStatus) -> String {
         switch status {
-        case .completed: return "done"
-        case .inProgress: return "working…"
-        case .pending: return nil
+        case .completed:
+            return "checkmark.circle.fill"
+        case .inProgress:
+            return "circle.fill"
+        case .pending:
+            return "circle"
+        }
+    }
+
+    private func iconColor(for status: AppPlanStepStatus) -> Color {
+        switch status {
+        case .completed:
+            return LitterTheme.success
+        case .inProgress:
+            return LitterTheme.warning
+        case .pending:
+            return LitterTheme.textMuted
         }
     }
 }
@@ -516,9 +555,10 @@ private struct ConversationComposerGoalRowView: View {
     @State private var showClearConfirm = false
     @State private var draftObjective = ""
     @State private var draftBudget = ""
+    @State private var pulsing = false
     @State private var animatedProgress: Double = 0
 
-    private let cornerRadius: CGFloat = LitterRadius.raised
+    private let cornerRadius: CGFloat = 12
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -526,7 +566,7 @@ private struct ConversationComposerGoalRowView: View {
                 statusPill
 
                 Text(goal.objective)
-                    .litterFont(size: 15)
+                    .litterFont(.caption)
                     .foregroundColor(LitterTheme.textPrimary)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -583,20 +623,41 @@ private struct ConversationComposerGoalRowView: View {
         }
         .onAppear {
             animatedProgress = budgetProgress ?? 0
+            if goal.status == .active { pulsing = true }
         }
         .onChange(of: budgetProgress ?? 0) { _, new in
             withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
                 animatedProgress = new
             }
         }
+        .onChange(of: goal.status) { _, new in
+            pulsing = (new == .active)
+        }
     }
 
     private var statusPill: some View {
         Button(action: { if canTogglePause { actions.togglePause() } }) {
-            Text("goal · \(statusLabel)")
-                .litterMeta(statusTint)
-                .frame(minHeight: 32)
-                .contentShape(Rectangle())
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(statusTint)
+                    .frame(width: 6, height: 6)
+                    .opacity(goal.status == .active ? (pulsing ? 0.35 : 1.0) : 1.0)
+                    .animation(
+                        goal.status == .active
+                            ? .easeInOut(duration: 1.1).repeatForever(autoreverses: true)
+                            : .default,
+                        value: pulsing
+                    )
+
+                Text(statusLabel)
+                    .litterMonoFont(size: 10, weight: .semibold)
+                    .foregroundColor(statusTint)
+                    .textCase(.uppercase)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(statusTint.opacity(0.14)))
+            .overlay(Capsule().stroke(statusTint.opacity(0.35), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .disabled(!canTogglePause)
@@ -644,9 +705,9 @@ private struct ConversationComposerGoalRowView: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .litterFont(size: 15, weight: .semibold)
+                .litterFont(size: 12, weight: .bold)
                 .foregroundColor(LitterTheme.textSecondary)
-                .frame(width: 36, height: 32)
+                .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Goal actions")
@@ -658,10 +719,14 @@ private struct ConversationComposerGoalRowView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(LitterTheme.meta.opacity(0.18))
+                        .fill(statusTint.opacity(0.10))
                     Capsule()
                         .fill(
-                            progressTint
+                            LinearGradient(
+                                colors: [progressTint.opacity(0.85), progressTint],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
                         )
                         .frame(width: max(geo.size.width * animatedProgress, animatedProgress > 0 ? 6 : 0))
                 }
@@ -672,10 +737,12 @@ private struct ConversationComposerGoalRowView: View {
             HStack(spacing: 4) {
                 if let budgetLabel {
                     Text(budgetLabel)
-                        .litterMeta()
+                        .litterMonoFont(size: 10, weight: .semibold)
+                        .foregroundColor(LitterTheme.textSecondary)
                 }
                 Text("\(percent)%")
-                    .litterMeta(progressTextTint)
+                    .litterMonoFont(size: 10, weight: .bold)
+                    .foregroundColor(progressTextTint)
             }
             .fixedSize()
         }
@@ -690,41 +757,43 @@ private struct ConversationComposerGoalRowView: View {
 
     private var pauseToggleAccessibilityLabel: String {
         switch goal.status {
-        case .active: return "Pause goal"
-        case .paused: return "Resume goal"
-        case .blocked: return "Resume goal (override block)"
-        case .usageLimited: return "Resume goal (override usage cap)"
-        case .budgetLimited: return "Resume goal (override budget cap)"
-        case .complete: return "Goal complete"
+        case .active: return AppLanguage.localizedString("Pause goal")
+        case .paused: return AppLanguage.localizedString("Resume goal")
+        case .blocked: return AppLanguage.localizedString("Resume goal (override block)")
+        case .usageLimited: return AppLanguage.localizedString("Resume goal (override usage cap)")
+        case .budgetLimited: return AppLanguage.localizedString("Resume goal (override budget cap)")
+        case .complete: return AppLanguage.localizedString("Goal complete")
         }
     }
 
     private var pauseResumeMenuItem: (label: String, systemImage: String)? {
         switch goal.status {
-        case .active: return ("Pause Goal", "pause.circle")
-        case .paused: return ("Resume Goal", "play.circle")
-        case .blocked: return ("Resume Goal (override block)", "play.circle")
-        case .usageLimited: return ("Resume Goal (override usage cap)", "play.circle")
-        case .budgetLimited: return ("Resume Goal (override cap)", "play.circle")
+        case .active: return (AppLanguage.localizedString("Pause Goal"), "pause.circle")
+        case .paused: return (AppLanguage.localizedString("Resume Goal"), "play.circle")
+        case .blocked: return (AppLanguage.localizedString("Resume Goal (override block)"), "play.circle")
+        case .usageLimited: return (AppLanguage.localizedString("Resume Goal (override usage cap)"), "play.circle")
+        case .budgetLimited: return (AppLanguage.localizedString("Resume Goal (override cap)"), "play.circle")
         case .complete: return nil
         }
     }
 
     private var statusTint: Color {
         switch goal.status {
-        case .active, .paused, .complete: return LitterTheme.meta
+        case .active: return LitterTheme.accent
+        case .paused: return LitterTheme.textMuted
         case .blocked, .usageLimited, .budgetLimited: return LitterTheme.warning
+        case .complete: return LitterTheme.success
         }
     }
 
     private var statusLabel: String {
         switch goal.status {
-        case .active: return "active"
-        case .paused: return "paused"
-        case .blocked: return "blocked"
-        case .usageLimited: return "usage limit"
-        case .budgetLimited: return "limited"
-        case .complete: return "complete"
+        case .active: return AppLanguage.localizedString("active")
+        case .paused: return AppLanguage.localizedString("paused")
+        case .blocked: return AppLanguage.localizedString("blocked")
+        case .usageLimited: return AppLanguage.localizedString("usage limit")
+        case .budgetLimited: return AppLanguage.localizedString("limited")
+        case .complete: return AppLanguage.localizedString("complete")
         }
     }
 
@@ -747,10 +816,10 @@ private struct ConversationComposerGoalRowView: View {
     }
 
     private var progressTint: Color {
-        guard let progress = budgetProgress else { return LitterTheme.textSecondary }
+        guard let progress = budgetProgress else { return statusTint }
         if progress >= 1.0 { return LitterTheme.danger }
         if progress >= 0.85 { return LitterTheme.warning }
-        return LitterTheme.textSecondary
+        return statusTint
     }
 
     private func formatTokens(_ value: Int64) -> String {
@@ -768,19 +837,32 @@ private struct ConversationComposerGoalRowView: View {
     }
 
     private var usageMetricsRow: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
             if goal.tokensUsed > 0 {
-                RollingMetricText(formatTokens(goal.tokensUsed))
+                HStack(spacing: 3) {
+                    Image(systemName: "circle.hexagongrid")
+                        .litterMonoFont(size: 9, weight: .semibold)
+                    RollingMetricText(formatTokens(goal.tokensUsed))
+                        .litterMonoFont(size: 10, weight: .semibold)
+                }
+                .foregroundColor(LitterTheme.textSecondary)
             }
             if goal.tokensUsed > 0 && goal.timeUsedSeconds > 0 {
-                Text(" · ")
+                Text("·")
+                    .litterMonoFont(size: 10, weight: .semibold)
+                    .foregroundColor(LitterTheme.textMuted.opacity(0.6))
             }
             if goal.timeUsedSeconds > 0 {
-                RollingMetricText(formatSeconds(goal.timeUsedSeconds))
+                HStack(spacing: 3) {
+                    Image(systemName: "clock")
+                        .litterMonoFont(size: 9, weight: .semibold)
+                    RollingMetricText(formatSeconds(goal.timeUsedSeconds))
+                        .litterMonoFont(size: 10, weight: .semibold)
+                }
+                .foregroundColor(LitterTheme.textSecondary)
             }
             Spacer(minLength: 0)
         }
-        .litterMeta()
     }
 
     private func formatSeconds(_ seconds: Int64) -> String {
@@ -804,16 +886,34 @@ private struct GoalCardChromeModifier: ViewModifier {
     let statusTint: Color
     let cornerRadius: CGFloat
 
-    /// Raised surface, no tint wash or stroke. Glass stays on iOS 26 so the
-    /// card matches the composer it sits above.
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                .glassEffect(
+                    .regular.tint(statusTint.opacity(0.14)).interactive(),
+                    in: .rect(cornerRadius: cornerRadius)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(statusTint.opacity(0.20), lineWidth: 0.5)
+                )
         } else {
             content
-                .background(LitterTheme.raised)
+                .background(
+                    LinearGradient(
+                        colors: [
+                            LitterTheme.codeBackground.opacity(0.92),
+                            statusTint.opacity(0.08)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(statusTint.opacity(0.28), lineWidth: 1)
+                )
         }
     }
 }
@@ -822,28 +922,34 @@ private struct ConversationComposerActiveTaskRowView: View {
     let summary: ConversationActiveTaskSummary
 
     var body: some View {
-        HStack(spacing: LitterSpace.m) {
+        HStack(spacing: 10) {
+            Image(systemName: "checklist")
+                .litterFont(size: 11, weight: .semibold)
+                .foregroundColor(LitterTheme.warning)
+
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: LitterSpace.s) {
+                HStack(spacing: 6) {
                     Text(summary.title)
-                        .litterFont(size: 15, weight: .semibold)
+                        .litterFont(.caption, weight: .semibold)
                         .foregroundColor(LitterTheme.textPrimary)
 
                     Text(summary.progressLabel)
-                        .litterMeta()
+                        .litterMonoFont(size: 10, weight: .semibold)
+                        .foregroundColor(LitterTheme.warning)
                 }
 
                 Text(summary.detail)
-                    .litterMeta(LitterTheme.textSecondary)
+                    .litterFont(.caption2)
+                    .foregroundColor(LitterTheme.textSecondary)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, LitterSpace.m)
-        .padding(.vertical, LitterSpace.s)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LitterTheme.raised)
-        .clipShape(RoundedRectangle(cornerRadius: LitterRadius.raised, style: .continuous))
+        .background(LitterTheme.surface.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

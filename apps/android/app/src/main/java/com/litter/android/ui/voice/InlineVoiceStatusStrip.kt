@@ -72,7 +72,7 @@ fun InlineVoiceStatusStrip(
             Text(
                 text = stringResource(R.string.voice_you),
                 color = if (isListening) LitterTheme.textPrimary else LitterTheme.textMuted,
-                fontSize = 13.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = LitterTheme.monoFont,
             )
@@ -99,7 +99,7 @@ fun InlineVoiceStatusStrip(
             Text(
                 text = "CODEX",
                 color = if (isSpeaking) LitterTheme.textPrimary else LitterTheme.textMuted,
-                fontSize = 13.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = LitterTheme.monoFont,
             )
@@ -126,7 +126,7 @@ fun InlineVoiceStatusStrip(
         Text(
             text = phaseLabel(phase),
             color = phaseColor(phase),
-            fontSize = 13.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
             fontFamily = LitterTheme.monoFont,
         )

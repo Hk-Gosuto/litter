@@ -46,7 +46,8 @@ struct SubagentCardView: View {
                 .padding(.top, 6)
             }
         }
-        .padding(.vertical, LitterSpace.xs)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $sheetThreadKey) { key in
             // `resolveThreadKey` is precomputed by `ConversationScreenModel`
@@ -62,16 +63,18 @@ struct SubagentCardView: View {
     // MARK: - Header
 
     private var headerRow: some View {
-        HStack(spacing: LitterSpace.xs) {
-            Text("subagent · \(actionLabel.lowercased()) \(expanded ? "⌄" : "›")")
-                .litterMeta()
+        HStack(spacing: 8) {
+            Text(actionLabel)
+                .litterFont(.caption)
+                .foregroundColor(LitterTheme.textSystem)
                 .lineLimit(1)
+
+            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                .litterFont(size: 11, weight: .medium)
+                .foregroundColor(LitterTheme.textMuted)
+
             Spacer()
         }
-        .frame(minHeight: LitterSpace.hitTarget - 12)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(expanded ? "Collapses agent list" : "Expands agent list")
     }
 
     private var actionLabel: String {
@@ -180,6 +183,7 @@ struct SubagentCardView: View {
             // Line 1: Name + status + Open
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 let statusStr = readableStatus(status)
+                let isActive = status == .running
 
                 (
                     Text(parts.nickname)
@@ -192,6 +196,7 @@ struct SubagentCardView: View {
                 .litterFont(.caption)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .modifier(ShimmerText(active: isActive))
 
                 Spacer(minLength: 8)
 
@@ -271,6 +276,42 @@ struct SubagentCardView: View {
             hash = ((hash &<< 5) &+ hash) &+ UInt64(byte)
         }
         return Self.nicknameColors[Int(hash % UInt64(Self.nicknameColors.count))]
+    }
+}
+
+// MARK: - Shimmer
+
+private struct ShimmerText: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let phase = CGFloat(t.truncatingRemainder(dividingBy: 2.0) / 2.0)
+
+                content
+                    .overlay {
+                        GeometryReader { geo in
+                            let w = geo.size.width
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .white.opacity(0), location: max(0, phase - 0.2)),
+                                    .init(color: .white.opacity(0.35), location: phase),
+                                    .init(color: .white.opacity(0), location: min(1, phase + 0.2))
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: w, height: geo.size.height)
+                        }
+                        .blendMode(.sourceAtop)
+                    }
+                    .compositingGroup()
+            }
+        } else {
+            content
+        }
     }
 }
 
@@ -476,3 +517,49 @@ private struct AgentRowData {
     let statusMessage: String?
     let prompt: String?
 }
+
+#if DEBUG
+#Preview("Subagent Card") {
+    ZStack {
+        LitterTheme.backgroundGradient.ignoresSafeArea()
+        VStack(spacing: 20) {
+            SubagentCardView(
+                data: ConversationMultiAgentActionData(
+                    tool: "spawnAgent",
+                    status: .inProgress,
+                    prompt: "Explore /Users/sigkitten/dev/codex-app with a repo-orientation focus. Scan the top-level directories and identify the main modules.",
+                    targets: ["Locke [explorer]", "Dalton [explorer]"],
+                    receiverThreadIds: ["thread-abc-123", "thread-def-456"],
+                    agentStates: [
+                        ConversationMultiAgentState(targetId: "thread-abc-123", status: .running, message: nil),
+                        ConversationMultiAgentState(targetId: "thread-def-456", status: .running, message: nil)
+                    ]
+                ),
+                serverId: "preview-server",
+                resolveTargetLabel: { _ in nil },
+                resolveThreadKey: { ThreadKey(serverId: "preview-server", threadId: $0) },
+                resolveLiveStatus: { _ in nil }
+            )
+
+            SubagentCardView(
+                data: ConversationMultiAgentActionData(
+                    tool: "wait",
+                    status: .completed,
+                    prompt: nil,
+                    targets: ["Locke [explorer]", "Dalton [explorer]"],
+                    receiverThreadIds: ["thread-abc-123", "thread-def-456"],
+                    agentStates: [
+                        ConversationMultiAgentState(targetId: "thread-abc-123", status: .completed, message: nil),
+                        ConversationMultiAgentState(targetId: "thread-def-456", status: .errored, message: "context limit")
+                    ]
+                ),
+                serverId: "preview-server",
+                resolveTargetLabel: { _ in nil },
+                resolveThreadKey: { ThreadKey(serverId: "preview-server", threadId: $0) },
+                resolveLiveStatus: { _ in nil }
+            )
+        }
+        .padding(16)
+    }
+}
+#endif

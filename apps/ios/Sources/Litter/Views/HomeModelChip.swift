@@ -19,19 +19,8 @@ struct HomeModelChip: View {
     /// `appModel.snapshot` in body.
     var server: AppServerSnapshot?
     var onSheetStateChange: (Bool) -> Void = { _ in }
-    /// False: render nothing visible and only host the picker sheet plus
-    /// the model-selection sync. The home composer shows the model as a
-    /// pill inside its own bottom row and opens the sheet via
-    /// `presentation`.
-    var showsLabel: Bool = true
-    /// External control of the picker sheet (used with `showsLabel: false`).
-    var presentation: Binding<Bool>? = nil
 
     @State private var showSheet = false
-
-    private var sheetBinding: Binding<Bool> {
-        presentation ?? $showSheet
-    }
     @State private var selectedDetent: PresentationDetent = .large
     @State private var autoSelectedModelKey: String?
 
@@ -93,15 +82,9 @@ struct HomeModelChip: View {
     }
 
     private var selectedModelLabel: String {
-        Self.modelLabel(appState: appState, models: availableModels)
-    }
-
-    /// Display name for the home model selection ("gpt-5.4",
-    /// "server default"), shared by this chip and the composer pill.
-    static func modelLabel(appState: AppState, models: [ModelInfo]) -> String {
         let trimmed = appState.preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            if let match = models.first(where: {
+            if let match = availableModels.first(where: {
                 modelMatchesSelection(
                     $0,
                     trimmed,
@@ -112,32 +95,13 @@ struct HomeModelChip: View {
             }
             return trimmed
         }
-        if usesServerConfiguredModelDefault(models.map(\.agentRuntimeKind)) {
+        if usesServerConfiguredDefault {
             return "server default"
         }
-        let fallback = models.first { $0.agentRuntimeKind == .codex && $0.isDefault }
-            ?? models.first { $0.isDefault }
-            ?? models.first
-        if let fallback {
-            return modelPickerDisplayName(fallback)
+        if let selectedModel {
+            return modelPickerDisplayName(selectedModel)
         }
         return "model"
-    }
-
-    /// Secondary words shown after the model in the composer pill:
-    /// "high · fast · plan · full access".
-    static func modelDetail(appState: AppState, fastMode: Bool) -> String? {
-        var parts: [String] = []
-        let effort = appState.preferredReasoningEffort.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !effort.isEmpty { parts.append(effort) }
-        if fastMode { parts.append("fast") }
-        if appState.pendingCollaborationMode == .plan { parts.append("plan") }
-        let fullAccess = threadPermissionPreset(
-            approvalPolicy: appState.launchApprovalPolicy(for: nil),
-            sandboxPolicy: appState.turnSandboxPolicy(for: nil)
-        ) == .fullAccess
-        if fullAccess { parts.append("full access") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var reasoningLabel: String {
@@ -177,8 +141,60 @@ struct HomeModelChip: View {
     }
 
     var body: some View {
-        chipLabel
-        .sheet(isPresented: sheetBinding) {
+        Button {
+            selectedDetent = .large
+            showSheet = true
+        } label: {
+            HStack(spacing: 6) {
+                if fastMode {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(LitterTheme.warning)
+                }
+                Image(systemName: "cpu")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(disabled ? LitterTheme.textMuted : LitterTheme.accent)
+                Text(selectedModelLabel)
+                    .litterMonoFont(size: 12, weight: .semibold)
+                    .foregroundStyle(disabled ? LitterTheme.textSecondary : LitterTheme.textPrimary)
+                    .lineLimit(1)
+                if !reasoningLabel.isEmpty {
+                    Text(reasoningLabel)
+                        .litterMonoFont(size: 11, weight: .regular)
+                        .foregroundStyle(LitterTheme.textSecondary.opacity(0.85))
+                        .lineLimit(1)
+                }
+                if isPlanMode {
+                    Text("plan")
+                        .litterMonoFont(size: 10, weight: .bold)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(LitterTheme.accent, in: Capsule())
+                }
+                if isFullAccess {
+                    Image(systemName: "lock.open.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(LitterTheme.danger)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(LitterTheme.textMuted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .modifier(GlassCapsuleModifier(interactive: true))
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(LitterTheme.textMuted.opacity(0.55), lineWidth: 0.8)
+                .allowsHitTesting(false)
+        )
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1)
+        .sheet(isPresented: $showSheet) {
             ConversationOptionsSheet(
                 models: availableModels,
                 catalogLoaded: server?.availableModels != nil,
@@ -199,8 +215,7 @@ struct HomeModelChip: View {
             .presentationContentInteraction(.scrolls)
             .presentationBackground(LitterTheme.surface)
         }
-        .onChange(of: sheetBinding.wrappedValue) { _, isPresented in
-            if isPresented { selectedDetent = .large }
+        .onChange(of: showSheet) { _, isPresented in
             onSheetStateChange(isPresented)
             if isPresented, let serverId {
                 Task { await appModel.loadAvailableModelsIfNeeded(serverId: serverId) }
@@ -213,57 +228,6 @@ struct HomeModelChip: View {
             await appModel.loadConversationMetadataIfNeeded(serverId: serverId)
             synchronizeSelection(forceFallback: shouldReplaceSelection)
         }
-    }
-
-    @ViewBuilder
-    private var chipLabel: some View {
-        if showsLabel {
-            visibleChip
-        } else {
-            Color.clear
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        }
-    }
-
-    private var visibleChip: some View {
-        Button {
-            selectedDetent = .large
-            sheetBinding.wrappedValue = true
-        } label: {
-            // "model effort · fast · plan · full access" as one mono line.
-            HStack(spacing: 6) {
-                Text(selectedModelLabel)
-                    .litterMonoFont(size: 13)
-                    .foregroundStyle(disabled ? LitterTheme.textSecondary : LitterTheme.textPrimary)
-                    .lineLimit(1)
-                if !reasoningLabel.isEmpty {
-                    Text(reasoningLabel)
-                        .litterMeta()
-                        .lineLimit(1)
-                }
-                if fastMode {
-                    Text("fast").litterMeta()
-                }
-                if isPlanMode {
-                    Text("plan").litterMeta(LitterTheme.textPrimary)
-                }
-                if isFullAccess {
-                    Text("full access").litterMeta(LitterTheme.danger)
-                }
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(LitterTheme.meta)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, LitterSpace.m)
-            .frame(minHeight: 36)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .modifier(GlassCapsuleModifier(interactive: true))
-        .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
     }
 
     private var currentSelectionKey: String {

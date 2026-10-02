@@ -29,20 +29,6 @@ struct NewThreadHeroView: View {
     var autoFocus: Bool = true
 
     @State private var isSending = false
-    @State private var isShowingModelPicker = false
-    @Environment(AppState.self) private var appState
-    @AppStorage("fastMode") private var fastMode = false
-
-    private var composerModelPill: HomeComposerModelPill? {
-        guard selectedLaunchableServer != nil else { return nil }
-        let serverId = project?.serverId ?? selectedServerId
-        let models = serverId.flatMap { serverSnapshotsById[$0] }?.availableModels ?? []
-        return HomeComposerModelPill(
-            label: HomeModelChip.modelLabel(appState: appState, models: models),
-            detail: HomeModelChip.modelDetail(appState: appState, fastMode: fastMode),
-            open: { isShowingModelPicker = true }
-        )
-    }
 
     /// Delay between the composer firing `onThreadCreated` and the parent
     /// replacing the route with `.conversation(key)`. Long enough for the
@@ -83,8 +69,7 @@ struct NewThreadHeroView: View {
                             onThreadCreated(key)
                         }
                     },
-                    autoFocus: autoFocus,
-                    modelPill: composerModelPill
+                    autoFocus: autoFocus
                 )
                 .frame(maxWidth: 760)
                 .padding(.horizontal, 20)
@@ -140,14 +125,10 @@ struct NewThreadHeroView: View {
                 disabled: launchableServers.isEmpty,
                 onTap: onOpenProjectPicker
             )
-            // Invisible host for the model picker sheet + model sync; the
-            // model shows as a pill inside the composer.
             HomeModelChip(
                 serverId: project?.serverId ?? selectedServerId,
                 disabled: selectedLaunchableServer == nil,
-                server: (project?.serverId ?? selectedServerId).flatMap { serverSnapshotsById[$0] },
-                showsLabel: false,
-                presentation: $isShowingModelPicker
+                server: (project?.serverId ?? selectedServerId).flatMap { serverSnapshotsById[$0] }
             )
         }
         .frame(maxWidth: .infinity, alignment: .center)

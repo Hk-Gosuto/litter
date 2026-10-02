@@ -34,6 +34,10 @@ extension AppSessionSummary: Identifiable {
     var updatedAtDate: Date {
         Date(timeIntervalSince1970: TimeInterval(updatedAt ?? 0))
     }
+
+    var subagentStatus: AppSubagentStatus {
+        agentStatus
+    }
 }
 
 enum WorkspaceSortMode: String, CaseIterable, Identifiable {

@@ -228,7 +228,7 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
                             stringResource(R.string.permissions_runtime_controls)
                         },
                         color = LitterTheme.textMuted,
-                        fontSize = LitterTextStyle.footnote.scaled,
+                        fontSize = LitterTextStyle.caption2.scaled,
                     )
                 }
                 Text(
@@ -244,7 +244,7 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
                     } else {
                         LitterTheme.accentStrong
                     },
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption2.scaled,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .background(
@@ -318,7 +318,7 @@ fun ComposerPermissionsSheet(threadKey: ThreadKey? = null, onDismiss: () -> Unit
                 Text(
                     text = stringResource(R.string.permissions_runtime_own_controls),
                     color = LitterTheme.textSecondary,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption.scaled,
                 )
             }
         }
@@ -343,7 +343,7 @@ private fun PermissionSummaryTile(
         Text(
             text = title,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.footnote.scaled,
+            fontSize = LitterTextStyle.caption2.scaled,
             fontWeight = FontWeight.SemiBold,
         )
         PermissionSummaryRow(label = stringResource(R.string.permissions_approval_summary), value = approval, accent = accent)
@@ -361,7 +361,7 @@ private fun PermissionSummaryRow(
         Text(
             text = label,
             color = LitterTheme.textMuted,
-            fontSize = 13f.scaled,
+            fontSize = 10f.scaled,
             fontWeight = FontWeight.Medium,
         )
         Text(
@@ -397,7 +397,7 @@ private fun PermissionSettingsSection(
             Text(
                 text = subtitle,
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.footnote.scaled,
+                fontSize = LitterTextStyle.caption.scaled,
             )
         }
         content()
@@ -440,7 +440,7 @@ private fun PermissionDropdownField(
                     text = selectedOption?.let { stringResource(it.descriptionRes) }
                         ?: stringResource(R.string.permissions_managed_server),
                     color = LitterTheme.textMuted,
-                    fontSize = LitterTextStyle.footnote.scaled,
+                    fontSize = LitterTextStyle.caption2.scaled,
                     maxLines = 1,
                 )
             }
@@ -469,7 +469,7 @@ private fun PermissionDropdownField(
                             Text(
                                 text = stringResource(option.descriptionRes),
                                 color = LitterTheme.textMuted,
-                                fontSize = LitterTextStyle.footnote.scaled,
+                                fontSize = LitterTextStyle.caption2.scaled,
                             )
                         }
                     },
@@ -560,7 +560,7 @@ fun ComposerExperimentalSheet(
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(feature.displayName ?: feature.name, color = LitterTheme.textPrimary, fontSize = LitterTextStyle.body.scaled)
                                 feature.description?.takeIf { it.isNotBlank() }?.let { description ->
-                                    Text(description, color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled)
+                                    Text(description, color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled)
                                 }
                             }
                             Switch(
@@ -701,15 +701,15 @@ fun ComposerSkillsSheet(
                                     Text(
                                         "enabled",
                                         color = LitterTheme.accent,
-                                        fontSize = LitterTextStyle.footnote.scaled,
+                                        fontSize = LitterTextStyle.caption2.scaled,
                                         modifier = Modifier
                                             .background(LitterTheme.accent.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
                                             .padding(horizontal = 6.dp, vertical = 2.dp),
                                     )
                                 }
                             }
-                            Text(skill.description, color = LitterTheme.textSecondary, fontSize = LitterTextStyle.footnote.scaled)
-                            Text(skill.path.value, color = LitterTheme.textMuted, fontSize = LitterTextStyle.footnote.scaled)
+                            Text(skill.description, color = LitterTheme.textSecondary, fontSize = LitterTextStyle.caption.scaled)
+                            Text(skill.path.value, color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
                         }
                     }
                 }

@@ -34,6 +34,12 @@
 - Legacy local bootstrap methods return Unsupported; do not reintroduce automatic local startup/reconnect or local terminal choices.
 - Only active remote compatibility patches listed in `apps/ios/scripts/sync-codex.sh` are applied. Other patch files are historical.
 
+### Upstream UI Preservation
+- Preserve the pre-upgrade interface (`21d80ca0` / app 2.1.2): existing themes, typography, glass controls, illustrated home, session cards, chat bubbles, composer and settings organization on both platforms.
+- Upstream synchronization may retain bug fixes, performance work and functional additions, but must not replace these screens wholesale with upstream's Quiet or ChatGPT-style redesign.
+- Keep functional model catalog classification/search, history pagination, draft isolation, reconnect and device-only credential handling. Integrate necessary controls into the existing visual style.
+- Review mixed UI commits by behavior and appearance separately. Keep regression tests tied to the restored renderer; remove assertions that only require discarded visual layouts.
+
 ### Shared Rust Layer
 - `codex-mobile-client` is the single public Rust mobile crate. Keep one generated Swift/Kotlin binding surface; do not split UniFFI across multiple mobile crates again.
 - Realtime voice uses libwebrtc (Google WebRTC.framework on iOS via stasel/WebRTC SPM, `io.github.webrtc-sdk:android` on Android). The peer connection runs natively on each platform; AEC/NS/VAD are handled by libwebrtc's audio processing module. The Rust layer only owns signaling, session lifecycle, transcript state, and handoff orchestration.

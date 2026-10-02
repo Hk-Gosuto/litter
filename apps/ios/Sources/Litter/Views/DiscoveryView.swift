@@ -254,43 +254,74 @@ struct DiscoveryView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            // A text row: title (+ mono badge word), one line of what it
-            // does, and the agents it works with. No icon tile or stroke.
-            VStack(alignment: .leading, spacing: LitterSpace.s) {
-                HStack(alignment: .top, spacing: LitterSpace.m) {
-                    VStack(alignment: .leading, spacing: LitterSpace.xs) {
-                        HStack(alignment: .firstTextBaseline, spacing: LitterSpace.s) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle()
+                                .fill(LitterTheme.accent.opacity(isRecommended ? 0.16 : 0.10))
+                        )
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
                             Text(title)
-                                .litterFont(.body, weight: isRecommended ? .semibold : .regular)
+                                .litterFont(.subheadline, weight: .semibold)
                                 .foregroundColor(LitterTheme.textPrimary)
                             if let badge {
-                                Text(badge.lowercased())
-                                    .litterMeta()
+                                Text(badge)
+                                    .litterFont(.caption2, weight: .semibold)
+                                    .foregroundColor(LitterTheme.accentStrong)
+                                    .tracking(0.5)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(LitterTheme.accent.opacity(0.14))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(LitterTheme.accent.opacity(0.45), lineWidth: 0.6)
+                                    )
                             }
                         }
                         Text(subtitle)
-                            .litterFont(.footnote)
+                            .litterFont(.caption)
                             .foregroundColor(LitterTheme.textSecondary)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
                     }
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundColor(LitterTheme.meta)
-                        .padding(.top, 4)
-                        .accessibilityHidden(true)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(LitterTheme.textMuted)
+                        .padding(.top, 10)
                 }
 
                 if !supportedAgents.isEmpty {
                     supportedAgentsStrip(supportedAgents)
                 }
             }
-            .padding(.vertical, LitterSpace.m)
+            .padding(.vertical, 14)
+            .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(LitterTheme.surface.opacity(isRecommended ? 0.85 : 0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        LitterTheme.accent.opacity(isRecommended ? 0.45 : 0.18),
+                        lineWidth: isRecommended ? 1.0 : 0.8
+                    )
+            )
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(accessibilityID)
@@ -298,15 +329,31 @@ struct DiscoveryView: View {
 
     @ViewBuilder
     private func supportedAgentsStrip(_ agents: [AgentRuntimeKind]) -> some View {
-        Text("works with " + agents.map { $0.displayLabel.lowercased() }.joined(separator: " · "))
-            .litterMeta()
-            .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 8) {
+            Text("Works with")
+                .litterFont(.caption2)
+                .foregroundColor(LitterTheme.textMuted)
+                .tracking(0.4)
+                .fixedSize(horizontal: true, vertical: false)
+            HStack(spacing: 5) {
+                ForEach(agents, id: \.self) { agent in
+                    AgentIconView(kind: agent, size: 18)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     @ViewBuilder
     private func statusTag(label: String, color: Color) -> some View {
-        Text(label.lowercased())
-            .litterMeta(color)
+        Text(label)
+            .litterFont(.caption2)
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.15))
+            .cornerRadius(4)
     }
 
     // MARK: - Actions
@@ -695,10 +742,10 @@ struct DiscoveryView: View {
                         }
                     } header: {
                         Text("Connected Computers")
-                            .litterSectionLabel()
+                            .foregroundColor(LitterTheme.textSecondary)
                     } footer: {
                         Text("These computers come from ChatGPT using your signed-in account. Start Codex on the computer first so it appears here.")
-                            .litterFont(.footnote)
+                            .litterFont(.caption2)
                             .foregroundColor(LitterTheme.textMuted)
                     }
                     .listRowBackground(LitterTheme.surface.opacity(0.6))
@@ -713,11 +760,11 @@ struct DiscoveryView: View {
                         Task { await loadSlingshotEnvironments() }
                     }
                     .disabled(slingshotIsLoading)
-                    .foregroundColor(LitterTheme.textPrimary)
+                    .foregroundColor(LitterTheme.accent)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Cancel") { showSlingshotHosts = false }
-                        .foregroundColor(LitterTheme.textPrimary)
+                        .foregroundColor(LitterTheme.accent)
                 }
             }
             .task {
@@ -730,22 +777,22 @@ struct DiscoveryView: View {
 
     private func slingshotEnvironmentRow(_ environment: AppSlingshotEnvironment) -> some View {
         HStack(spacing: 12) {
+            Image(systemName: slingshotIconName(for: environment))
+                .foregroundColor(environment.online ? LitterTheme.accent : LitterTheme.textMuted)
+                .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(environment.displayName)
-                    .litterFont(.body)
+                    .litterFont(.subheadline)
                     .foregroundColor(environment.online ? LitterTheme.textPrimary : LitterTheme.textSecondary)
                 Text(slingshotSubtitle(for: environment))
-                    .litterFont(.footnote)
+                    .litterFont(.caption)
                     .foregroundColor(LitterTheme.textSecondary)
             }
             Spacer()
-            // Healthy (online, idle) shows nothing.
-            if !environment.online || environment.busy {
-                statusTag(
-                    label: environment.online ? "busy" : "offline",
-                    color: environment.online ? LitterTheme.warning : LitterTheme.meta
-                )
-            }
+            statusTag(
+                label: environment.online ? (environment.busy ? "busy" : "online") : "offline",
+                color: environment.online ? (environment.busy ? .orange : LitterTheme.accent) : LitterTheme.textMuted
+            )
         }
         .padding(.vertical, 2)
     }
@@ -832,6 +879,19 @@ struct DiscoveryView: View {
         return parts.joined(separator: " - ")
     }
 
+    private func slingshotIconName(for environment: AppSlingshotEnvironment) -> String {
+        switch environment.operatingSystem.lowercased() {
+        case "linux":
+            return "server.rack"
+        case "windows":
+            return "desktopcomputer"
+        case "macos", "darwin":
+            return "desktopcomputer"
+        default:
+            return "laptopcomputer"
+        }
+    }
+
     // MARK: - Manual Entry
 
     private var manualEntrySheet: some View {
@@ -848,7 +908,7 @@ struct DiscoveryView: View {
                         .pickerStyle(.segmented)
                     } header: {
                         Text("Connection")
-                            .litterSectionLabel()
+                            .foregroundColor(LitterTheme.textSecondary)
                     }
                     .listRowBackground(LitterTheme.surface.opacity(0.6))
 
@@ -878,7 +938,7 @@ struct DiscoveryView: View {
                         }
                     } header: {
                         Text(manualConnectionMode.formHeader)
-                            .litterSectionLabel()
+                            .foregroundColor(LitterTheme.textSecondary)
                     } footer: {
                         if manualConnectionMode == .codex {
                             Text("Prefer the SSH flow — it bootstraps codex on the remote bound to 127.0.0.1 and forwards the port over SSH.\nIf you run it manually, bind loopback and tunnel yourself: codex app-server --listen ws://127.0.0.1:8390\nFor reverse proxies: wss://example.com/ws?token=SECRET\nDo not bind 0.0.0.0 or expose directly to the internet unless you know what you are doing.")
@@ -893,7 +953,7 @@ struct DiscoveryView: View {
                             submitManualEntry()
                         }
                         .foregroundColor(LitterTheme.accent)
-                        .litterFont(.body)
+                        .litterFont(.subheadline)
                     }
                     .listRowBackground(LitterTheme.surface.opacity(0.6))
                 }
@@ -1110,3 +1170,16 @@ private enum ManualConnectionMode: String, CaseIterable, Identifiable {
         }
     }
 }
+
+#if DEBUG
+#Preview("Discovery") {
+    LitterPreviewScene(
+        appModel: LitterPreviewData.makeDiscoveryAppModel(),
+        includeBackground: false
+    ) {
+        NavigationStack {
+            DiscoveryView(autoStartSimulatorSSH: false)
+        }
+    }
+}
+#endif
