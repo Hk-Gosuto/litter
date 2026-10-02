@@ -1,5 +1,12 @@
 package com.litter.android.ui.discovery
 
+import com.litter.android.ui.LitterQuiet
+import com.litter.android.ui.LitterSpacing
+import com.litter.android.ui.LitterType
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.layout.heightIn
+import com.litter.android.ui.LitterRadius
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,11 +38,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.DeveloperBoard
-import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Lan
-import androidx.compose.material.icons.outlined.Laptop
-import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,15 +64,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sigkitten.litter.android.R
 import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.SavedServer
 import com.litter.android.state.SavedServerStore
@@ -78,10 +77,7 @@ import com.litter.android.state.SavedSshCredential
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.SshAuthMethod
 import com.litter.android.state.SshCredentialStore
-import com.litter.android.state.connectionProgressDetail
 import com.litter.android.state.isConnected
-import com.litter.android.state.statusColor
-import com.litter.android.state.statusLabel
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalAppModel
@@ -161,12 +157,12 @@ fun DiscoveryScreen(
         }
         if (result.resultCode != android.app.Activity.RESULT_OK) {
             connectError = result.data?.getStringExtra(ChatGPTOAuthActivity.EXTRA_ERROR)
-                ?: context.getString(R.string.discovery_remote_auth_cancelled)
+                ?: "Remote-control authorization was cancelled."
             return@rememberLauncherForActivityResult
         }
         val stepUpToken = ChatGPTOAuthActivity.parseRemoteControlStepUpToken(result.data)
         if (stepUpToken == null) {
-            connectError = context.getString(R.string.discovery_remote_auth_incomplete)
+            connectError = "Remote-control authorization returned incomplete credentials."
             return@rememberLauncherForActivityResult
         }
         authorizedSlingshotConnect = environment to stepUpToken
@@ -218,7 +214,7 @@ fun DiscoveryScreen(
                 )
         } catch (e: Exception) {
             LLog.e(logTag, "slingshot environment load failed", e)
-            slingshotError = e.message ?: context.getString(R.string.discovery_load_computers_failed)
+            slingshotError = e.message ?: "Unable to load connected computers."
         } finally {
             slingshotIsLoading = false
         }
@@ -266,7 +262,7 @@ fun DiscoveryScreen(
                         e,
                         fields = mapOf("environmentId" to environment.id),
                     )
-                    connectError = e.message ?: context.getString(R.string.discovery_connect_computer_failed)
+                    connectError = e.message ?: "Unable to connect to this computer."
                     return@launch
                 }
                 needsAuthorization = true
@@ -287,9 +283,7 @@ fun DiscoveryScreen(
                 )
             } catch (e: Exception) {
                 pendingSlingshotEnvironment = null
-                connectError = e.localizedMessage
-                    ?: e.message
-                    ?: context.getString(R.string.discovery_authorize_failed)
+                connectError = e.localizedMessage ?: e.message ?: "Unable to authorize remote control."
             }
         }
     }
@@ -306,7 +300,7 @@ fun DiscoveryScreen(
                 e,
                 fields = mapOf("environmentId" to environment.id),
             )
-            connectError = e.message ?: context.getString(R.string.discovery_connect_computer_failed)
+            connectError = e.message ?: "Unable to connect to this computer."
             return
         }
         finishSuccessfulSlingshotConnect()
@@ -451,8 +445,8 @@ fun DiscoveryScreen(
                     sshServer = prepared.withPreferredConnection("ssh")
                 }
 
-                prepared.directCodexPort != null -> {
-                    val directCodexPort = prepared.directCodexPort!!
+                else -> {
+                    val directCodexPort = checkNotNull(prepared.directCodexPort)
                     appModel.serverBridge.connectRemoteServer(
                         prepared.id,
                         prepared.name,
@@ -466,10 +460,6 @@ fun DiscoveryScreen(
                     appModel.refreshSnapshot()
                     onDismiss()
                 }
-
-                else -> {
-                    connectError = context.getString(R.string.discovery_wake_failed)
-                }
             }
         } catch (e: Exception) {
             LLog.e(
@@ -482,42 +472,34 @@ fun DiscoveryScreen(
                     "preferredConnectionMode" to entry.preferredConnectionMode,
                 ),
             )
-            connectError = e.message ?: context.getString(R.string.discovery_connect_failed)
+            connectError = e.message ?: "Unable to connect."
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
+            .padding(horizontal = LitterSpacing.margin, vertical = LitterSpacing.md),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = stringResource(R.string.discovery_add_server_heading),
-                color = LitterTheme.textPrimary,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
         Text(
-            text = stringResource(R.string.discovery_pick_connection),
-            color = LitterTheme.textSecondary,
-            fontSize = 12.sp,
+            text = "Add Server",
+            style = LitterType.navTitle,
+            modifier = Modifier.semantics { heading() },
         )
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(LitterSpacing.xxs))
 
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "pick how you want to connect",
+            style = LitterType.meta,
+        )
+
+        Spacer(Modifier.height(LitterSpacing.sm))
+
+        Column {
             ChooserCard(
-                title = stringResource(R.string.discovery_pair_kittylitter),
-                subtitle = stringResource(R.string.discovery_scan_qr_subtitle),
+                title = "Pair with kittylitter",
+                subtitle = "Install Kittylitter on your computer, then scan its QR code.",
                 badge = "RECOMMENDED",
                 icon = Icons.Default.QrCodeScanner,
                 supportedAgents = KittylitterAgents,
@@ -542,8 +524,8 @@ fun DiscoveryScreen(
             )
 
             ChooserCard(
-                title = stringResource(R.string.discovery_connected_computer),
-                subtitle = stringResource(R.string.discovery_chatgpt_subtitle),
+                title = "Connected Computer",
+                subtitle = "Connect to a computer already signed in and running Codex for this ChatGPT account.",
                 badge = null,
                 icon = Icons.Outlined.DesktopWindows,
                 supportedAgents = CodexOnlyAgents,
@@ -552,8 +534,8 @@ fun DiscoveryScreen(
             )
 
             ChooserCard(
-                title = stringResource(R.string.discovery_ssh_or_url),
-                subtitle = stringResource(R.string.discovery_manual_subtitle),
+                title = "SSH or Codex URL",
+                subtitle = "Connect over SSH or paste a ws:// codex URL.",
                 badge = null,
                 icon = Icons.Outlined.Terminal,
                 supportedAgents = CodexOnlyAgents,
@@ -689,7 +671,7 @@ fun DiscoveryScreen(
                         sshServer = null
                         null
                     } else {
-                        message ?: context.getString(R.string.discovery_ssh_connect_failed)
+                        message ?: "Unable to connect over SSH."
                     }
                 }
             },
@@ -762,7 +744,7 @@ fun DiscoveryScreen(
                         sshAgentContext = null
                         null
                     } else {
-                        message ?: context.getString(R.string.discovery_ssh_agents_failed)
+                        message ?: "Unable to connect SSH bridge agents."
                     }
                 }
             },
@@ -792,11 +774,11 @@ fun DiscoveryScreen(
     connectError?.let { message ->
         AlertDialog(
             onDismissRequest = { connectError = null },
-            title = { Text(stringResource(R.string.discovery_connection_failed)) },
+            title = { Text("Connection Failed") },
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = { connectError = null }) {
-                    Text(stringResource(R.string.common_ok))
+                    Text("OK")
                 }
             },
         )
@@ -807,7 +789,8 @@ fun DiscoveryScreen(
         ModalBottomSheet(
             onDismissRequest = { showAlleycatSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = LitterTheme.background,
+            containerColor = LitterQuiet.raised,
+            shape = LitterRadius.sheetShape,
         ) {
             AlleycatAddServerSheet(
                 onDismiss = { showAlleycatSheet = false },
@@ -865,100 +848,41 @@ private fun ChooserCard(
     isRecommended: Boolean,
     onClick: () -> Unit,
 ) {
-    val borderColor = if (isRecommended) {
-        LitterTheme.accent.copy(alpha = 0.45f)
-    } else {
-        LitterTheme.accent.copy(alpha = 0.18f)
-    }
-    val backgroundColor = if (isRecommended) {
-        LitterTheme.surface.copy(alpha = 0.85f)
-    } else {
-        LitterTheme.surface.copy(alpha = 0.6f)
-    }
-    val iconBubble = LitterTheme.accent.copy(alpha = if (isRecommended) 0.16f else 0.10f)
-
+    // Plain text row: title, one mono metadata line, chevron. The icon and
+    // recommended styling are decorative in Litter Quiet; the badge becomes a
+    // mono word next to the title.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(backgroundColor, RoundedCornerShape(14.dp))
-            .border(
-                width = if (isRecommended) 1.dp else 0.8.dp,
-                color = borderColor,
-                shape = RoundedCornerShape(14.dp),
-            )
+            .heightIn(min = LitterSpacing.row)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(vertical = LitterSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(LitterSpacing.xs),
     ) {
         Row(
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(LitterSpacing.sm),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 2.dp)
-                    .size(36.dp)
-                    .background(iconBubble, RoundedCornerShape(50)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = LitterTheme.accent,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(LitterSpacing.xs),
                 ) {
-                    Text(
-                        text = title,
-                        color = LitterTheme.textPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Text(text = title, style = LitterType.title)
                     if (badge != null) {
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    LitterTheme.accent.copy(alpha = 0.14f),
-                                    RoundedCornerShape(50),
-                                )
-                                .border(
-                                    width = 0.6.dp,
-                                    color = LitterTheme.accent.copy(alpha = 0.45f),
-                                    shape = RoundedCornerShape(50),
-                                )
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        ) {
-                            Text(
-                                text = badge,
-                                color = LitterTheme.accent,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.5.sp,
-                            )
-                        }
+                        Text(text = badge.lowercase(), style = LitterType.meta)
                     }
                 }
-                Text(
-                    text = subtitle,
-                    color = LitterTheme.textSecondary,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                Text(text = subtitle, style = LitterType.meta)
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
-                tint = LitterTheme.textMuted,
-                modifier = Modifier.padding(top = 10.dp),
+                tint = LitterQuiet.meta,
             )
         }
 
@@ -976,10 +900,8 @@ private fun SupportedAgentsStrip(agents: List<AgentRuntimeKind>) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = stringResource(R.string.discovery_works_with),
-            color = LitterTheme.textMuted,
-            fontSize = 10.sp,
-            letterSpacing = 0.4.sp,
+            text = "works with",
+            style = LitterType.meta,
             maxLines = 1,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -987,110 +909,6 @@ private fun SupportedAgentsStrip(agents: List<AgentRuntimeKind>) {
                 com.litter.android.ui.common.AgentIconView(
                     kind = agent,
                     sizeDp = 18,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ServerRow(
-    entry: SavedServer,
-    connectedServer: AppServerSnapshot?,
-    isWaking: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    onRename: (() -> Unit)?,
-) {
-    val displayHost = connectedServer?.host ?: entry.hostname
-    val subtitle = connectedServer?.connectionProgressDetail
-        ?: buildString {
-            append(displayHost)
-            if (entry.os != null) {
-                append(" - ")
-                append(entry.os)
-            }
-            if (entry.availableDirectCodexPorts.isNotEmpty()) {
-                append(" - codex ")
-                append(entry.availableDirectCodexPorts.joinToString(", "))
-            }
-            if (entry.canConnectViaSsh) {
-                append(" - ssh ")
-                append(entry.resolvedSshPort)
-            }
-            if (entry.wakeMAC != null) {
-                append(" - wake")
-            }
-        }
-    val serverIcon = serverIconForEntry(entry)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(LitterTheme.surface, RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = serverIcon,
-            contentDescription = entry.os ?: entry.source,
-            tint = if (entry.hasCodexServer) LitterTheme.accent else LitterTheme.textMuted,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(entry.name.ifBlank { entry.hostname }, color = LitterTheme.textPrimary, fontSize = 14.sp)
-            Text(subtitle, color = LitterTheme.textSecondary, fontSize = 11.sp)
-        }
-        val (sourceColor, sourceLabel) = when (entry.source) {
-            "bonjour" -> LitterTheme.info to "Bonjour"
-            "tailscale" -> Color(0xFFC797D8) to "Tailscale"
-            "lanProbe" -> LitterTheme.accent to "LAN"
-            "arpScan" -> LitterTheme.textSecondary to "ARP"
-            "ssh" -> Color(0xFFFF9500) to "SSH"
-            "local" -> LitterTheme.accent to "Local"
-            else -> LitterTheme.textMuted to "Manual"
-        }
-        Text(
-            text = sourceLabel,
-            color = sourceColor,
-            fontSize = 10.sp,
-            modifier = Modifier
-                .background(sourceColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-        )
-        if (connectedServer != null && connectedServer.health != AppServerHealth.DISCONNECTED) {
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = connectedServer.statusLabel,
-                color = connectedServer.statusColor,
-                fontSize = 10.sp,
-                modifier = Modifier
-                    .background(connectedServer.statusColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            )
-        }
-        if (isWaking) {
-            Spacer(Modifier.width(6.dp))
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-                color = LitterTheme.accent,
-            )
-        }
-        if (onRename != null) {
-            Spacer(Modifier.width(2.dp))
-            IconButton(
-                onClick = onRename,
-                enabled = enabled,
-                modifier = Modifier.size(28.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Edit,
-                    contentDescription = stringResource(R.string.settings_rename_server),
-                    tint = LitterTheme.textMuted,
-                    modifier = Modifier.size(16.dp),
                 )
             }
         }
@@ -1108,13 +926,13 @@ private fun ConnectedComputersDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.discovery_connected_computers)) },
+        title = { Text("Connected Computers") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = stringResource(R.string.discovery_computers_helper),
+                    text = "These computers come from ChatGPT using your signed-in account. Start Codex on the computer first so it appears here.",
                     color = LitterTheme.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                 )
                 when {
                     loading && environments.isEmpty() -> {
@@ -1125,12 +943,12 @@ private fun ConnectedComputersDialog(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = LitterTheme.accent,
+                                color = LitterTheme.textPrimary,
                             )
                             Text(
-                                text = stringResource(R.string.discovery_loading_computers),
+                                text = "Loading connected computers...",
                                 color = LitterTheme.textSecondary,
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                             )
                         }
                     }
@@ -1139,15 +957,15 @@ private fun ConnectedComputersDialog(
                         Text(
                             text = error,
                             color = LitterTheme.danger,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                         )
                     }
 
                     environments.isEmpty() -> {
                         Text(
-                            text = stringResource(R.string.discovery_no_computers),
+                            text = "No connected computers were found for this account.",
                             color = LitterTheme.textSecondary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                         )
                     }
 
@@ -1155,12 +973,11 @@ private fun ConnectedComputersDialog(
                         if (loading) {
                             LinearProgressIndicator(
                                 modifier = Modifier.fillMaxWidth(),
-                                color = LitterTheme.accent,
+                                color = LitterTheme.textPrimary,
                                 trackColor = LitterTheme.border,
                             )
                         }
                         LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.height(340.dp),
                         ) {
                             items(environments, key = { it.id }) { environment ->
@@ -1179,12 +996,12 @@ private fun ConnectedComputersDialog(
                 onClick = onRefresh,
                 enabled = !loading,
             ) {
-                Text(stringResource(R.string.common_refresh))
+                Text("Refresh")
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.common_cancel))
+                Text("Cancel")
             }
         },
     )
@@ -1197,41 +1014,31 @@ private fun ConnectedComputerRow(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(LitterSpacing.sm),
         modifier = Modifier
             .fillMaxWidth()
-            .background(LitterTheme.surface, RoundedCornerShape(10.dp))
+            .heightIn(min = LitterSpacing.row)
             .clickable(enabled = environment.online, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(vertical = LitterSpacing.xs),
     ) {
-        Icon(
-            imageVector = slingshotEnvironmentIcon(environment),
-            contentDescription = null,
-            tint = if (environment.online) LitterTheme.accent else LitterTheme.textMuted,
-            modifier = Modifier.size(22.dp),
-        )
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
                 text = environment.displayName,
-                color = if (environment.online) LitterTheme.textPrimary else LitterTheme.textSecondary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
+                style = LitterType.title,
+                color = if (environment.online) LitterQuiet.text else LitterQuiet.meta,
             )
+            Text(text = slingshotEnvironmentSubtitle(environment), style = LitterType.meta)
+        }
+        if (!environment.online || environment.busy) {
             Text(
-                text = slingshotEnvironmentSubtitle(environment),
-                color = LitterTheme.textSecondary,
-                fontSize = 11.sp,
+                text = slingshotEnvironmentStatus(environment).lowercase(),
+                style = LitterType.meta,
+                color = if (environment.online) LitterQuiet.warn else LitterQuiet.meta,
             )
         }
-        Text(
-            text = slingshotEnvironmentStatus(environment),
-            color = if (environment.online && !environment.busy) LitterTheme.accent else LitterTheme.textMuted,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 
@@ -1269,22 +1076,11 @@ private fun slingshotEnvironmentStatus(environment: AppSlingshotEnvironment): St
         else -> "online"
     }
 
-private fun slingshotEnvironmentIcon(
-    environment: AppSlingshotEnvironment,
-): androidx.compose.ui.graphics.vector.ImageVector =
-    when (environment.operatingSystem.lowercase()) {
-        "linux" -> Icons.Outlined.Dns
-        "windows" -> Icons.Outlined.DesktopWindows
-        "macos", "darwin" -> Icons.Outlined.DesktopWindows
-        else -> Icons.Outlined.Laptop
-    }
-
 @Composable
 private fun ManualEntryDialog(
     onDismiss: () -> Unit,
     onSubmit: (ManualEntryAction) -> Unit,
 ) {
-    val context = LocalContext.current
     var mode by remember { mutableStateOf(ManualConnectionMode.SSH) }
     var codexUrl by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
@@ -1294,7 +1090,7 @@ private fun ManualEntryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.discovery_add_server)) },
+        title = { Text("Add Server") },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1304,18 +1100,18 @@ private fun ManualEntryDialog(
                     FilterChip(
                         selected = mode == ManualConnectionMode.CODEX,
                         onClick = { mode = ManualConnectionMode.CODEX },
-                        label = { Text(stringResource(ManualConnectionMode.CODEX.labelRes)) },
+                        label = { Text(ManualConnectionMode.CODEX.label) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = LitterTheme.accent.copy(alpha = 0.18f),
+                            selectedContainerColor = LitterTheme.textPrimary.copy(alpha = 0.18f),
                             selectedLabelColor = LitterTheme.textPrimary,
                         ),
                     )
                     FilterChip(
                         selected = mode == ManualConnectionMode.SSH,
                         onClick = { mode = ManualConnectionMode.SSH },
-                        label = { Text(stringResource(ManualConnectionMode.SSH.labelRes)) },
+                        label = { Text(ManualConnectionMode.SSH.label) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = LitterTheme.accent.copy(alpha = 0.18f),
+                            selectedContainerColor = LitterTheme.textPrimary.copy(alpha = 0.18f),
                             selectedLabelColor = LitterTheme.textPrimary,
                         ),
                     )
@@ -1329,14 +1125,16 @@ private fun ManualEntryDialog(
                                 codexUrl = it
                                 errorMessage = null
                             },
-                            label = { Text(stringResource(R.string.discovery_codex_url)) },
-                            placeholder = { Text(stringResource(R.string.discovery_codex_url_placeholder)) },
+                            label = { Text("Codex URL") },
+                            placeholder = { Text("ws://host:8390 or host:8390") },
                             singleLine = true,
                         )
                         Text(
-                            text = stringResource(R.string.discovery_manual_security_help),
+                            text = "Prefer the SSH flow — it binds 127.0.0.1 on the remote and forwards the port. " +
+                                "If you run manually, bind loopback and tunnel yourself: " +
+                                "codex app-server --listen ws://127.0.0.1:8390",
                             color = LitterTheme.textMuted,
-                            fontSize = 11.sp,
+                            fontSize = 13.sp,
                         )
                     }
 
@@ -1347,8 +1145,8 @@ private fun ManualEntryDialog(
                                 host = it
                                 errorMessage = null
                             },
-                            label = { Text(stringResource(R.string.discovery_ssh_host)) },
-                            placeholder = { Text(stringResource(R.string.discovery_hostname_or_ip)) },
+                            label = { Text("SSH host") },
+                            placeholder = { Text("hostname or IP") },
                             singleLine = true,
                         )
                         OutlinedTextField(
@@ -1357,7 +1155,7 @@ private fun ManualEntryDialog(
                                 sshPort = it
                                 errorMessage = null
                             },
-                            label = { Text(stringResource(R.string.discovery_ssh_port)) },
+                            label = { Text("SSH port") },
                             singleLine = true,
                         )
                         OutlinedTextField(
@@ -1366,7 +1164,7 @@ private fun ManualEntryDialog(
                                 wakeMac = it
                                 errorMessage = null
                             },
-                            label = { Text(stringResource(R.string.discovery_wake_mac_optional)) },
+                            label = { Text("Wake MAC (optional)") },
                             placeholder = { Text("aa:bb:cc:dd:ee:ff") },
                             singleLine = true,
                         )
@@ -1377,7 +1175,7 @@ private fun ManualEntryDialog(
                     Text(
                         text = errorMessage!!,
                         color = LitterTheme.danger,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                     )
                 }
             }
@@ -1386,7 +1184,6 @@ private fun ManualEntryDialog(
             TextButton(
                 onClick = {
                     errorMessage = when (val action = buildManualEntryAction(
-                        context,
                         mode,
                         codexUrl,
                         host,
@@ -1402,46 +1199,12 @@ private fun ManualEntryDialog(
                     }
                 },
             ) {
-                Text(stringResource(mode.primaryButtonTitleRes))
+                Text(mode.primaryButtonTitle)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.common_cancel))
-            }
-        },
-    )
-}
-
-@Composable
-private fun RenameServerDialog(
-    server: SavedServer,
-    onDismiss: () -> Unit,
-    onRename: (String) -> Unit,
-) {
-    var newName by remember(server.id) {
-        mutableStateOf(server.name.ifBlank { server.hostname })
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_rename_server)) },
-        text = {
-            OutlinedTextField(
-                value = newName,
-                onValueChange = { newName = it },
-                label = { Text(stringResource(R.string.settings_name)) },
-                singleLine = true,
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onRename(newName.trim()) }) {
-                Text(stringResource(R.string.common_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.common_cancel))
+                Text("Cancel")
             }
         },
     )
@@ -1477,7 +1240,7 @@ internal fun SSHLoginDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isConnecting) onDismiss() },
-        title = { Text(stringResource(R.string.discovery_ssh_login)) },
+        title = { Text("SSH Login") },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1491,7 +1254,7 @@ internal fun SSHLoginDialog(
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text(stringResource(R.string.discovery_username)) },
+                    label = { Text("Username") },
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1499,15 +1262,7 @@ internal fun SSHLoginDialog(
                         onClick = { authMethod = SshAuthMethod.PASSWORD },
                         enabled = !isConnecting,
                     ) {
-                        Text(
-                            stringResource(
-                                if (authMethod == SshAuthMethod.PASSWORD) {
-                                    R.string.discovery_password_required
-                                } else {
-                                    R.string.discovery_password
-                                },
-                            ),
-                        )
+                        Text(if (authMethod == SshAuthMethod.PASSWORD) "Password *" else "Password")
                     }
                     TextButton(
                         onClick = {
@@ -1516,22 +1271,14 @@ internal fun SSHLoginDialog(
                         },
                         enabled = !isConnecting,
                     ) {
-                        Text(
-                            stringResource(
-                                if (authMethod == SshAuthMethod.KEY) {
-                                    R.string.discovery_ssh_key_required
-                                } else {
-                                    R.string.discovery_ssh_key
-                                },
-                            ),
-                        )
+                        Text(if (authMethod == SshAuthMethod.KEY) "SSH Key *" else "SSH Key")
                     }
                 }
                 if (authMethod == SshAuthMethod.PASSWORD) {
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text(stringResource(R.string.discovery_password)) },
+                        label = { Text("Password") },
                         singleLine = true,
                         visualTransformation = if (isPasswordVisible) {
                             VisualTransformation.None
@@ -1549,13 +1296,11 @@ internal fun SSHLoginDialog(
                                     } else {
                                         Icons.Filled.Visibility
                                     },
-                                    contentDescription = stringResource(
-                                        if (isPasswordVisible) {
-                                            R.string.discovery_hide_password
-                                        } else {
-                                            R.string.discovery_show_password
-                                        },
-                                    ),
+                                    contentDescription = if (isPasswordVisible) {
+                                        "Hide password"
+                                    } else {
+                                        "Show password"
+                                    },
                                 )
                             }
                         },
@@ -1571,14 +1316,14 @@ internal fun SSHLoginDialog(
                         )
                         Column {
                             Text(
-                                text = stringResource(R.string.discovery_unlock_keychain),
+                                text = "Unlock keychain (macOS)",
                                 color = LitterTheme.textPrimary,
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                             )
                             Text(
-                                text = stringResource(R.string.discovery_unlock_keychain_help),
+                                text = "Uses your SSH/login password during headless bootstrap. Required for tools like gh CLI auth.",
                                 color = LitterTheme.textSecondary,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                             )
                         }
                     }
@@ -1586,13 +1331,13 @@ internal fun SSHLoginDialog(
                     OutlinedTextField(
                         value = privateKey,
                         onValueChange = { privateKey = it },
-                        label = { Text(stringResource(R.string.discovery_private_key)) },
+                        label = { Text("Private Key") },
                         minLines = 5,
                     )
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        label = { Text(stringResource(R.string.discovery_passphrase_optional)) },
+                        label = { Text("Passphrase (optional)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
@@ -1607,9 +1352,9 @@ internal fun SSHLoginDialog(
                         enabled = !isConnecting,
                     )
                     Text(
-                        text = stringResource(R.string.discovery_remember_credentials),
+                        text = "Remember credentials on this device",
                         color = LitterTheme.textSecondary,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                     )
                 }
                 Row(
@@ -1628,12 +1373,12 @@ internal fun SSHLoginDialog(
                         Text(
                             text = "Detached sessions",
                             color = LitterTheme.textPrimary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                         )
                         Text(
                             text = "Agent sessions survive app close on this server. They keep running on the host and re-attach when you return.",
                             color = LitterTheme.textSecondary,
-                            fontSize = 11.sp,
+                            fontSize = 13.sp,
                         )
                     }
                 }
@@ -1641,7 +1386,7 @@ internal fun SSHLoginDialog(
                     Text(
                         text = errorMessage!!,
                         color = LitterTheme.danger,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                     )
                 }
             }
@@ -1680,16 +1425,16 @@ internal fun SSHLoginDialog(
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
                         strokeWidth = 2.dp,
-                        color = LitterTheme.accent,
+                        color = LitterTheme.textPrimary,
                     )
                 } else {
-                    Text(stringResource(R.string.common_connect))
+                    Text("Connect")
                 }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, enabled = !isConnecting) {
-                Text(stringResource(R.string.common_cancel))
+                Text("Cancel")
             }
         },
     )
@@ -1702,7 +1447,6 @@ private fun SSHAgentPickerDialog(
     onUseCodex: () -> Unit,
     onConnect: suspend (List<AgentRuntimeKind>) -> String?,
 ) {
-    val androidContext = LocalContext.current
     val scope = rememberCoroutineScope()
     val availableKinds = remember(context.sessionId) {
         availableSshBridgeKinds(context.availability)
@@ -1715,7 +1459,7 @@ private fun SSHAgentPickerDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isConnecting) onDismiss() },
-        title = { Text(stringResource(R.string.discovery_remote_agents)) },
+        title = { Text("Remote Agents") },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1769,16 +1513,16 @@ private fun SSHAgentPickerDialog(
                                 }
                             }
                             Text(
-                                text = sshAgentStatusLabel(androidContext, agent),
+                                text = sshAgentStatusLabel(agent),
                                 color = LitterTheme.textSecondary,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                             )
                         }
                         if (agent.kind in selectedKinds) {
                             Icon(
                                 imageVector = Icons.Filled.CheckCircle,
                                 contentDescription = null,
-                                tint = LitterTheme.accent,
+                                tint = LitterTheme.textPrimary,
                                 modifier = Modifier.size(18.dp),
                             )
                         }
@@ -1788,7 +1532,7 @@ private fun SSHAgentPickerDialog(
                     Text(
                         text = errorMessage!!,
                         color = LitterTheme.danger,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                     )
                 }
             }
@@ -1808,20 +1552,20 @@ private fun SSHAgentPickerDialog(
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
                         strokeWidth = 2.dp,
-                        color = LitterTheme.accent,
+                        color = LitterTheme.textPrimary,
                     )
                 } else {
-                    Text(stringResource(R.string.common_connect))
+                    Text("Connect")
                 }
             }
         },
         dismissButton = {
             Row {
                 TextButton(onClick = onUseCodex, enabled = !isConnecting) {
-                    Text(stringResource(R.string.discovery_use_codex_ssh))
+                    Text("Use Codex SSH")
                 }
                 TextButton(onClick = onDismiss, enabled = !isConnecting) {
-                    Text(stringResource(R.string.common_cancel))
+                    Text("Cancel")
                 }
             }
         },
@@ -1842,11 +1586,10 @@ private fun sshRuntimeLabel(kind: AgentRuntimeKind): String = kind.runtimeLabel
 
 private fun sshRuntimeSortRank(kind: AgentRuntimeKind): Int = kind.runtimeSortIndex
 
-private fun sshAgentStatusLabel(context: Context, agent: RemoteAgentAvailability): String = when (agent.status) {
-    AgentAvailabilityStatus.AVAILABLE -> context.getString(R.string.common_available)
-    AgentAvailabilityStatus.AGENT_CLI_MISSING -> context.getString(R.string.discovery_cli_missing)
-    AgentAvailabilityStatus.WINDOWS_NOT_YET_SUPPORTED ->
-        context.getString(R.string.discovery_windows_unsupported)
+private fun sshAgentStatusLabel(agent: RemoteAgentAvailability): String = when (agent.status) {
+    AgentAvailabilityStatus.AVAILABLE -> "Available"
+    AgentAvailabilityStatus.AGENT_CLI_MISSING -> "CLI missing"
+    AgentAvailabilityStatus.WINDOWS_NOT_YET_SUPPORTED -> "Windows not supported"
 }
 
 private fun sshBridgeStateRoot(context: Context, host: String): String {
@@ -1862,46 +1605,6 @@ private fun connectedSnapshot(
 ): AppServerSnapshot? = servers.firstOrNull { it.serverId == entry.id }
     ?: servers.firstOrNull { it.host.lowercase().trim().trimStart('[').trimEnd(']') == entry.deduplicationKey }
 
-private fun serverIconForEntry(entry: SavedServer): androidx.compose.ui.graphics.vector.ImageVector {
-    if (entry.source == "local") return Icons.Outlined.PhoneAndroid
-    val os = entry.os?.lowercase()
-    if (os != null) {
-        if (os.contains("windows")) return Icons.Outlined.DesktopWindows
-        if (os.contains("raspbian")) return Icons.Outlined.DeveloperBoard
-        if (
-            os.contains("ubuntu") ||
-            os.contains("debian") ||
-            os.contains("fedora") ||
-            os.contains("red hat") ||
-            os.contains("freebsd") ||
-            os.contains("linux")
-        ) {
-            return Icons.Outlined.Dns
-        }
-    }
-    return when (entry.source) {
-        "bonjour" -> Icons.Outlined.Laptop
-        "tailscale" -> Icons.Outlined.Lan
-        "ssh" -> Icons.Outlined.Terminal
-        else -> Icons.Outlined.Dns
-    }
-}
-
-private fun connectionChoiceMessage(context: Context, server: SavedServer): String {
-    val directPorts = server.availableDirectCodexPorts.map(Int::toString)
-    if (directPorts.isEmpty()) {
-        return context.getString(R.string.discovery_use_ssh_host, server.hostname)
-    }
-    if (server.canConnectViaSsh) {
-        return context.getString(
-            R.string.discovery_direct_and_ssh_ports,
-            directPorts.joinToString(", "),
-            server.resolvedSshPort,
-        )
-    }
-    return context.getString(R.string.discovery_choose_codex_port_host, server.hostname)
-}
-
 private sealed interface ManualEntryAction {
     data class Connect(val server: SavedServer) : ManualEntryAction
     data class ContinueWithSsh(val server: SavedServer) : ManualEntryAction
@@ -1913,29 +1616,28 @@ private sealed interface ManualEntryBuild {
 }
 
 private enum class ManualConnectionMode(
-    val labelRes: Int,
-    val primaryButtonTitleRes: Int,
+    val label: String,
+    val primaryButtonTitle: String,
 ) {
-    CODEX(R.string.settings_connection_codex, R.string.common_connect),
-    SSH(R.string.settings_connection_ssh, R.string.discovery_continue_ssh_login),
+    CODEX("Codex", "Connect"),
+    SSH("SSH", "Continue to SSH Login"),
 }
 
 private fun buildManualEntryAction(
-    context: Context,
     mode: ManualConnectionMode,
     codexUrl: String,
     host: String,
     sshPort: String,
     wakeMac: String,
 ): ManualEntryBuild = when (mode) {
-    ManualConnectionMode.CODEX -> buildManualCodexEntry(context, codexUrl)
-    ManualConnectionMode.SSH -> buildManualSshEntry(context, host, sshPort, wakeMac)
+    ManualConnectionMode.CODEX -> buildManualCodexEntry(codexUrl)
+    ManualConnectionMode.SSH -> buildManualSshEntry(host, sshPort, wakeMac)
 }
 
-private fun buildManualCodexEntry(context: Context, rawInput: String): ManualEntryBuild {
+private fun buildManualCodexEntry(rawInput: String): ManualEntryBuild {
     val raw = rawInput.trim()
     if (raw.isEmpty()) {
-        return ManualEntryBuild.Error(context.getString(R.string.discovery_enter_ws_url))
+        return ManualEntryBuild.Error("Enter a ws:// URL or host:port.")
     }
 
     runCatching { URI(raw) }
@@ -1964,10 +1666,9 @@ private fun buildManualCodexEntry(context: Context, rawInput: String): ManualEnt
             }
         }
 
-    val (host, port) = parseBareHostAndPort(raw)
-        ?: return ManualEntryBuild.Error(context.getString(R.string.discovery_enter_ws_url))
+    val (host, port) = parseBareHostAndPort(raw) ?: return ManualEntryBuild.Error("Enter a ws:// URL or host:port.")
     if (host.isBlank()) {
-        return ManualEntryBuild.Error(context.getString(R.string.discovery_enter_host))
+        return ManualEntryBuild.Error("Enter a hostname or IP address.")
     }
 
     return ManualEntryBuild.Action(
@@ -1988,25 +1689,24 @@ private fun buildManualCodexEntry(context: Context, rawInput: String): ManualEnt
 }
 
 private fun buildManualSshEntry(
-    context: Context,
     hostInput: String,
     sshPortInput: String,
     wakeMacInput: String,
 ): ManualEntryBuild {
     val host = hostInput.trim()
     if (host.isEmpty()) {
-        return ManualEntryBuild.Error(context.getString(R.string.discovery_enter_host))
+        return ManualEntryBuild.Error("Enter a hostname or IP address.")
     }
 
     val sshPort = sshPortInput.trim().toIntOrNull()
     if (sshPort == null || sshPort !in 1..65535) {
-        return ManualEntryBuild.Error(context.getString(R.string.discovery_invalid_ssh_port))
+        return ManualEntryBuild.Error("SSH port must be a valid number.")
     }
 
     val wakeInput = wakeMacInput.trim()
     val normalizedWakeMac = SavedServer.normalizeWakeMac(wakeInput)
     if (wakeInput.isNotEmpty() && normalizedWakeMac == null) {
-        return ManualEntryBuild.Error(context.getString(R.string.discovery_invalid_wake_mac))
+        return ManualEntryBuild.Error("Wake MAC must look like aa:bb:cc:dd:ee:ff.")
     }
 
     return ManualEntryBuild.Action(
@@ -2055,7 +1755,7 @@ private fun parseBareHostAndPort(raw: String): Pair<String, Int>? {
 private suspend fun loadSlingshotTokens(context: Context) =
     ChatGPTOAuth.requireStoredOrRefreshedTokens(
         context,
-        context.getString(R.string.discovery_sign_in_slingshot),
+        "Sign in with ChatGPT before connecting with Slingshot.",
     )
 
 private sealed interface ManualServerProbeResult {

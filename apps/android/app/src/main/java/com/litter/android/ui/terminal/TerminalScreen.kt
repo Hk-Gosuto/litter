@@ -72,7 +72,6 @@ import com.litter.android.core.bridge.GhosttyRendererBridge
 import com.litter.android.core.bridge.GhosttyRendererStatus
 import com.litter.android.state.ActiveTerminalRegistry
 import com.litter.android.state.AlleycatCredentialStore
-import com.litter.android.state.AndroidProotBootstrap
 import com.litter.android.state.AppModel
 import com.litter.android.state.SavedServerStore
 import com.litter.android.state.SavedSshCredential
@@ -94,7 +93,6 @@ fun TerminalScreen(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val controller = remember { TerminalSessionController(scope) }
-    val prootState by AndroidProotBootstrap.state.collectAsState()
     val rendererStatus = remember { GhosttyRendererBridge.status() }
 
     controller.sshTrustChallenge?.takeIf { it.isChanged }?.let { challenge ->
@@ -119,7 +117,7 @@ fun TerminalScreen(
     var nativeRendererAvailable by remember {
         mutableStateOf(rendererStatus.canCreateAndroidSurface)
     }
-    val backendOptions = remember(cwd, prootState) { loadBackendOptions(context, cwd, prootState) }
+    val backendOptions = remember(cwd) { loadBackendOptions(context, cwd) }
     var selectedBackendId by remember(preferredAlleycatNodeId) { mutableStateOf<String?>(null) }
     val selectedBackend = backendOptions.firstOrNull { it.id == selectedBackendId }
         ?: backendOptions.firstOrNull()
@@ -209,7 +207,6 @@ fun TerminalScreen(
             rendererStatus = rendererStatus,
             nativeRendererAvailable = nativeRendererAvailable,
             onNativeRendererUnavailable = { nativeRendererAvailable = false },
-            prootState = prootState,
             selectedBackend = selectedBackend,
             terminalGridSize = terminalGridSize,
             onTerminalGridSizeChanged = { terminalGridSize = it },
@@ -406,7 +403,6 @@ private fun TerminalOutputPane(
     rendererStatus: GhosttyRendererStatus,
     nativeRendererAvailable: Boolean,
     onNativeRendererUnavailable: () -> Unit,
-    prootState: AndroidProotBootstrap.BootstrapState,
     selectedBackend: TerminalBackendOption?,
     terminalGridSize: TerminalGridSize,
     onTerminalGridSizeChanged: (TerminalGridSize) -> Unit,
@@ -474,7 +470,7 @@ private fun TerminalOutputPane(
                 ) {
                     Text(
                         text = controller.output.ifEmpty {
-                            terminalEmptyMessage(context, prootState, selectedBackend)
+                            terminalEmptyMessage(context, selectedBackend)
                         },
                         color = LitterTheme.accent,
                         fontFamily = LitterTheme.monoFont,
@@ -729,21 +725,8 @@ private fun initialBackendId(
 private fun loadBackendOptions(
     context: Context,
     cwd: String?,
-    prootState: AndroidProotBootstrap.BootstrapState,
 ): List<TerminalBackendOption> {
     val options = mutableListOf<TerminalBackendOption>()
-    if (prootState.status == AndroidProotBootstrap.Status.Ready) {
-        options.add(
-            TerminalBackendOption(
-                id = "local-proot",
-                title = context.getString(R.string.terminal_local_alpine),
-                runningLabel = context.getString(R.string.terminal_local_alpine_running),
-                icon = Icons.Outlined.PhoneIphone,
-                supportsResize = true,
-                backend = TerminalBackendKind.LocalProot(normalized(cwd)),
-            ),
-        )
-    }
     val credentialStore = AlleycatCredentialStore(context.applicationContext)
     val sshCredentialStore = SshCredentialStore(context.applicationContext)
     val seenNodeIds = mutableSetOf<String>()
@@ -817,26 +800,10 @@ private fun normalized(value: String?): String? =
 
 private fun terminalEmptyMessage(
     context: Context,
-    prootState: AndroidProotBootstrap.BootstrapState,
     selectedBackend: TerminalBackendOption?,
 ): String {
     if (selectedBackend != null) return ""
-    return when (prootState.status) {
-        AndroidProotBootstrap.Status.Pending,
-        AndroidProotBootstrap.Status.Bootstrapping ->
-            context.getString(R.string.terminal_preparing_alpine)
-        AndroidProotBootstrap.Status.PtraceDenied ->
-            context.getString(R.string.terminal_ptrace_denied)
-        AndroidProotBootstrap.Status.MissingArtifact ->
-            context.getString(R.string.terminal_artifact_missing)
-        AndroidProotBootstrap.Status.Failed ->
-            context.getString(
-                R.string.terminal_bootstrap_failed,
-                prootState.message ?: context.getString(R.string.common_unknown_error),
-            )
-        AndroidProotBootstrap.Status.Ready ->
-            context.getString(R.string.terminal_pair_remote)
-    }
+    return context.getString(R.string.terminal_pair_remote)
 }
 
 private data class TerminalGridSize(

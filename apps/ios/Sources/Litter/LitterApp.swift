@@ -29,7 +29,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         OpenAIApiKeyStore.shared.applyToEnvironment()
-        LitterPlatform.bootstrapLocalRuntimeIfNeeded()
         LLog.bootstrap()
 
         #if targetEnvironment(macCatalyst)
@@ -62,12 +61,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         }
 
         LLog.info("lifecycle", "application did finish launching")
-        // Pre-initialize Rust bridges (tokio runtime) on a background thread
-        // before SwiftUI accesses AppModel.shared, avoiding a priority inversion
-        // where the main thread blocks on lower-QoS tokio worker init.
+        #if targetEnvironment(macCatalyst)
         DispatchQueue.global(qos: .userInitiated).async {
             AppModel.prewarmRustBridges()
         }
+        #endif
         application.registerForRemoteNotifications()
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().setNotificationCategories([
@@ -82,12 +80,12 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                 actions: [
                     UNNotificationAction(
                         identifier: WatchApprovalNotification.allowActionIdentifier,
-                        title: AppLanguage.localizedString("Allow"),
+                        title: "Allow",
                         options: []
                     ),
                     UNNotificationAction(
                         identifier: WatchApprovalNotification.denyActionIdentifier,
-                        title: AppLanguage.localizedString("Deny"),
+                        title: "Deny",
                         options: [.destructive]
                     ),
                 ],
@@ -99,7 +97,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         DispatchQueue.main.async {
             CloudKVSBridge.shared.start()
         }
-        scheduleKeyboardWarmup()
+        // No keyboard warmup: flashing a hidden first responder at launch
+        // showed the keyboard over Home and shifted the layout.
         // Start pushing state to the paired Apple Watch, gated behind the
         // experimental feature flag. Flip the `appleWatch` feature in
         // Settings → Experimental Features to enable. No-op when disabled.
@@ -114,13 +113,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Keyboard warmup
 
     private func scheduleKeyboardWarmup() {
-        let environment = ProcessInfo.processInfo.environment
-        guard !LitterPlatform.isRunningUnitTests,
-              environment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] != "1" else {
-            return
-        }
-
-        // Load the real system keyboard while the splash window covers it.
+        // Warm the real system keyboard after the main app window is visible.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let window = scene.windows.first else {
@@ -276,13 +269,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 @main
 struct LitterApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.defaultValue
+    #if targetEnvironment(macCatalyst)
     @State private var appModel = AppModel.shared
+    #else
+    @State private var appModel: AppModel?
+    #endif
     @State private var voiceRuntime = VoiceRuntimeController.shared
     @State private var appRuntime = AppRuntimeController.shared
     @State private var themeManager = ThemeManager.shared
     @State private var wallpaperManager = WallpaperManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.defaultValue
 
     @SceneBuilder
     var body: some Scene {
@@ -303,43 +300,27 @@ struct LitterApp: App {
 
     private var mainWindowGroup: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(appModel)
-                .environment(appRuntime)
-                .environment(voiceRuntime)
-                .environment(themeManager)
-                .environment(wallpaperManager)
-                .environment(\.locale, AppLanguage.resolve(appLanguage).locale)
-                .task {
-                    let environment = ProcessInfo.processInfo.environment
-                    let isConversationDisplayTest =
-                        ProcessInfo.processInfo.arguments.contains("--ui-test-conversation-display")
-                    let disablesRuntime =
-                        environment["CODEXIOS_UI_TEST_DISABLE_RUNTIME"] == "1"
-                    guard !LitterPlatform.isRunningUnitTests,
-                          !isConversationDisplayTest,
-                          !disablesRuntime else {
-                        return
+            #if targetEnvironment(macCatalyst)
+            appContent(appModel)
+            #else
+            if let appModel {
+                appContent(appModel)
+            } else {
+                // Launch surface matches Home's background and holds until
+                // the first store snapshot (with Rust's cached session
+                // summaries) is in, so Home's first frame is its final
+                // layout instead of empty → cached → live.
+                LaunchMarkView()
+                    .task {
+                        await Task.detached(priority: .userInitiated) {
+                            AppModel.prewarmRustBridges()
+                        }.value
+                        let model = AppModel.shared
+                        await model.refreshSnapshot()
+                        appModel = model
                     }
-                    appModel.start()
-                    voiceRuntime.bind(appModel: appModel)
-                    appRuntime.bind(appModel: appModel, voiceRuntime: voiceRuntime)
-                    appDelegate.appRuntime = appRuntime
-                    if scenePhase == .active {
-                        appRuntime.appDidBecomeActive()
-                    }
-                    #if targetEnvironment(macCatalyst)
-                    LocalCodexBootstrap.shared.startIfNeeded(appModel: appModel)
-                    #endif
-                    // Pair host (BLE advertiser, ultrasonic emitter,
-                    // Bonjour publish, WS listener) and the iPhone client
-                    // (BLE scanner, ultrasonic reader, NISession) are
-                    // strictly opt-in: they only start when the user
-                    // opens the Pair screen in Settings → Experimental,
-                    // and stop on disappear. The screen itself is gated
-                    // behind `#if DEBUG`, so neither stack is reachable
-                    // in Release builds.
-                }
+            }
+            #endif
         }
         .onChange(of: scenePhase) { _, newPhase in
             LLog.info("lifecycle", "scenePhase changed", fields: ["phase": newPhase.debugName])
@@ -354,6 +335,36 @@ struct LitterApp: App {
                 break
             }
         }
+    }
+
+    private func appContent(_ appModel: AppModel) -> some View {
+        ContentView()
+            .environment(\.locale, AppLanguage.resolve(appLanguage).locale)
+            .environment(appModel)
+            .environment(appRuntime)
+            .environment(voiceRuntime)
+            .environment(themeManager)
+            .environment(wallpaperManager)
+            .task {
+                appModel.start()
+                voiceRuntime.bind(appModel: appModel)
+                appRuntime.bind(appModel: appModel, voiceRuntime: voiceRuntime)
+                appDelegate.appRuntime = appRuntime
+                if scenePhase == .active {
+                    appRuntime.appDidBecomeActive()
+                }
+                #if targetEnvironment(macCatalyst)
+                // Remote-only build: no local Codex process.
+                #endif
+                // Pair host (BLE advertiser, ultrasonic emitter,
+                // Bonjour publish, WS listener) and the iPhone client
+                // (BLE scanner, ultrasonic reader, NISession) are
+                // strictly opt-in: they only start when the user
+                // opens the Pair screen in Settings → Experimental,
+                // and stop on disappear. The screen itself is gated
+                // behind `#if DEBUG`, so neither stack is reachable
+                // in Release builds.
+            }
     }
 }
 
@@ -393,7 +404,6 @@ struct ContentView: View {
     @Environment(ThemeManager.self) private var themeManager
     @State private var appState = AppState()
     @State private var stableSafeAreaInsets = StableSafeAreaInsets()
-    @State private var conversationWarmup = ConversationWarmupCoordinator()
     @State private var petOverlay = PetOverlayController.shared
     @State private var overlayProjection = OverlayProjectionModel()
     @State private var composerBottomInset: CGFloat = 0
@@ -455,7 +465,6 @@ struct ContentView: View {
             }
         }
         .environment(appState)
-        .environment(conversationWarmup)
         .environment(\.textScale, textScale)
         .preferredColorScheme(themeManager.appearanceMode.preferredColorScheme)
         .background {
@@ -512,7 +521,7 @@ struct ContentView: View {
             .environment(appState)
             .environment(\.textScale, textScale)
         }
-        .sheet(isPresented: $bindableAppState.showSettings) {
+        .fullScreenCover(isPresented: $bindableAppState.showSettings) {
             SettingsView()
                 .environment(appModel)
                 .environment(appState)
@@ -537,9 +546,6 @@ struct ContentView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: [.top, .bottom])
-        .onAppear {
-            Task { await conversationWarmup.prewarmIfNeeded() }
-        }
     }
 
     @ViewBuilder
@@ -567,12 +573,6 @@ struct ContentView: View {
             }
         }
 
-        if let warmupID = conversationWarmup.activeWarmupID {
-            ConversationWarmupView(warmupID: warmupID) {
-                conversationWarmup.finishWarmup()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
     }
 }
 
@@ -631,13 +631,13 @@ private struct HomeNavigationView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(VoiceRuntimeController.self) private var voiceRuntime
     @Environment(AppState.self) private var appState
-    @Environment(ConversationWarmupCoordinator.self) private var conversationWarmup
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage("workDir") private var workDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "/"
     @State private var experimentalFeatures = ExperimentalFeatures.shared
     @State private var homeDashboardModel = HomeDashboardModel()
     @State private var savedAppsStore = SavedAppsStore.shared
     @State private var navigationPath: [HomeNavigationRoute] = []
+    @State private var homeActivationTask: Task<Void, Never>?
     @State private var directoryPickerSheet: SessionLaunchSupport.DirectoryPickerSheetModel?
     @State private var showProjectPicker = false
     @State private var openingRecentSessionKey: ThreadKey?
@@ -741,19 +741,22 @@ private struct HomeNavigationView: View {
 
     private var primaryNavigationStack: some View {
         NavigationStack(path: $navigationPath) {
+            // Keep the root mounted while routes are pushed. Swapping it in
+            // only when the path empties forced a full Home rebuild in the
+            // same frame as the pop, delaying the back animation and showing
+            // a blank gradient during edge-swipe.
             Group {
-                if isHomeRouteActive {
-                    if isEmbeddedInSplit {
-                        splitDetailRoot
-                    } else {
-                        homeDashboard
-                    }
+                if isEmbeddedInSplit {
+                    splitDetailRoot
                 } else {
-                    LitterTheme.backgroundGradient.ignoresSafeArea()
+                    homeDashboard
                 }
             }
             .overlay(alignment: .bottomLeading) {
+                // The phone home composer has its own mic; the floating
+                // voice orb only belongs to the split (sidebar) layout.
                 if isHomeRouteActive,
+                   isEmbeddedInSplit,
                    experimentalFeatures.isEnabled(.realtimeVoice),
                    homeInputMode == .collapsed {
                     homeVoiceLauncher
@@ -769,7 +772,9 @@ private struct HomeNavigationView: View {
                         },
                         onInfo: serverId.map { id in
                             { navigationPath.append(.serverInfo(serverId: id)) }
-                        }
+                        },
+                        onPin: pinThread,
+                        onUnpin: unpinThread
                     )
                         .navigationTitle(title)
                         .navigationBarTitleDisplayMode(.inline)
@@ -911,20 +916,32 @@ private struct HomeNavigationView: View {
 
     var body: some View {
         rootNavigationContent
-        .task {
+        // Bind and activate in onAppear, not .task: .task runs after the
+        // first frame, so Home used to render once with no servers and no
+        // sessions (flashing the empty-state cat) before the model filled.
+        .onAppear {
             homeDashboardModel.bind(appModel: appModel)
-            updateHomeDashboardActivity()
-            hydratePinnedThreadsIfNeeded()
+            updateHomeDashboardActivity(deferActivation: false)
+        }
+        .task {
             seedInitialConversationIfNeeded(activeKey: appModel.snapshot?.activeThread)
         }
         .onChange(of: homeDashboardModel.activeThread) { _, newKey in
             seedInitialConversationIfNeeded(activeKey: newKey)
         }
+        .onChange(of: navigationPath) { old, new in
+            // Back/edge-swipe pop: freeze the leaving conversation and drop
+            // the keyboard at once, before the transition runs.
+            guard new.count < old.count, case let .conversation(key)? = old.last else { return }
+            PerfTracker.event("ConversationPop.start", ["uptimeMs": ProcessInfo.processInfo.systemUptime * 1000])
+            appState.leavingConversationKey = key
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+        }
         .onChange(of: navigationPath.count) { _, _ in
             updateHomeDashboardActivity()
-        }
-        .onChange(of: pinnedThreadHydrationSignature) { _, _ in
-            hydratePinnedThreadsIfNeeded()
         }
         .onChange(of: appState.pendingThreadNavigation) { _, newKey in
             if let newKey {
@@ -1023,7 +1040,7 @@ private struct HomeNavigationView: View {
         )) {
             Button("OK", role: .cancel) { actionErrorMessage = nil }
         } message: {
-            Text(actionErrorMessage ?? AppLanguage.localizedString("Unknown error"))
+            Text(actionErrorMessage ?? "Unknown error")
         }
         .alert("SSH Host Identity Changed", isPresented: Binding(
             get: { appModel.sshHostKeyChangeChallenge != nil },
@@ -1254,7 +1271,6 @@ private struct HomeNavigationView: View {
             guard try await appModel.ensureLocalAuthForThreadStart(serverId: serverId) else {
                 return
             }
-            await conversationWarmup.prewarmIfNeeded()
             workDir = cwd
             appState.currentCwd = cwd
             let key = try await appModel.client.startThread(
@@ -1285,7 +1301,6 @@ private struct HomeNavigationView: View {
               let activeKey else { return }
 
         Task { @MainActor in
-            await conversationWarmup.prewarmIfNeeded()
             guard !hasSeededInitialConversationRoute,
                   !isStartingVoice,
                   navigationPath.isEmpty,
@@ -1314,12 +1329,7 @@ private struct HomeNavigationView: View {
         approvalPolicy: AppAskForApproval?,
         sandboxMode: AppSandboxMode?
     ) {
-        let storedThreadId = UserDefaults.standard.string(forKey: VoiceRuntimeController.persistedLocalVoiceThreadIDKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let threadKey = storedThreadId.flatMap { threadId -> ThreadKey? in
-            guard !threadId.isEmpty else { return nil }
-            return ThreadKey(serverId: VoiceRuntimeController.localServerID, threadId: threadId)
-        }
+        let threadKey = await voiceRuntime.pinnedVoiceThreadKey()
         let resolvedThreadKey: ThreadKey?
         if let threadKey {
             resolvedThreadKey = await appModel.hydrateThreadPermissions(for: threadKey, appState: appState)
@@ -1453,7 +1463,13 @@ private struct HomeNavigationView: View {
             onSelectServer: handleSelectServer,
             onAddServer: { appState.showServerPicker = true },
             onOpenProjectPicker: { showProjectPicker = true },
-            onThreadCreated: { key in homeDashboardModel.pinThread(key) },
+            onThreadCreated: { key in
+                homeDashboardModel.pinThread(key)
+                // The phone home is a composer, not a list: sending opens
+                // the new chat (ChatGPT pattern) instead of leaving the user
+                // on an empty screen.
+                if !isEmbeddedInSplit { openConversation(key) }
+            },
             onShowSettings: { appState.showSettings = true },
             onShowApps: savedAppsStore.apps.isEmpty ? nil : { navigationPath.append(.appsList) },
             onShowTerminal: terminalLauncher,
@@ -1462,9 +1478,11 @@ private struct HomeNavigationView: View {
             onUnpinThread: unpinThread,
             onHideThread: hideThread,
             onNewThread: { openNewThread() },
-            onHydrateThread: { key, loadInitialTurns in
-                await hydrateThread(key, loadInitialTurns: loadInitialTurns)
+            onHydrateThread: { key, _ in
+                await hydratePinnedHomeThread(key)
             },
+            hydrationRetrySignature: pinnedThreadHydrationSignature,
+            isSessionListSettled: homeDashboardModel.isSessionListSettled,
             onDeleteThread: deleteThread,
             onReconnectServer: reconnectServer,
             onRestartAppServer: restartAppServer,
@@ -1508,9 +1526,11 @@ private struct HomeNavigationView: View {
             onPinThread: pinThread,
             onUnpinThread: unpinThread,
             onHideThread: hideThread,
-            onHydrateThread: { key, loadInitialTurns in
-                await hydrateThread(key, loadInitialTurns: loadInitialTurns)
+            onHydrateThread: { key, _ in
+                await hydratePinnedHomeThread(key)
             },
+            hydrationRetrySignature: pinnedThreadHydrationSignature,
+            isSessionListSettled: homeDashboardModel.isSessionListSettled,
             onDeleteThread: deleteThread,
             onReconnectServer: reconnectServer,
             onRestartAppServer: restartAppServer,
@@ -1585,42 +1605,27 @@ private struct HomeNavigationView: View {
         "\(key.serverId)/\(key.threadId)"
     }
 
-    private func hydratePinnedThreadsIfNeeded() {
-        let connectedServerIds = Set(
-            (appModel.snapshot?.servers ?? [])
-                .filter(\.isConnected)
-                .map(\.serverId)
+    /// Hydrates one pinned Home row. Called by the Home list's viewport
+    /// hydrator only for rows that are on screen (or within the prefetch
+    /// distance), at most `SessionListRules.maxConcurrentHydrations` at a
+    /// time. Previously every pin was resumed at once on launch.
+    private func hydratePinnedHomeThread(_ key: ThreadKey) async {
+        let isConnected = appModel.snapshot?.servers
+            .contains { $0.serverId == key.serverId && $0.isConnected } ?? false
+        guard isConnected else { return }
+        if appModel.snapshot?.sessionSummary(for: key)?.isResumed == true { return }
+        let id = homeHydrationId(key)
+        guard !hydratingPinnedHomeThreadIds.contains(id) else { return }
+        hydratingPinnedHomeThreadIds.insert(id)
+        defer { hydratingPinnedHomeThreadIds.remove(id) }
+        LLog.info(
+            "home",
+            "hydrating pinned thread",
+            fields: ["serverId": key.serverId, "threadId": key.threadId]
         )
-        guard !connectedServerIds.isEmpty else { return }
-
-        for pin in homeDashboardModel.pinnedKeys {
-            let key = pin.threadKey
-            guard connectedServerIds.contains(key.serverId) else { continue }
-            let id = homeHydrationId(key)
-            if appModel.snapshot?.sessionSummary(for: key)?.isResumed == true { continue }
-            guard !hydratingPinnedHomeThreadIds.contains(id) else { continue }
-            hydratingPinnedHomeThreadIds.insert(id)
-
-            Task {
-                LLog.info(
-                    "home",
-                    "hydrating pinned thread",
-                    fields: ["serverId": key.serverId, "threadId": key.threadId]
-                )
-                if !(await hydrateThread(key, loadInitialTurns: true)) {
-                    let refreshed = await refreshPinnedThreadListing(serverId: key.serverId)
-                    guard refreshed else {
-                        await MainActor.run {
-                            _ = hydratingPinnedHomeThreadIds.remove(id)
-                        }
-                        return
-                    }
-                    _ = await hydrateThread(key, loadInitialTurns: true)
-                }
-                await MainActor.run {
-                    _ = hydratingPinnedHomeThreadIds.remove(id)
-                }
-            }
+        if !(await hydrateThread(key, loadInitialTurns: true)) {
+            guard await refreshPinnedThreadListing(serverId: key.serverId) else { return }
+            _ = await hydrateThread(key, loadInitialTurns: true)
         }
     }
 
@@ -1875,11 +1880,24 @@ private struct HomeNavigationView: View {
         }
     }
 
-    private func updateHomeDashboardActivity() {
-        if isHomeRouteActive {
-            homeDashboardModel.activate()
-        } else {
+    private func updateHomeDashboardActivity(deferActivation: Bool = true) {
+        homeActivationTask?.cancel()
+        homeActivationTask = nil
+        guard isHomeRouteActive else {
             homeDashboardModel.deactivate()
+            return
+        }
+        guard deferActivation else {
+            homeDashboardModel.activate()
+            return
+        }
+        // Returning to Home: refreshState() runs synchronously on main
+        // (preferences reload, sort, project derivation) and republishes
+        // every row. Defer it past the pop transition so Back is instant.
+        homeActivationTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled, isHomeRouteActive else { return }
+            homeDashboardModel.activate()
         }
     }
 
@@ -1913,7 +1931,7 @@ private struct HomeNavigationView: View {
         if let thread = homeDashboardModel.recentSessions.first(where: { $0.serverId == serverId }) {
             return thread.serverDisplayName
         }
-        return AppLanguage.localizedString("Sessions")
+        return "Sessions"
     }
 }
 
@@ -1922,6 +1940,11 @@ private struct ConversationDestinationScreen: View {
     @Environment(AppState.self) private var appState
     @AppStorage("workDir") private var workDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "/"
     @State private var screenModel = ConversationScreenModel()
+    /// Set when Back is tapped. The pop transition runs ~350ms while
+    /// `snapshotRevision` keeps ticking (~8 fps during a live turn); each tick
+    /// re-bound the screen model and re-projected the whole transcript for a
+    /// screen that is already leaving. Freeze it instead.
+    @State private var isLeaving = false
     let threadKey: ThreadKey
     let bottomInset: CGFloat
     let onBack: () -> Void
@@ -1946,13 +1969,12 @@ private struct ConversationDestinationScreen: View {
     }
 
     private var navigationTitle: String {
-        conversationThread?.displayTitle ?? AppLanguage.localizedString("Conversation")
+        conversationThread?.displayTitle ?? "Conversation"
     }
 
     var body: some View {
         Group {
             if let conversationThread {
-                @Bindable var bindableScreenModel = screenModel
                 ConversationView(
                     thread: conversationThread,
                     activeThreadKey: resolvedThreadKey,
@@ -1963,9 +1985,8 @@ private struct ConversationDestinationScreen: View {
                     resolveTargetLabel: screenModel.resolveTargetLabel,
                     resolveThreadKey: screenModel.resolveThreadKey,
                     resolveLiveStatus: screenModel.resolveLiveStatus,
-                    composerInputText: $bindableScreenModel.composerInputText,
-                    composerAttachedImages: $bindableScreenModel.composerAttachedImages,
-                    topInset: 12,
+                    composerDraft: screenModel.composerDraft,
+                    topInset: 4,
                     bottomInset: bottomInset,
                     onOpenConversation: onOpenConversation,
                     onResumeSessions: onResumeSessions,
@@ -1978,6 +1999,10 @@ private struct ConversationDestinationScreen: View {
                     }
                 )
                 .onAppear {
+                    isLeaving = false
+                    if appState.leavingConversationKey == threadKey {
+                        appState.leavingConversationKey = nil
+                    }
                     bindScreenModel(for: conversationThread)
                 }
                 // Single coalesced bind signal. `snapshotRevision` bumps at
@@ -1987,9 +2012,11 @@ private struct ConversationDestinationScreen: View {
                 // Collapsing five onChanges into one eliminates the
                 // redundant triple-per-token re-binds.
                 .onChange(of: appModel.snapshotRevision) { _, _ in
+                    guard !isLeaving, appState.leavingConversationKey != threadKey else { return }
                     bindScreenModel(for: conversationThread)
                 }
                 .onChange(of: appModel.composerPrefillRequest) { _, _ in
+                    guard !isLeaving, appState.leavingConversationKey != threadKey else { return }
                     bindScreenModel(for: conversationThread)
                 }
             } else {
@@ -2006,45 +2033,33 @@ private struct ConversationDestinationScreen: View {
                 .background(LitterTheme.backgroundGradient.ignoresSafeArea())
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
-        .overlay(alignment: .top) {
-            GlassMorphContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    Button(action: onBack) {
-                        Image(systemName: "chevron.left")
-                            .font(LitterFont.styled(size: 17, weight: .semibold))
-                            .foregroundColor(LitterTheme.textPrimary)
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .modifier(GlassCircleModifier())
-                    .accessibilityLabel("Back")
-
-                    Spacer(minLength: 0)
-
-                    if let conversationThread {
-                        // `server:` is passed explicitly so the toolbar controls
-                        // never read `appModel.snapshot` in their own bodies.
+        // Native navigation bar: system back button (keeps the edge-swipe
+        // pop gesture and its fast transition), an inline title, and the
+        // reload/info actions as standard toolbar items. The old floating
+        // glass overlay hid the bar, which disabled swipe-back and let the
+        // transcript scroll underneath the buttons.
+        .navigationTitle(navigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let conversationThread {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    ConversationToolbarControls(
+                        thread: conversationThread,
+                        control: .reload,
+                        server: screenModel.serverSnapshot,
+                        inToolbar: true
+                    )
+                    if onInfo != nil {
                         ConversationToolbarControls(
                             thread: conversationThread,
-                            control: .reload,
-                            server: screenModel.serverSnapshot
+                            control: .info,
+                            onInfo: onInfo,
+                            server: screenModel.serverSnapshot,
+                            inToolbar: true
                         )
-                        if onInfo != nil {
-                            ConversationToolbarControls(
-                                thread: conversationThread,
-                                control: .info,
-                                onInfo: onInfo,
-                                server: screenModel.serverSnapshot
-                            )
-                        }
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .bottom)
@@ -2088,7 +2103,6 @@ private struct ReplayDestinationScreen: View {
     var body: some View {
         Group {
             if let thread = conversationThread, let key = replayThreadKey {
-                @Bindable var bindableScreenModel = screenModel
                 ConversationView(
                     thread: thread,
                     activeThreadKey: key,
@@ -2099,8 +2113,7 @@ private struct ReplayDestinationScreen: View {
                     resolveTargetLabel: screenModel.resolveTargetLabel,
                     resolveThreadKey: screenModel.resolveThreadKey,
                     resolveLiveStatus: screenModel.resolveLiveStatus,
-                    composerInputText: $bindableScreenModel.composerInputText,
-                    composerAttachedImages: $bindableScreenModel.composerAttachedImages,
+                    composerDraft: screenModel.composerDraft,
                     topInset: 0,
                     bottomInset: bottomInset,
                     onOpenConversation: nil,
@@ -2116,11 +2129,7 @@ private struct ReplayDestinationScreen: View {
                     Spacer()
                     ProgressView()
                         .tint(LitterTheme.accent)
-                    Text(
-                        AppLanguage.localizedString(
-                            recorder.isReplaying ? "Replaying..." : "Starting replay..."
-                        )
-                    )
+                    Text(recorder.isReplaying ? "Replaying..." : "Starting replay...")
                         .litterFont(.caption)
                         .foregroundColor(LitterTheme.textMuted)
                     Spacer()
@@ -2166,13 +2175,13 @@ private struct ApprovalPromptView: View {
     private var title: String {
         switch approval.kind {
         case .command:
-            return AppLanguage.localizedString("Command Approval Required")
+            return "Command Approval Required"
         case .fileChange:
-            return AppLanguage.localizedString("File Change Approval Required")
+            return "File Change Approval Required"
         case .permissions:
-            return AppLanguage.localizedString("Permissions Approval Required")
+            return "Permissions Approval Required"
         case .mcpElicitation:
-            return AppLanguage.localizedString("MCP Input Required")
+            return "MCP Input Required"
         }
     }
 
@@ -2236,9 +2245,7 @@ private struct ApprovalPromptView: View {
                         }
 
                         if let grantRoot = approval.grantRoot, !grantRoot.isEmpty {
-                            Text(
-                                AppLanguage.localizedString("Grant Root: %@", grantRoot)
-                            )
+                            Text("Grant Root: \(grantRoot)")
                                 .litterFont(.caption)
                                 .foregroundColor(LitterTheme.textMuted)
                         }

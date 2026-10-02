@@ -260,8 +260,8 @@ final class CarPlayVoiceManager {
             title: title,
             sections: [sessionTranscriptSection(for: summary)]
         )
-        // Only local sessions can be resumed as voice — hide the mic for remote.
-        if summary.key.serverId == VoiceRuntimeController.localServerID {
+        // Voice runs on the connected remote host.
+        if appModel.snapshot?.serverSnapshot(for: summary.key.serverId)?.isConnected == true {
             let voiceButton = CPBarButton(image: UIImage(systemName: "mic.fill") ?? UIImage()) { [weak self] _ in
                 self?.handleResume(summary.key)
             }
@@ -633,9 +633,9 @@ final class CarPlayVoiceManager {
                 return
             }
             do {
-                let cwd = FileManager.default.urls(
-                    for: .documentDirectory, in: .userDomainMask
-                ).first?.path ?? "/"
+                let cwd = appModel.snapshot?.activeThread.flatMap { key in
+                    appModel.snapshot?.threadSnapshot(for: key)?.info.cwd
+                } ?? "/"
                 _ = try await voiceActions.startPinnedLocalVoiceCall(
                     cwd: cwd,
                     model: nil,
@@ -687,8 +687,10 @@ final class CarPlayVoiceManager {
     }
 
     private func mostRecentResumable() -> AppSessionSummary? {
-        (appModel.snapshot?.sessionSummaries ?? [])
-            .filter { !$0.isSubagent && $0.key.serverId == VoiceRuntimeController.localServerID }
+        guard let snapshot = appModel.snapshot else { return nil }
+        let connectedServerIds = Set(snapshot.servers.filter { $0.isConnected && !$0.isLocal }.map(\.serverId))
+        return snapshot.sessionSummaries
+            .filter { !$0.isSubagent && connectedServerIds.contains($0.key.serverId) }
             .sorted { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }
             .first
     }

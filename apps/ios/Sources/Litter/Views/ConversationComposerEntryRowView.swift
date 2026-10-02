@@ -23,10 +23,12 @@ struct ConversationComposerEntryRowView: View {
     let onInterrupt: () -> Void
 
     private enum Metrics {
-        static let controlSize: CGFloat = 40
-        static let inputCornerRadius: CGFloat = 26
-        static let trailingControlSize: CGFloat = 40
-        static let horizontalPadding: CGFloat = 10
+        /// Visible size of the round controls (ChatGPT/Claude/Messages use
+        /// ~30-32pt). The tappable area stays 44pt via `hitTarget` padding.
+        static let controlSize: CGFloat = 32
+        static let inputCornerRadius: CGFloat = 22
+        static let trailingControlSize: CGFloat = 32
+        static let horizontalPadding: CGFloat = LitterSpace.m
         static let verticalPadding: CGFloat = 6
     }
 
@@ -73,6 +75,7 @@ struct ConversationComposerEntryRowView: View {
     }
 
     @State private var showExpanded: Bool = false
+    @Environment(\.composerPermissionContext) private var permissionContext
 
     /// Equivalent to `!inputText.trimmingCharacters(in: .whitespaces).isEmpty`
     /// without allocating a trimmed copy of the whole draft on every body
@@ -112,10 +115,17 @@ struct ConversationComposerEntryRowView: View {
             textEditor
             actionRow
         }
-        .modifier(GlassRoundedRectModifier(cornerRadius: Metrics.inputCornerRadius))
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.inputCornerRadius, style: .continuous)
+                .fill(LitterTheme.composerFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metrics.inputCornerRadius, style: .continuous)
+                .strokeBorder(LitterTheme.composerOutline, lineWidth: 1)
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: isTurnActive)
-        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: canSend)
+        .animation(.easeOut(duration: 0.18), value: isTurnActive)
+        .animation(.easeOut(duration: 0.18), value: canSend)
         .padding(.horizontal, Metrics.horizontalPadding)
         .padding(.top, Metrics.verticalPadding)
         .padding(.bottom, Metrics.verticalPadding)
@@ -140,20 +150,20 @@ struct ConversationComposerEntryRowView: View {
                 onHardwareSubmit: {
                     if canSend { onSendText() }
                 },
-                horizontalInset: 10,
-                verticalInset: 10
+                horizontalInset: LitterSpace.composerInset,
+                verticalInset: LitterSpace.composerInset
             )
 
             if inputText.isEmpty {
-                Text("Message litter...")
+                Text("Ask anything")
                     .font(LitterFont.styled(size: 17))
                     .foregroundColor(LitterTheme.textMuted)
-                    .padding(.leading, 10)
-                    .padding(.top, 10)
+                    .padding(.leading, LitterSpace.composerInset)
+                    .padding(.top, LitterSpace.composerInset)
                     .allowsHitTesting(false)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
         .overlay(alignment: .topTrailing) {
             if shouldShowExpand {
                 Button {
@@ -162,94 +172,124 @@ struct ConversationComposerEntryRowView: View {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(LitterFont.styled(size: 12, weight: .semibold))
                         .foregroundColor(LitterTheme.textSecondary)
-                        .padding(8)
+                        .padding(LitterSpace.m)
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
                 .accessibilityLabel("Expand composer")
-                .transition(.opacity.combined(with: .scale))
+                .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: shouldShowExpand)
+    }
+
+    private var isVoiceBusy: Bool {
+        voiceManager.isRecording || voiceManager.isTranscribing
     }
 
     private var actionRow: some View {
-        HStack(spacing: 6) {
-            if !voiceManager.isRecording && !voiceManager.isTranscribing {
+        HStack(spacing: 0) {
+            if !isVoiceBusy {
                 composerCircleButton(systemName: "plus", label: "Attach") {
                     showAttachMenu = true
                 }
             }
 
+            if let permissionContext, !isVoiceBusy {
+                ComposerPermissionChip(
+                    context: permissionContext,
+                    onOpenModePicker: showModeChip ? onOpenModePicker : nil
+                )
+            }
+
+            // Only surface the mode when it isn't the default (plan mode);
+            // switching lives in the permission menu.
+            if showModeChip && (collaborationMode == .plan || permissionContext == nil) {
+                ConversationComposerModeChip(mode: collaborationMode, onTap: onOpenModePicker)
+            }
+
+            Spacer(minLength: LitterSpace.s)
+
+            // Model + effort as plain text with a chevron, right-aligned
+            // next to the mic (ChatGPT/Codex app pattern).
             if let modelLabel {
                 Button(action: onOpenModelPicker) {
                     HStack(spacing: 4) {
                         Text(modelLabel)
+                            .foregroundColor(LitterTheme.textPrimary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if let reasoningLabel, reasoningLabel != "default" {
-                            Text(reasoningLabel)
+                            Text(reasoningLabel.capitalized)
                                 .foregroundColor(LitterTheme.textSecondary)
                                 .lineLimit(1)
                         }
                         Image(systemName: "chevron.down")
-                            .font(LitterFont.styled(size: 9, weight: .bold))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(LitterTheme.textMuted)
                     }
-                    .font(LitterFont.styled(size: 12, weight: .semibold))
-                    .foregroundColor(LitterTheme.textPrimary)
-                    .padding(.horizontal, 9)
-                    .frame(height: 34)
-                    .background(Capsule().fill(LitterTheme.surfaceLight.opacity(0.72)))
+                    .font(.system(size: 14, weight: .regular))
+                    .frame(minHeight: LitterSpace.hitTarget)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverEffect(.highlight)
                 .accessibilityIdentifier("conversation.modelPickerButton")
                 .accessibilityLabel("Choose model")
-                .frame(maxWidth: 150)
-                .layoutPriority(0)
+                .frame(maxWidth: 170, alignment: .trailing)
+                .layoutPriority(1)
             }
-
-            if showModeChip {
-                ConversationComposerModeChip(mode: collaborationMode, onTap: onOpenModePicker)
-            }
-
-            Spacer(minLength: 0)
 
             if voiceManager.isRecording {
                 AudioWaveformView(level: voiceManager.audioLevel)
                     .frame(width: 42, height: 20)
             }
+            voiceControl
+                .fixedSize()
             trailingControl
                 .fixedSize()
                 .layoutPriority(3)
         }
-        .padding(.horizontal, 6)
-        .padding(.bottom, 6)
-        .frame(maxWidth: .infinity, minHeight: 42)
+        .padding(.horizontal, LitterSpace.s)
+        .padding(.bottom, LitterSpace.xs)
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
-    private var trailingControl: some View {
+    private var voiceControl: some View {
         if voiceManager.isRecording {
-            composerCircleButton(systemName: "stop.fill", label: "Stop recording", tint: .black, fill: LitterTheme.accentStrong) {
+            composerCircleButton(systemName: "stop.fill", label: "Stop recording", tint: LitterTheme.surface, fill: LitterTheme.textPrimary) {
                 onStopRecording()
             }
         } else if voiceManager.isTranscribing {
             ProgressView()
-                .tint(LitterTheme.accent)
+                .tint(LitterTheme.textSecondary)
                 .frame(width: Metrics.trailingControlSize, height: Metrics.trailingControlSize)
-        } else if canSend {
-            composerCircleButton(systemName: "arrow.up", label: "Send", tint: .black, fill: LitterTheme.accent) {
-                onSendText()
+        } else if allowsVoiceInput {
+            composerCircleButton(systemName: "mic", label: "Dictate", tint: LitterTheme.textSecondary) {
+                onStartRecording()
             }
-        } else if isTurnActive {
+        }
+    }
+
+    /// Send, or stop while the agent runs and the draft is empty. A non-empty
+    /// draft during a running turn still sends (queues a follow-up).
+    @ViewBuilder
+    private var trailingControl: some View {
+        if isTurnActive && !canSend && !isVoiceBusy {
             composerCircleButton(systemName: "stop.fill", label: "Cancel response", tint: LitterTheme.surface, fill: LitterTheme.textPrimary) {
                 onInterrupt()
             }
-        } else if allowsVoiceInput {
-            composerCircleButton(systemName: "mic.fill", label: "Dictate") {
-                onStartRecording()
+        } else {
+            let enabled = canSend && !isVoiceBusy
+            composerCircleButton(
+                systemName: "arrow.up",
+                label: "Send",
+                tint: enabled ? LitterTheme.surface : LitterTheme.textMuted,
+                fill: enabled ? LitterTheme.textPrimary : LitterTheme.composerControl
+            ) {
+                if enabled { onSendText() }
             }
+            .disabled(!enabled)
         }
     }
 
@@ -257,16 +297,17 @@ struct ConversationComposerEntryRowView: View {
         systemName: String,
         label: String,
         tint: Color = LitterTheme.textPrimary,
-        fill: Color = LitterTheme.surfaceLight.opacity(0.72),
+        fill: Color = LitterTheme.composerControl,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(LitterFont.styled(size: systemName == "plus" ? 20 : 16, weight: .semibold))
+                .font(.system(size: systemName == "plus" ? 17 : 14, weight: systemName == "plus" ? .regular : .semibold))
                 .foregroundColor(tint)
                 .frame(width: Metrics.controlSize, height: Metrics.controlSize)
                 .background(Circle().fill(fill))
-                .contentShape(Circle())
+                .frame(width: LitterSpace.hitTarget, height: LitterSpace.hitTarget)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hoverEffect(.highlight)

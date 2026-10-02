@@ -1,5 +1,7 @@
 package com.litter.android
 
+import android.content.res.Configuration
+import com.litter.android.util.EdgeToEdge
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -9,7 +11,6 @@ import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
@@ -71,8 +72,12 @@ class MainActivity : ComponentActivity() {
         // (Theme.App.Starting) to the Compose AnimatedSplashScreen without a
         // theme-background flash between them.
         installSplashScreen()
-        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        EdgeToEdge.apply(
+            this,
+            darkBars = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES,
+        )
         OpenAIApiKeyStore(applicationContext).applyToEnvironment()
         ExperimentalFeatures.initialize(applicationContext)
         PetOverlayController.initialize(applicationContext)
@@ -88,7 +93,6 @@ class MainActivity : ComponentActivity() {
 
         var showSplash by mutableStateOf(true)
         var contentReady by mutableStateOf(false)
-        var minTimeElapsed by mutableStateOf(false)
 
         setContent {
             LitterAppTheme {
@@ -106,22 +110,16 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // Signal content ready when LitterApp composes
+                    // Signal content ready once the first real frame (LitterApp
+                    // or the startup-failure message) has composed. No fixed
+                    // minimum display time: hide the splash as soon as ready.
                     LaunchedEffect(model) {
-                        if (model != null) {
-                            contentReady = true
-                        }
+                        contentReady = true
                     }
 
-                    // Minimum display time
-                    LaunchedEffect(Unit) {
-                        delay(800)
-                        minTimeElapsed = true
-                    }
-
-                    // Dismiss when both ready and min time elapsed (or hard max 3s)
-                    LaunchedEffect(contentReady, minTimeElapsed) {
-                        if (contentReady && minTimeElapsed) showSplash = false
+                    // Dismiss when ready (or hard max 3s as a safety net)
+                    LaunchedEffect(contentReady) {
+                        if (contentReady) showSplash = false
                     }
                     LaunchedEffect(Unit) {
                         delay(3000)

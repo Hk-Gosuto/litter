@@ -161,14 +161,16 @@ KITTYLITTER_ARGS := $(strip $(KITTYLITTER_GOAL_ARGS) $(ARGS))
 UPDATE_ALLEYCAT_MAIN := $(ROOT)/tools/scripts/update-alleycat-main.sh
 
 PATCH_FILES := \
-	$(PATCHES_DIR)/litter-mobile-compat-0.146.0.patch
+	$(PATCHES_DIR)/remote-crypto-compat.patch \
+	$(PATCHES_DIR)/remote-protocol-compat.patch \
+	$(PATCHES_DIR)/absolute-path-cross-platform.patch
 
 BOUNDARY_SOURCES := \
 	$(RUST_DIR)/codex-mobile-client/Cargo.toml \
 	$(RUST_DIR)/codex-mobile-client/src/lib.rs \
 	$(RUST_DIR)/codex-mobile-client/src/conversation_uniffi.rs
 
-BOUNDARY_SOURCES += $(shell find $(RUST_DIR)/codex-mobile-client/src -type f -name '*.rs' 2>/dev/null)
+BOUNDARY_SOURCES += $(shell find $(RUST_DIR)/codex-mobile-client/src $(RUST_DIR)/litter-remote-client/src -type f -name '*.rs' 2>/dev/null)
 
 IOS_PROJECT_INPUTS := $(shell find $(IOS_DIR)/Sources $(IOS_DIR)/Tests -type f 2>/dev/null)
 
@@ -222,7 +224,7 @@ ANDROID_RUST_SOURCES := $(shell find $(RUST_DIR) \
 
 $(shell mkdir -p $(STAMPS))
 
-.PHONY: all ios ios-sim ios-sim-fast ios-sim-run ios-sim-launch ios-device ios-device-fast ios-device-run ios-device-launch ios-device-stop ios-run verify-ios-project catalyst catalyst-run catalyst-fast catalyst-fast-run mac-direct mac-direct-run mac-direct-fast mac-direct-fast-run \
+.PHONY: rust-target-prune all ios ios-sim ios-sim-fast ios-sim-run ios-sim-launch ios-device ios-device-fast ios-device-run ios-device-launch ios-device-stop ios-run verify-ios-project catalyst catalyst-run catalyst-fast catalyst-fast-run mac-direct mac-direct-run mac-direct-fast mac-direct-fast-run \
 	android android-fast android-emulator-fast android-emulator-run android-device-run android-release android-debug android-install android-emulator-install \
 	rust-ios rust-ios-package rust-ios-device-release rust-mac-release rust-ios-device-fast rust-ios-sim-fast rust-ios-macabi-fast rust-android rust-check rust-test rust-host-dev \
 	ios-xcode-sim ios-xcode-sim-fast ios-xcode-device ios-xcode-device-fast \
@@ -245,12 +247,12 @@ all: ios android
 # is deliberately sequenced after Rust: build-rust.sh already emits the Swift
 # bindings, so running `xcgen` in parallel used to launch a second full host
 # Cargo build that sat behind the cross-compile target lock.
-ios-build-sim: rust-ios-package alpine-fs
-ios-build-device: rust-ios-package alpine-fs
+ios-build-sim: rust-ios-package
+ios-build-device: rust-ios-package
 
 # Fast lanes use lightweight raw staticlib outputs instead of full packaging.
-ios-build-sim-fast: rust-ios-sim-fast alpine-fs
-ios-build-device-fast: rust-ios-device-fast alpine-fs
+ios-build-sim-fast: rust-ios-sim-fast
+ios-build-device-fast: rust-ios-device-fast
 
 ios: ios-build-sim
 ios-sim: ios-build-sim
@@ -263,7 +265,7 @@ ios-device-fast: ios-build-device-fast
 # separate DerivedData path so it doesn't collide with the iOS sim build
 # cache.
 CATALYST_DERIVED_DATA := $(IOS_DIR)/build/catalyst
-catalyst: rust-ios-package alpine-fs xcgen
+catalyst: rust-ios-package xcgen
 	@echo "==> Building LitterMac for Mac Catalyst..."
 	@cd $(IOS_DIR) && xcodebuild \
 		-project Litter.xcodeproj \
@@ -286,7 +288,7 @@ catalyst-run: catalyst
 # release+LTO+xcframework `rust-ios-package` chain. Warm rebuilds drop
 # from minutes to seconds. Cold first build is still slow because cargo
 # has to compile the codex workspace once for macabi.
-catalyst-fast: rust-ios-macabi-fast alpine-fs xcgen
+catalyst-fast: rust-ios-macabi-fast xcgen
 	@echo "==> Building LitterMac for Mac Catalyst (fast)..."
 	@cd $(IOS_DIR) && xcodebuild \
 		-project Litter.xcodeproj \
@@ -308,7 +310,7 @@ catalyst-fast-run: catalyst-fast
 # export → hdiutil → notarize → staple cycle. Use `make mac-direct-dist`
 # for the signed + notarized DMG.
 MAC_DIRECT_DERIVED := $(IOS_DIR)/build/mac-direct
-mac-direct: rust-ios-package alpine-fs xcgen
+mac-direct: rust-ios-package xcgen
 	@echo "==> Building LitterMac (DeveloperID — unsandboxed)..."
 	@cd $(IOS_DIR) && xcodebuild \
 		-project Litter.xcodeproj \
@@ -329,7 +331,7 @@ mac-direct-run: mac-direct
 # the fast macabi-only Rust path so warm rebuilds are seconds. Uses ad-hoc
 # code signing (`CODE_SIGN_IDENTITY=-`) to bypass the Developer ID cert
 # requirement during local iteration.
-mac-direct-fast: rust-ios-macabi-fast alpine-fs xcgen
+mac-direct-fast: rust-ios-macabi-fast xcgen
 	@echo "==> Building LitterMac (DeveloperID — unsandboxed, fast)..."
 	@cd $(IOS_DIR) && xcodebuild \
 		-project Litter.xcodeproj \
@@ -412,7 +414,7 @@ ios-run: ios
 	@open $(IOS_DIR)/Litter.xcodeproj
 
 android: android-fast
-android-fast: rust-android android-alpine-fs proot-android android-debug
+android-fast: rust-android android-debug
 android-emulator-fast:
 	@$(MAKE) android-fast ANDROID_ABIS="$(ANDROID_EMULATOR_ABIS)"
 android-emulator-run: android-emulator-fast
@@ -436,14 +438,19 @@ android-device-run: android-fast
 	ANDROID_REINSTALL_ON_SIGNATURE_MISMATCH='$(ANDROID_REINSTALL_ON_SIGNATURE_MISMATCH)' \
 	./tools/scripts/run-android.sh
 
-android-release: $(MATERIAL_SCHEMES_OUTPUT) android-alpine-fs proot-android
+android-release: $(MATERIAL_SCHEMES_OUTPUT)
 	@$(MAKE) rust-android ANDROID_RUST_PROFILE=release ANDROID_ABIS="$(ANDROID_RELEASE_ABIS)"
 	@echo "==> Building Android release..."
 	@cd $(ANDROID_DIR) && $(ANDROID_ENV) ANDROID_ABIS="$(ANDROID_RELEASE_ABIS)" ./gradlew :app:assembleRelease
 
 rust-ios: rust-ios-package
 
-alleycat-main:
+# Every Rust build depends on alleycat-main, so the target size cap runs
+# before each one. Override with LITTER_RUST_TARGET_MAX_GB (0 disables).
+rust-target-prune:
+	@$(ROOT)/tools/scripts/prune-rust-target.sh "$(RUST_TARGET)"
+
+alleycat-main: rust-target-prune
 	@$(UPDATE_ALLEYCAT_MAIN) --all
 
 rust-ios-package: alleycat-main $(STAMP_SYNC) $(STAMP_GHOSTTY_IOS)
@@ -879,7 +886,7 @@ measure-latency-ios-log:
 measure-latency-android:
 	@$(ROOT)/tools/scripts/measure-interaction-latency.sh android
 
-ios-release-prep: rust-ios-device-release alpine-fs xcgen
+ios-release-prep: rust-ios-device-release xcgen
 
 mac-release-prep: rust-mac-release xcgen
 

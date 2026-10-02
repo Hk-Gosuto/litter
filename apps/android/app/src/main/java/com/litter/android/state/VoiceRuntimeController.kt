@@ -38,9 +38,8 @@ class VoiceRuntimeController {
 
     companion object {
         val shared: VoiceRuntimeController by lazy { VoiceRuntimeController() }
-        private const val LOCAL_SERVER_ID = "local"
         private const val VOICE_PREFS_NAME = "litter.voice"
-        private const val PERSISTED_LOCAL_VOICE_THREAD_ID_KEY = "litter.voice.local.thread_id"
+        private const val PERSISTED_VOICE_THREAD_ID_KEY = "litter.voice.remote.thread_id"
     }
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -115,9 +114,9 @@ class VoiceRuntimeController {
     }
 
     fun clearPinnedLocalVoiceThreadIfMatches(appModel: AppModel, threadKey: ThreadKey) {
-        val persistedThreadId = persistedLocalVoiceThreadId(appModel) ?: return
-        if (threadKey.serverId == LOCAL_SERVER_ID && threadKey.threadId == persistedThreadId) {
-            setPersistedLocalVoiceThreadId(appModel, null)
+        val persistedThreadId = persistedVoiceThreadId(appModel, threadKey.serverId) ?: return
+        if (threadKey.threadId == persistedThreadId) {
+            setPersistedVoiceThreadId(appModel, threadKey.serverId, null)
         }
     }
 
@@ -243,10 +242,10 @@ class VoiceRuntimeController {
         cwd: String,
         model: String? = null,
     ): ThreadKey? {
-        val serverId = ensureLocalServerConnected(appModel) ?: return null
+        val serverId = ensureRemoteServerConnected(appModel) ?: return null
         val launchConfig = appModel.launchState.launchConfig(modelOverride = model)
 
-        persistedLocalVoiceThreadId(appModel)?.let { storedThreadId ->
+        persistedVoiceThreadId(appModel, serverId)?.let { storedThreadId ->
             val key = ThreadKey(serverId = serverId, threadId = storedThreadId)
             val knownThread = appModel.snapshot.value?.let { snapshot ->
                 snapshot.threads.any { it.key == key } || snapshot.sessionSummaries.any { it.key == key }
@@ -260,12 +259,12 @@ class VoiceRuntimeController {
             val loadedKey = appModel.ensureThreadLoaded(key)
             if (loadedKey != null) {
                 appModel.store.setActiveThread(loadedKey)
-                setPersistedLocalVoiceThreadId(appModel, loadedKey.threadId)
+                setPersistedVoiceThreadId(appModel, serverId, loadedKey.threadId)
                 appModel.refreshSnapshot()
                 return loadedKey
             }
 
-            setPersistedLocalVoiceThreadId(appModel, null)
+            setPersistedVoiceThreadId(appModel, serverId, null)
         }
 
         return try {
@@ -280,7 +279,7 @@ class VoiceRuntimeController {
                 PinnedThreadKey(serverId = key.serverId, threadId = key.threadId),
             )
             appModel.store.setActiveThread(key)
-            setPersistedLocalVoiceThreadId(appModel, key.threadId)
+            setPersistedVoiceThreadId(appModel, serverId, key.threadId)
             appModel.refreshSnapshot()
             key
         } catch (_: Exception) {
@@ -288,22 +287,11 @@ class VoiceRuntimeController {
         }
     }
 
-    private suspend fun ensureLocalServerConnected(appModel: AppModel): String? {
-        appModel.snapshot.value?.servers?.firstOrNull { it.isLocal && it.isConnected }?.let { server ->
-            return server.serverId
-        }
-
-        val currentLocal = appModel.snapshot.value?.servers?.firstOrNull { it.isLocal }
-        val serverId = currentLocal?.serverId ?: LOCAL_SERVER_ID
-        val displayName = currentLocal?.displayName ?: "Local"
-        return try {
-            appModel.serverBridge.connectLocalServer(serverId, displayName, "127.0.0.1", 0u)
-            appModel.restoreStoredLocalAuthState(serverId)
-            appModel.refreshSnapshot()
-            serverId
-        } catch (_: Exception) {
-            null
-        }
+    private suspend fun ensureRemoteServerConnected(appModel: AppModel): String? {
+        val snapshot = appModel.snapshot.value ?: return null
+        val activeServerId = snapshot.activeThread?.serverId
+        return snapshot.servers.firstOrNull { it.serverId == activeServerId && it.isConnected && !it.isLocal }?.serverId
+            ?: snapshot.servers.firstOrNull { it.isConnected && !it.isLocal }?.serverId
     }
 
     private suspend fun cleanupKnownRealtimeVoiceSessions(
@@ -314,9 +302,11 @@ class VoiceRuntimeController {
         _activeSession.value?.threadKey
             ?.takeIf { it.threadId.isNotBlank() }
             ?.let(candidates::add)
-        persistedLocalVoiceThreadId(appModel)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { candidates.add(ThreadKey(serverId = LOCAL_SERVER_ID, threadId = it)) }
+        appModel.snapshot.value?.servers?.filter { !it.isLocal }?.forEach { server ->
+            persistedVoiceThreadId(appModel, server.serverId)?.let { threadId ->
+                candidates.add(ThreadKey(serverId = server.serverId, threadId = threadId))
+            }
+        }
 
         for (candidate in candidates) {
             if (candidate == keepThreadKey) continue
@@ -537,21 +527,21 @@ class VoiceRuntimeController {
         ),
     )
 
-    private fun persistedLocalVoiceThreadId(appModel: AppModel): String? {
+    private fun persistedVoiceThreadId(appModel: AppModel, serverId: String): String? {
         val stored = voicePrefs(appModel)
-            .getString(PERSISTED_LOCAL_VOICE_THREAD_ID_KEY, null)
+            .getString("$PERSISTED_VOICE_THREAD_ID_KEY.$serverId", null)
             ?.trim()
             .orEmpty()
         return stored.ifEmpty { null }
     }
 
-    private fun setPersistedLocalVoiceThreadId(appModel: AppModel, threadId: String?) {
+    private fun setPersistedVoiceThreadId(appModel: AppModel, serverId: String, threadId: String?) {
         val trimmed = threadId?.trim().orEmpty()
         val editor = voicePrefs(appModel).edit()
         if (trimmed.isEmpty()) {
-            editor.remove(PERSISTED_LOCAL_VOICE_THREAD_ID_KEY)
+            editor.remove("$PERSISTED_VOICE_THREAD_ID_KEY.$serverId")
         } else {
-            editor.putString(PERSISTED_LOCAL_VOICE_THREAD_ID_KEY, trimmed)
+            editor.putString("$PERSISTED_VOICE_THREAD_ID_KEY.$serverId", trimmed)
         }
         editor.apply()
     }

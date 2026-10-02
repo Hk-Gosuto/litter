@@ -36,6 +36,7 @@ internal fun voiceTranscriptionEndpoint(authMethod: AuthMode?): VoiceTranscripti
         AuthMode.HEADERS,
         AuthMode.AGENT_IDENTITY,
         AuthMode.BEDROCK_API_KEY,
+        AuthMode.BEDROCK_ACCESS_KEYS,
         null,
         -> null
     }

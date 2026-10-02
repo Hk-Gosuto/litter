@@ -26,14 +26,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.sigkitten.litter.android.R
 import com.litter.android.auth.ChatGPTOAuthActivity
 import com.litter.android.state.ChatGPTOAuth
 import com.litter.android.state.ChatGPTOAuthTokenStore
@@ -78,7 +76,7 @@ fun AccountSheet(
         if (result.resultCode == Activity.RESULT_OK) {
             val tokens = ChatGPTOAuthActivity.parseResult(result.data)
             if (tokens == null) {
-                error = context.getString(R.string.account_login_incomplete)
+                error = "ChatGPT login returned incomplete credentials."
                 LLog.w("ChatGPTOAuth", "account sheet auth result missing tokens")
                 return@rememberLauncherForActivityResult
             }
@@ -136,7 +134,7 @@ fun AccountSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = stringResource(R.string.settings_account_section),
+            text = "Account",
             color = LitterTheme.textPrimary,
             fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold,
@@ -157,7 +155,7 @@ fun AccountSheet(
                         .background(LitterTheme.surface, RoundedCornerShape(8.dp))
                         .padding(12.dp),
                 ) {
-                    Text(stringResource(R.string.account_logged_in), color = LitterTheme.accent, fontSize = 13.sp)
+                    Text("Logged in", color = LitterTheme.textPrimary, fontSize = 13.sp)
                     Text(account.email, color = LitterTheme.textPrimary, fontSize = 14.sp)
                 }
             }
@@ -169,22 +167,7 @@ fun AccountSheet(
                         .background(LitterTheme.surface, RoundedCornerShape(8.dp))
                         .padding(12.dp),
                 ) {
-                    Text(stringResource(R.string.account_api_key_configured), color = LitterTheme.accent, fontSize = 13.sp)
-                }
-            }
-
-            is Account.AmazonBedrock -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(LitterTheme.surface, RoundedCornerShape(8.dp))
-                        .padding(12.dp),
-                ) {
-                    Text(
-                        stringResource(R.string.account_amazon_bedrock_configured),
-                        color = LitterTheme.accent,
-                        fontSize = 13.sp,
-                    )
+                    Text("API key configured", color = LitterTheme.textPrimary, fontSize = 13.sp)
                 }
             }
 
@@ -193,17 +176,17 @@ fun AccountSheet(
 
         if (server?.isLocal == true && hasStoredApiKey) {
             Text(
-                stringResource(R.string.account_local_key_saved),
-                color = LitterTheme.accent,
-                fontSize = 12.sp,
+                "Local OpenAI API key is saved.",
+                color = LitterTheme.textPrimary,
+                fontSize = 13.sp,
             )
         }
 
         if (server?.isLocal == true && hasStoredBaseUrl) {
             Text(
-                stringResource(R.string.account_base_url_saved),
-                color = LitterTheme.accent,
-                fontSize = 12.sp,
+                "OpenAI-compatible base URL is saved.",
+                color = LitterTheme.textPrimary,
+                fontSize = 13.sp,
             )
         }
 
@@ -219,7 +202,7 @@ fun AccountSheet(
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(stringResource(R.string.account_logout))
+                Text("Logout")
             }
         }
 
@@ -241,37 +224,37 @@ fun AccountSheet(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = LitterTheme.accent,
+                    containerColor = LitterTheme.textPrimary,
                     contentColor = Color.Black,
                 ),
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isAuthWorking,
             ) {
-                Text(stringResource(R.string.account_login_chatgpt))
+                Text("Login with ChatGPT")
             }
         }
 
         if (allowsLocalEnvApiKey) {
             if (hasStoredApiKey) {
                 Text(
-                    stringResource(R.string.account_key_saved_environment),
+                    "OpenAI API key saved in the local environment.",
                     color = LitterTheme.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                 )
             } else if (isChatGPTAccount) {
                 Text(
-                    stringResource(R.string.account_save_key_environment),
+                    "Save an OpenAI API key in the local Codex environment.",
                     color = LitterTheme.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                 )
             } else {
-                Text(stringResource(R.string.account_api_key_helper), color = LitterTheme.textSecondary, fontSize = 12.sp)
+                Text("Or save an API key for the local environment:", color = LitterTheme.textSecondary, fontSize = 13.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
-                    label = { Text(stringResource(R.string.account_api_key)) },
+                    label = { Text("API Key") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.weight(1f),
@@ -289,7 +272,7 @@ fun AccountSheet(
                                 if (hasStoredApiKey) {
                                     apiKey = ""
                                 } else {
-                                    error = context.getString(R.string.account_key_not_persisted)
+                                    error = "API key did not persist locally."
                                     return@launch
                                 }
                                 error = null
@@ -300,36 +283,28 @@ fun AccountSheet(
                     },
                     enabled = apiKey.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = LitterTheme.accent,
+                        containerColor = LitterTheme.textPrimary,
                         contentColor = Color.Black,
                     ),
                 ) {
-                    Text(
-                        stringResource(
-                            if (hasStoredApiKey) {
-                                R.string.account_update_api_key
-                            } else {
-                                R.string.account_save_api_key
-                            },
-                        ),
-                    )
+                    Text(if (hasStoredApiKey) "Update API Key" else "Save API Key")
                 }
             }
 
             Text(
                 if (hasStoredBaseUrl) {
-                    stringResource(R.string.account_custom_endpoint_saved)
+                    "Custom OpenAI-compatible endpoint saved for the local Codex server."
                 } else {
-                    stringResource(R.string.account_optional_endpoint)
+                    "Optional OpenAI-compatible endpoint for local models."
                 },
                 color = LitterTheme.textSecondary,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = openAIBaseUrl,
                     onValueChange = { openAIBaseUrl = it },
-                    label = { Text(stringResource(R.string.account_base_url)) },
+                    label = { Text("Base URL") },
                     placeholder = { Text("http://host:port/v1") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
@@ -338,7 +313,7 @@ fun AccountSheet(
                     onClick = {
                         val normalized = normalizeOpenAIBaseUrl(openAIBaseUrl)
                         if (normalized == null) {
-                            error = context.getString(R.string.account_invalid_base_url)
+                            error = "Enter a valid http or https base URL."
                         } else {
                             scope.launch {
                                 isAuthWorking = true
@@ -350,7 +325,7 @@ fun AccountSheet(
                                         openAIBaseUrl = ""
                                         error = null
                                     } else {
-                                        error = context.getString(R.string.account_base_url_not_persisted)
+                                        error = "Base URL did not persist locally."
                                     }
                                 } catch (e: Exception) {
                                     error = e.message
@@ -362,7 +337,7 @@ fun AccountSheet(
                     },
                     enabled = openAIBaseUrl.isNotBlank() && !isAuthWorking,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = LitterTheme.accent,
+                        containerColor = LitterTheme.textPrimary,
                         contentColor = Color.Black,
                     ),
                 ) {
@@ -390,19 +365,19 @@ fun AccountSheet(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isAuthWorking,
                 ) {
-                    Text(stringResource(R.string.account_clear_base_url))
+                    Text("Clear Base URL")
                 }
             }
         } else if (server?.isLocal == false) {
             Text(
-                stringResource(R.string.account_remote_login_help),
+                "Manage Codex login on this connected computer. OAuth requests appear when the server needs authentication.",
                 color = LitterTheme.textSecondary,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
             )
         }
 
         error?.let {
-            Text(it, color = LitterTheme.danger, fontSize = 12.sp)
+            Text(it, color = LitterTheme.danger, fontSize = 13.sp)
         }
     }
 }

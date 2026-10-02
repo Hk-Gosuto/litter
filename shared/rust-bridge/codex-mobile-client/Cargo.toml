@@ -53,13 +53,7 @@ tempfile = "3"
 [build-dependencies]
 uniffi = { version = "0.31.0", features = ["build"] }
 
-[target.'cfg(all(target_os = "ios", not(target_abi = "macabi")))'.dependencies]
-
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1"
 openssl-sys = { version = "0.9", features = ["vendored"] }
-portable-pty = "0.9"
-flate2 = "1"
-tar = "0.4"
-rusqlite = { version = "0.39.0", features = ["bundled"] }

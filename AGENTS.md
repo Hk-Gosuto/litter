@@ -28,6 +28,12 @@
 - **Android server flow:** Add Server uses explicit Kittylitter, Local Studio, connected-computer, direct URL, or SSH paths. Connection, auth, and thread/account flows go through Rust RPC + store updates; Android does not run background NSD or subnet scans.
 - **Message rendering parity:** both platforms support reasoning/system sections, code block rendering, and inline image handling.
 
+### Remote-only Mobile Build
+- Mobile does not link `codex-core`, `codex-app-server`, iSH, or proot. Execution runs on connected computers.
+- `shared/rust-bridge/litter-remote-client/` owns the remote transport facade; it has no UniFFI exports. Keep `codex-mobile-client` as the single Swift/Kotlin binding surface.
+- Legacy local bootstrap methods return Unsupported; do not reintroduce automatic local startup/reconnect or local terminal choices.
+- Only active remote compatibility patches listed in `apps/ios/scripts/sync-codex.sh` are applied. Other patch files are historical.
+
 ### Shared Rust Layer
 - `codex-mobile-client` is the single public Rust mobile crate. Keep one generated Swift/Kotlin binding surface; do not split UniFFI across multiple mobile crates again.
 - Realtime voice uses libwebrtc (Google WebRTC.framework on iOS via stasel/WebRTC SPM, `io.github.webrtc-sdk:android` on Android). The peer connection runs natively on each platform; AEC/NS/VAD are handled by libwebrtc's audio processing module. The Rust layer only owns signaling, session lifecycle, transcript state, and handoff orchestration.
@@ -91,7 +97,7 @@
 - **Markwon** — Markdown rendering for assistant/system text.
 - **androidx.security:security-crypto** — encrypted credential storage.
 ### Rust Shared Layer (Cargo)
-- **codex-app-server-protocol**, **codex-app-server-client**, **codex-protocol**, **codex-core** — upstream Codex crates.
+- **codex-app-server-protocol**, **codex-protocol** — upstream wire types; **litter-remote-client** supplies remote WebSocket/SSH transport under the `codex-app-server-client` Cargo alias. Mobile does not depend on `codex-core` or the embedded app server.
 - **tokio-tungstenite** — async WebSocket transport.
 - **russh** — SSH client (shared Rust SSH, replacing platform-native SSH libs).
 - **uniffi** — generates Swift/Kotlin bindings from Rust.

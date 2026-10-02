@@ -24,7 +24,7 @@ final class CloudKVSBridge {
     /// rapid local changes.
     private static let debounceInterval: TimeInterval = 0.5
 
-    private var store: NSUbiquitousKeyValueStore?
+    private let store = NSUbiquitousKeyValueStore.default
     private let defaults = UserDefaults.standard
     private let preferencesDirectory: String
     private let deviceId: String
@@ -46,12 +46,6 @@ final class CloudKVSBridge {
     /// launch.
     func start() {
         guard !started else { return }
-        guard Self.isEnabled else {
-            LLog.info("cloud_sync", "disabled because iCloud KVS entitlement is unavailable")
-            return
-        }
-        let store = NSUbiquitousKeyValueStore.default
-        self.store = store
         started = true
 
         // Inbound: another device pushed an envelope.
@@ -92,7 +86,6 @@ final class CloudKVSBridge {
     /// new state to KVS. Call this from the existing `SavedThreadsStore` /
     /// `SavedProjectStore` mutation paths.
     func notifyRustPreferencesChanged() {
-        guard started else { return }
         scheduleExport()
     }
 
@@ -114,7 +107,6 @@ final class CloudKVSBridge {
     }
 
     private func applyEnvelopeFromStore() {
-        guard let store else { return }
         guard let bytes = store.data(forKey: Self.envelopeKey) else {
             return
         }
@@ -129,7 +121,7 @@ final class CloudKVSBridge {
             )
             applyWritebacks(writebacks)
             lastAppliedEnvelopeHash = hash
-            NotificationCenter.default.post(name: .litterThreadPreferencesDidChange, object: nil)
+                NotificationCenter.default.post(name: .litterThreadPreferencesDidChange, object: nil)
         } catch {
             LLog.warn(
                 "cloud_sync",
@@ -213,17 +205,20 @@ final class CloudKVSBridge {
         pendingExportTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(Self.debounceInterval * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
-            self.exportNow()
+            await self.exportNow()
         }
     }
 
-    private func exportNow() {
-        guard let store else { return }
+    /// Builds the envelope (file read + CBOR encode in Rust) off the main
+    /// actor; only the KVS write and hash bookkeeping hop back to main.
+    private func exportNow() async {
+        let directory = preferencesDirectory
+        let deviceId = deviceId
         do {
-            let bytes = try cloudSyncExportSnapshot(
-                directory: preferencesDirectory,
-                deviceId: deviceId
-            )
+            let bytes = try await Task.detached(priority: .utility) {
+                try cloudSyncExportSnapshot(directory: directory, deviceId: deviceId)
+            }.value
+            guard !Task.isCancelled else { return }
             // Avoid bouncing our own writes back through external-change
             // notifications: track the hash of what we just pushed.
             lastAppliedEnvelopeHash = bytes.hashValue
@@ -247,10 +242,6 @@ final class CloudKVSBridge {
         let fresh = UUID().uuidString
         defaults.set(fresh, forKey: deviceIdKey)
         return fresh
-    }
-
-    private static var isEnabled: Bool {
-        Bundle.main.object(forInfoDictionaryKey: "LitterCloudKVSEnabled") as? Bool == true
     }
 }
 

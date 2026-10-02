@@ -67,6 +67,7 @@ final class AppLifecycleController {
             appModel.recordSshHostKeyChange(serverId: result.serverId, errorMessage: result.errorMessage)
         }
         await appModel.refreshSnapshot()
+        SavedServerReconnectState.shared.finish()
         for result in results where result.needsLocalAuthRestore {
             await appModel.restoreStoredLocalAuthState(serverId: result.serverId)
         }
@@ -458,8 +459,10 @@ final class AppLifecycleController {
         }
         lastBackgroundedAt = nil
 
+        SavedServerReconnectState.shared.begin()
         let results = await appModel.reconnectController.onAppBecameActive()
         await appModel.refreshSnapshot()
+        SavedServerReconnectState.shared.finish()
         for result in results where result.needsLocalAuthRestore {
             await appModel.restoreStoredLocalAuthState(serverId: result.serverId)
         }

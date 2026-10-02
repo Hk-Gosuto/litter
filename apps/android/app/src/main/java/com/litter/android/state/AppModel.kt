@@ -132,10 +132,6 @@ class AppModel private constructor(context: android.content.Context) {
         private set
     init {
         UniffiInit.ensure(context)
-        Thread({
-            AndroidProotBootstrap.bootstrap(context)
-        }, "litter-proot-bootstrap").start()
-        registerBundledCliTools()
         LLog.bootstrap(context)
         store = AppStore()
         client = AppClient()
@@ -247,14 +243,6 @@ class AppModel private constructor(context: android.content.Context) {
                 current + (threadKey to draft)
             }
         }
-    }
-
-    fun updateComposerDraft(threadKey: ThreadKey, transform: (ComposerDraft) -> ComposerDraft) {
-        setComposerDraft(threadKey, transform(composerDraft(threadKey)))
-    }
-
-    fun clearComposerDraft(threadKey: ThreadKey) {
-        setComposerDraft(threadKey, ComposerDraft.EMPTY)
     }
 
     // --- Thinking-indicator minigame -----------------------------------------

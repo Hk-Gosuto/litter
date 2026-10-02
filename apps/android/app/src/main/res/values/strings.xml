@@ -491,7 +491,7 @@
     <string name="terminal_preparing_alpine">Preparing local Alpine…\n</string>
     <string name="terminal_ptrace_denied">Local Alpine is unavailable because this Android environment blocks ptrace.\nRemote shell remains available after pairing an Alleycat host.\n</string>
     <string name="terminal_artifact_missing">Local Alpine is unavailable because proot or the Alpine rootfs is not bundled.\nRemote shell remains available after pairing an Alleycat host.\n</string>
-    <string name="terminal_pair_remote">Pair an Alleycat host to open a remote shell.\n</string>
+    <string name="terminal_pair_remote">Connect a computer to open a remote terminal.\n</string>
     <string name="terminal_theme">Theme</string>
     <string name="terminal_theme_litter_dark">Litter Dark</string>
     <string name="terminal_theme_catppuccin">Catppuccin Frappé</string>

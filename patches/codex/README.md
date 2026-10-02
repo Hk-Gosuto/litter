@@ -1,126 +1,38 @@
-# Codex submodule patches
+# Remote Codex compatibility patches
 
-Patches applied to `shared/third_party/codex` by `apps/ios/scripts/sync-codex.sh` during build.
+The mobile apps connect to a Codex app-server running on another computer.
+They no longer link `codex-core`, `codex-app-server`, their embedded execution
+hooks, iSH, or Android proot. The shared store and platform UniFFI surface stay
+in `codex-mobile-client`; the remote transport is `litter-remote-client`.
 
-The patches are tightly coupled to the upstream codex source tree, so each codex tag bump tends to require a refresh. This README captures *intent* — what each patch does and which downstream code in this repo depends on it — so the next bump doesn't have to re-derive that from a 900-line diff.
+Validated protocol base: `rust-v0.162.0-alpha.4` (`fe3894843141854f0d8e4298ece89fdeedd089c4`).
 
-When a patch fails to apply, prefer `git apply --3way` first (handles line-number drift). If that conflicts on real semantic changes, refresh the affected hunks against the new upstream by editing the file directly, regenerating the patch against its predecessor in apply order, and verifying sequential application to a pristine upstream checkout. Several patches touch the same files, so a diff against HEAD can accidentally include later patches. Also run the sync script twice to check idempotence.
+`apps/ios/scripts/sync-codex.sh` applies only:
 
----
+- `remote-protocol-compat.patch`: keeps the existing mobile wire extensions
+  (dynamic-tool argument deltas, realtime handoff/dynamic-tool request types,
+  optional permission fields) available to the shared reducer and typed RPC
+  generator. This patches protocol dependencies only; it does not install
+  handlers in a remote server. Extension RPCs require a server that supports
+  them, as before.
+- `absolute-path-cross-platform.patch`: accepts Windows absolute paths on
+  mobile when reading responses from a Windows host.
+- `remote-crypto-compat.patch`: retains age 0.11.x in the protocol dependency
+  graph. age 0.12.1 introduces ml-kem 0.2.1 whose prerelease kem requirement
+  resolves to an incompatible stable kem 0.3 used by mobile SSH. Cargo.lock
+  records the working version; no registry checkout is modified.
 
-## `ios-exec-hook.patch`
-Lets iOS install a function pointer that core's exec layer calls instead of `fork+exec` (forbidden in the App Store sandbox), and lets Android install an argv[0] resolver that maps `git` etc. to bundled `lib<tool>.so` paths in the app's nativeLibraryDir. Also installs an argv preflight that rewrites `/tmp/...` paths to the platform's real tempdir.
+The other patch files are historical and are not applied in this branch.
+Removing the local runtime does not establish that upstream fixed their
+original bugs (including cold fork lineage); those server-side fixes must be
+assessed independently on the host.
 
-Touches `core/src/exec.rs` and `core/src/unified_exec/{async_watcher.rs,process_manager.rs}`. The mobile hook retains upstream output buffering and transcript recording.
+The Apache-2.0 remote transport snapshot in `shared/rust-bridge/litter-remote-client`
+is adapted from this same upstream tag, including the previous Litter generic
+`JsonRpcWire`/SSH stream changes. Keep its source attribution and LICENSE when
+updating it. Protocol-only upgrades do not require rebuilding an embedded
+Codex server or migrating local execution hooks.
 
-Consumed by `shared/rust-bridge/codex-mobile-client/src/ish_exec.rs` (`set_ios_exec_hook`), `android_exec.rs` (`set_android_tool_resolver`), and `shell_preflight.rs` (`set_mobile_exec_preflight`).
-
-## `ios-live-exec.patch`
-Extends the basic iOS exec hook with per-command cancellation and a live process
-surface for the embedded iSH runtime. Unified exec sessions can stream output,
-accept stdin, deliver signals, terminate, and expose a process id without using
-`fork+exec`.
-
-Touches `core/src/exec.rs` and
-`core/src/unified_exec/{process.rs,process_manager.rs}`. It must be applied
-immediately after `ios-exec-hook.patch` because it builds on that hook surface.
-
-Consumed by `shared/rust-bridge/codex-mobile-client/src/ish_exec.rs`.
-
-## Upstream 0.162.0-alpha.4 changes
-
-Validated patch base: `rust-v0.162.0-alpha.4` (`fe3894843`). Upstream now owns filesystem thread fork lineage in the state-backed model, so the old `thread-list-fork-lineage.patch` is retired. The former mobile code-mode stub is retired: upstream code-mode now uses a remote gRPC provider and no longer embeds V8. The reasoning-effort patch is retired because upstream now defines Max, Ultra, Persistent, and Custom values.
-
-## `mobile-crypto-compat.patch`
-Pins clatter 3.0 to upstream commit `9a8d15c4f80d5911ca0403aa22e0de99ea59df08`. This moves its ML-KEM implementation to the stable KEM API shared by the mobile SSH dependency; clatter 2.x requires an incompatible prerelease of the same KEM package.
-
-## `thread-read-permissions.patch`
-Adds `approval_policy` and `sandbox` to `ThreadReadResponse` so mobile clients can render the live permission state of a thread without doing a separate config fetch.
-
-Touches `app-server-protocol/src/protocol/v2/thread.rs` and `app-server/src/request_processors/thread_processor.rs`.
-
-## `mobile-shell-snapshot-timeout.patch`
-Drops the shell-snapshot timeout from 10s → 2s on iOS/Android. The mobile shell environment is minimal and snapshot probes nearly always time out at the upstream default, adding 10s to every thread start.
-
-Touches `core/src/shell_snapshot.rs`.
-
-## `remote-app-server-websocket-cap.patch`
-Generalizes the remote app-server transport so it can drive any `AsyncRead + AsyncWrite` stream (not just `MaybeTlsStream<TcpStream>`). Required so that a single SSH connection can multiplex multiple websocket-style RPC sessions through litter's tunneling.
-
-Refactors `connect_with_stream` into a wire-generic `connect_with_wire<W: JsonRpcWire>` that the upstream `connect()` path now delegates into. Exposes:
-- `JsonRpcWire` trait (re-exported from `codex_app_server_client`)
-- `RemoteAppServerClient::connect_websocket_stream<S>` — websocket-over-stream entry point
-- `RemoteAppServerClient::connect_with_wire<W>` — generic wire entry point
-
-Touches `app-server-client/src/{lib.rs,remote.rs}`.
-
-Consumed by the SSH/Alleycat remote transport paths in `shared/rust-bridge/codex-mobile-client/src/alleycat.rs`, `src/session/connection.rs`, and `src/ssh_bridge.rs`. Websocket-style reconnects use `RemoteAppServerClient::connect_websocket_stream`. JSON-line transports (Pi/non-Codex servers, alleycat jsonl, SSH-bridge bootstrap) use the litter-side `codex_slingshot::json_line_wire::connect_json_line_stream`, which builds a `JsonLineWire` and feeds it into `connect_with_wire`.
-
-## `absolute-path-cross-platform.patch`
-Lets `AbsolutePathBuf` deserialize Windows-style absolute paths on POSIX (and vice versa) without trying to canonicalize them through `path_absolutize::Absolutize` (which would mangle them by joining onto a POSIX cwd). Required because litter mobile clients consume thread metadata from servers running on either OS.
-
-Touches `utils/absolute-path/src/lib.rs`.
-
-## `android-installation-id-lock.patch`
-Skip `File::lock()` on Android when persisting the installation id. Android's libstd returns `Unsupported` for that syscall, but the mobile app is the sole consumer of app-private storage so the lock isn't load-bearing.
-
-Touches `core/src/installation_id.rs`.
-
-## `dynamic-tool-call-arguments-delta.patch`
-Adds streaming delta notifications for dynamic tool-call argument JSON. The model emits `response.function_call_arguments.delta` SSE events; this patch surfaces them as `EventMsg::DynamicToolCallArgumentsDelta` and `ServerNotification::DynamicToolCallArgumentsDelta` so mobile clients can render partial tool-call output before the call finalizes.
-
-Touches `protocol/src/protocol.rs`, `app-server-protocol/src/protocol/{common.rs,event_mapping.rs,v2/item.rs}`, `app-server/src/bespoke_event_handling.rs`, `codex-api/src/sse/responses.rs`, `core/src/session/turn.rs`, `rollout-trace/src/protocol_event.rs`, `rollout/src/policy.rs`, `tui/src/app/app_server_event_targets.rs`, `tui/src/chatwidget/protocol.rs`.
-
-The TUI hunks are no-op match arms required only because upstream's `ServerNotification` matches are exhaustive. Upstream moved the consolidated `handle_server_notification` match from `tui/src/chatwidget.rs` into `tui/src/chatwidget/protocol.rs`; this patch targets the new location.
-
-## `realtime-webrtc-env-apikey.patch`
-For WebRTC realtime sessions, populate the request headers with the API key obtained from `realtime_api_key(auth, provider)`. When ChatGPT auth falls back to that key, build a clean public OpenAI provider instead of retaining the ChatGPT backend URL. Without this, the WebRTC peer connection fails to authenticate or targets a backend call route the API key cannot access.
-
-Touches `core/src/{client.rs,realtime_conversation.rs,realtime_conversation_tests.rs}`.
-
----
-
-## Realtime multi-server orchestrator (3 patches)
-
-These three patches together let mobile clients (litter) own dynamic-tool execution and handoff resolution during a realtime audio session, instead of routing everything through the in-process background_agent. They were originally one monolithic patch (`client-controlled-handoff.patch`) but were split for easier maintenance — most upstream churn in the realtime layer affects only one of them.
-
-Apply order in `sync-codex.sh` matters: `server-hint` first because it introduces the `realtime_v2_session_tools` helper that `dynamic-tools` reuses.
-
-### `realtime-handoff-server-hint.patch`
-Adds `server: Option<String>` to `RealtimeHandoffRequested` so the model can specify which connected server (e.g. `studio`, `mac-mini`, `local`) should handle the prompt. The mobile client reads this hint to route the handoff over SSH/WS to the right backend.
-
-Touches `protocol/src/protocol.rs`, `codex-api/src/endpoint/realtime_websocket/{protocol_v1.rs,protocol_v2.rs}`, `app-server/src/bespoke_event_handling.rs`, and `core/src/realtime_conversation_tests.rs`.
-
-Deliberately does NOT touch `methods_v2.rs` — the `server` parameter on the `background_agent` tool schema is added by `realtime-dynamic-tools.patch` as part of the `realtime_v2_session_tools` helper extraction. This keeps patch #1 orthogonal to patch #2's hunks so each patch's reverse-apply detection works independently after upstream bumps.
-
-Consumed by `shared/rust-bridge/codex-mobile-client/src/session/voice_handoff.rs::resolve_target_server` (which dispatches based on the `server` hint).
-
-### `realtime-dynamic-tools.patch`
-Lets the client inject arbitrary function tools into the realtime session and route their invocations back to the client over the existing `DynamicToolCall` server-request flow.
-
-- Adds `dynamic_tools: Option<Vec<DynamicToolSpec>>` to `ConversationStartParams`, `ThreadRealtimeStartParams`, and `RealtimeSessionConfig`.
-- Adds `RealtimeEvent::ToolCallRequested(Value)` for completed `function_call` items whose name is not `background_agent`.
-- Routes those through `bespoke_event_handling.rs` to the existing `ServerRequestPayload::DynamicToolCall` flow.
-- Adds `Op::RealtimeResolveDynamicTool { call_id, output }` and `RealtimeOutbound::DynamicToolOutput` to push the result back to the realtime API as `function_call_output` followed by `response.create`.
-- Owns ALL `methods_v2.rs` changes: extracts `realtime_v2_session_tools(dynamic_tools: Option<Vec<DynamicToolSpec>>)` as a helper, adds the required `server` param to the `background_agent` schema (consumed by patch #1's `server` field), and replaces the inline `vec![...]` with a helper call.
-
-Touches `protocol/src/protocol.rs`, `app-server-protocol/src/protocol/v2/realtime.rs`, `app-server/src/{bespoke_event_handling.rs,request_processors/turn_processor.rs}`, `codex-api/src/endpoint/realtime_websocket/{methods.rs,methods_common.rs,methods_v2.rs,protocol.rs,protocol_v2.rs}`, `core/src/{realtime_conversation.rs,session/handlers.rs}`.
-
-Reuses upstream's existing `RealtimeWebsocketWriter::send_conversation_function_call_output` rather than introducing a parallel V2 helper.
-
-Consumed by the typed realtime request surface in
-`shared/rust-bridge/codex-mobile-client/src/types/server_requests.rs`, the
-active `HandoffManager` in `src/session/voice_handoff.rs`, and the dynamic-tool
-router in `src/mobile_client/dynamic_tools.rs`.
-
-### `realtime-client-controlled-handoff.patch`
-When `client_controlled_handoff: true`, suppresses upstream's automatic "route handoff to background agent" path in `handle_start_inner` so the client can resolve the handoff its own way (e.g., dispatching to a remote server over SSH).
-
-- Adds `client_controlled_handoff: bool` to `ConversationStartParams` and `ThreadRealtimeStartParams`.
-- Adds RPCs `thread/realtime/resolveHandoff` (sends `function_call_output` for the active handoff but does NOT trigger `response.create`) and `thread/realtime/finalizeHandoff` (separately fires `response.create` so the client can stream multiple resolves before the model speaks).
-- Adds the corresponding `Op::RealtimeConversationResolveHandoff` and `Op::RealtimeConversationFinalizeHandoff`.
-- Sends resolution and finalization through upstream's existing `RealtimeOutbound` queue; no additional channel or task is needed.
-
-Touches `protocol/src/protocol.rs`, `app-server-protocol/src/protocol/{common.rs,v2/realtime.rs}`, `app-server/src/{message_processor.rs,request_processors.rs,request_processors/turn_processor.rs}`, `core/src/{realtime_conversation.rs,session/handlers.rs}`.
-
-Consumed by `shared/rust-bridge/codex-mobile-client/src/session/voice_handoff.rs::HandoffManager` and the iOS/Android `VoiceRuntimeController`s, which use `HandoffAction::ResolveHandoff` and `HandoffAction::FinalizeHandoff` to drive the resolution flow.
+After updating the gitlink, refresh active patches against pristine upstream,
+run the sync script twice, regenerate both bindings, and run remote transport,
+Slingshot and mobile-store tests. Generated Rust stays local-only.

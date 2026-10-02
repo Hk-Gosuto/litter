@@ -35,10 +35,12 @@ Current automated checks:
 | SSH changed identity (guided connect) | Both platforms route a changed host key from guided connect (probe, bootstrap, and SSH bridge paths) to the confirm modal instead of raw marker text; Replace syncs saved servers first so re-pinning works for servers saved this session. A changed key on a never-saved discovery target shows the confirm modal but Replace cannot reconnect it until the server is saved (tracked follow-up). Device acceptance pending. |
 | Local transport drop | Reconnect and one-time reinitialize before the next non-initialize RPC |
 | Remote transport drop | Reconnect behavior via Rust `AppStore` updates and resumed RPC notifications |
+| Slow remote RPC | Shared Rust regression verifies that a 300 ms catalog response does not block unrelated requests or notifications; concurrent transport failures reconnect once, and shutdown drops pending replies. Applies to both platforms. Physical-device tap-to-render validation remains separate. |
 | Saved Alleycat relay identity | Shared Rust canonicalizes DNS relay URLs, including older saved pairings. Android 17 ARM64 16K emulator: relay-only cold restarts produced duplicate-endpoint eviction on 2/2 baseline runs; candidate Rust produced 0/3 evictions and connected in 5.5s, 2.4s, and 2.2s. Controlled native-library replacement retained the signed baseline shell and pairing; final signed-artifact and physical-device acceptance remain separate gates. |
 | Thread start/resume fallback sandbox | `workspace-write` with `danger-full-access` fallback when Linux sandboxing is unavailable |
 | Thread turn pagination (v0.125+ remote) | Conversation opens with the last 5 turns; "Load earlier messages" fetches older 5-turn pages via `thread/turns/list` |
 | Thread turn pagination fallback (v0.124 remote) | Capability flips off via response inspection; embedded turns load fully; "Load earlier" is hidden |
+| Multi-turn history and rendering | Follow-ups retain existing expansion; authoritative turn boundaries and late provenance are covered by unit tests. Expanded message/tool-group entries use individual lazy rows, with a 500-message fixture. Shared Rust covers stale reads, partial hydration and late completion. See [review and validation contract](../../../docs/MULTI_TURN_REVIEW.md); production-device latency remains a separate acceptance check. |
 
 ## Terminal UX Matrix
 
@@ -353,6 +355,39 @@ Implemented on both iOS and Android through shared Rust. Device acceptance is pe
 | Harness settings | Searchable lazy list, typed edits, native source/scope, enforced read-only constraints, authoritative save read-back |
 | SSH settings | Claude/Pi/OMP values read and written on the remote host with credential fields preserved and redacted |
 | Streaming | Unchanged server/runtime projections do not invalidate the settings list |
+
+## Model picker layout
+
+Both platforms render the composer model picker from the same Rust fields (`ModelInfo.entryKind`, `pickerName`, `providerLabel`). iOS verified on simulator against a paired kittylitter host; Android is compile-checked in CI only.
+
+| Check | Required result on both platforms |
+|---|---|
+| Root | Current selection, up to 4 recents, one row per harness with counts, then Options (reasoning, fast, plan, full access) |
+| Harness page | Modes and plugin modes listed separately from models; multi-provider catalogs over 30 models start folded with the selected provider open |
+| Search | Matches every whitespace token across harness, provider, and model names; results capped at 150 with a total count |
+| Modes | Amp `low`/`medium`/`high`/`ultra` are `Mode`, other Amp entries `PluginMode`; never shown as models |
 | Host execution | Discovery and settings launch headless processes without terminal windows or Dock helpers |
 
 Validation for the 2.1.2 candidate: shared Rust library tests passed (823 passed, 3 existing manual/live tests ignored). The final `a5aaa9f6` Android library built successfully; all 58 unit tests and six settings/navigation instrumentation tests passed on Android 17. These cover unset strings/booleans/enums, managed policy, and MainActivity Settings → Harnesses navigation. Logo/splash animation state stays in draw/layer scopes using the standard Compose infinite-animation clock. The focused iOS harness settings UI test also passed against the ABI-compatible simulator library, including authoritative fixture readback and read-only controls. Final iOS artifact/input validation and store release remain pending.
+
+## Remote-only Codex branch
+
+Both mobile platforms disable embedded Codex startup, automatic local reconnect,
+local terminal options and rootfs bootstrap. Remote WebSocket, SSH, Alleycat,
+Slingshot, approvals and canonical store updates stay in shared Rust. Voice
+selects a connected remote host; optional handoff extensions require host support.
+Validate remote attach, turn streaming, approvals and reconnect on a device.
+
+Validation on 2026-10-02: shared Rust tests passed (857 passed, 7 existing
+manual/live tests ignored), iOS XCTest passed (281 unit tests plus the harness
+settings navigation/editing/read-only UI test), and Android JVM
+unit tests passed (82 tests). A loopback WebSocket integration test verifies
+initialize, typed RPC, notifications and server-request replies. iOS device
+and simulator static libraries compiled; the Release archive includes Watch
+and Live Activity and launches on the simulator. Android JNI/device and real
+remote-host end-to-end checks remain for device QA.
+
+Remote voice pins are scoped by server ID on both platforms. iOS handoffs use
+the voice session's host; CarPlay resumes connected remote threads. Account
+screens show the selected remote host, and empty terminal screens prompt for
+a computer connection rather than an embedded runtime bootstrap.

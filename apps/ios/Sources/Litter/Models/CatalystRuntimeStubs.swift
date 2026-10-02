@@ -60,6 +60,7 @@ final class AppRuntimeController {
         await appModel.reconnectController.notifyNetworkChange()
         let results = await appModel.reconnectController.reconnectSavedServers()
         await appModel.refreshSnapshot()
+        SavedServerReconnectState.shared.finish()
         for result in results where result.needsLocalAuthRestore {
             await appModel.restoreStoredLocalAuthState(serverId: result.serverId)
         }
@@ -162,6 +163,7 @@ final class VoiceRuntimeController {
     var handoffFastMode = false
 
     func bind(appModel: AppModel) {}
+    func pinnedVoiceThreadKey() async -> ThreadKey? { nil }
     @discardableResult
     func startPinnedLocalVoiceCall(
         cwd: String,

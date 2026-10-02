@@ -2,14 +2,16 @@ package com.litter.android.state
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.codex_mobile_client.AppAskForApproval
 import uniffi.codex_mobile_client.AbsolutePath
 import uniffi.codex_mobile_client.AppUserInput
 
 class AppComposerPayloadTest {
     @Test
-    fun legacyOnFailureApprovalMigratesToOnRequest() {
-        assertEquals("on-request", normalizeApprovalPolicyWireValue(" on-failure "))
-        assertEquals("on-request", normalizeApprovalPolicyWireValue("on-request"))
+    fun turnStartPreservesTypedOnFailureApproval() {
+        val request = AppComposerPayload(text = "Continue", approvalPolicy = AppAskForApproval.OnFailure)
+            .toAppStartTurnRequest(threadId = "thread-approval")
+        assertEquals(AppAskForApproval.OnFailure, request.approvalPolicy)
     }
 
     @Test

@@ -1,6 +1,5 @@
 package com.litter.android.ui.conversation
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -61,6 +60,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -85,11 +86,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.sp
-import com.sigkitten.litter.android.R
 import com.litter.android.state.AppModel
 import com.litter.android.state.ComposerImageAttachment
 import com.litter.android.state.ComposerFileAttachment
@@ -110,7 +109,10 @@ import uniffi.codex_mobile_client.ServiceTier
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.LitterTextStyle
+import com.litter.android.ui.LitterRadius
+import com.litter.android.ui.LitterType
 import com.litter.android.ui.LitterTheme
+import com.litter.android.ui.LitterComposer
 import com.litter.android.ui.common.hasFixedFullAccess
 import com.litter.android.ui.common.matchesModelSelection
 import com.litter.android.ui.common.modelPickerDisplayName
@@ -128,22 +130,22 @@ import uniffi.codex_mobile_client.AppThreadGoalSetRequest
 import uniffi.codex_mobile_client.AppThreadGoalStatus
 
 /** Slash command definitions matching iOS. */
-internal data class SlashCommand(val name: String, val descriptionRes: Int)
+internal data class SlashCommand(val name: String, val description: String)
 internal data class SlashInvocation(val command: SlashCommand, val args: String?)
 data class ActiveTaskSummary(val progress: String, val label: String)
 
 private val SLASH_COMMANDS = listOf(
-    SlashCommand("plan", R.string.slash_plan_description),
-    SlashCommand("model", R.string.slash_model_description),
-    SlashCommand("new", R.string.slash_new_description),
-    SlashCommand("fork", R.string.slash_fork_description),
-    SlashCommand("rename", R.string.slash_rename_description),
-    SlashCommand("review", R.string.slash_review_description),
-    SlashCommand("goal", R.string.slash_goal_description),
-    SlashCommand("resume", R.string.slash_resume_description),
-    SlashCommand("skills", R.string.slash_skills_description),
-    SlashCommand("permissions", R.string.slash_permissions_description),
-    SlashCommand("experimental", R.string.slash_experimental_description),
+    SlashCommand("plan", "Switch collaboration mode"),
+    SlashCommand("model", "Change model or reasoning effort"),
+    SlashCommand("new", "Start a new session"),
+    SlashCommand("fork", "Fork this conversation"),
+    SlashCommand("rename", "Rename this session"),
+    SlashCommand("review", "Start a code review"),
+    SlashCommand("goal", "Set or manage the thread goal"),
+    SlashCommand("resume", "Browse sessions"),
+    SlashCommand("skills", "List available skills"),
+    SlashCommand("permissions", "Change permissions"),
+    SlashCommand("experimental", "Toggle experimental features"),
 )
 
 private val SUPPORTED_IMAGE_FILE_MIME_TYPES = arrayOf(
@@ -208,7 +210,15 @@ fun ComposerBar(
         val saved = appModel.composerDraft(threadKey).text
         mutableStateOf(TextFieldValue(saved, selection = TextRange(saved.length)))
     }
-    val text = textFieldValue.text
+    // Deliberately no `val text = textFieldValue.text` here: a body-level read
+    // made this whole (inline-lambda) composable recompose on every keystroke.
+    // Body code reads only the derived flags below; callbacks read
+    // `textFieldValue.text` at call time.
+    val isTextEmpty by remember { derivedStateOf { textFieldValue.text.isEmpty() } }
+    val hasNonBlankText by remember { derivedStateOf { textFieldValue.text.isNotBlank() } }
+    val isMultilineOrLong by remember {
+        derivedStateOf { textFieldValue.text.let { it.length > 60 || it.contains('\n') } }
+    }
     var attachedImage by remember(threadKey) {
         mutableStateOf(appModel.composerDraft(threadKey).attachment)
     }
@@ -219,15 +229,29 @@ fun ComposerBar(
     // variants lose typed text when the composable leaves composition before
     // the trailing write fires (quick navigation, backgrounding) — so this
     // stays an immediate, unconditional write.
-    LaunchedEffect(threadKey, text, attachedImage, attachedFiles) {
-        appModel.setComposerDraft(
-            threadKey,
+    // Observed via snapshotFlow (no body read, no per-keystroke effect
+    // relaunch). The onDispose write guarantees the last state lands even
+    // if composition ends before the flow collects it.
+    LaunchedEffect(threadKey) {
+        snapshotFlow {
             AppModel.ComposerDraft(
-                text = text,
+                text = textFieldValue.text,
                 attachment = attachedImage,
                 fileAttachments = attachedFiles,
-            ),
-        )
+            )
+        }.collect { draft -> appModel.setComposerDraft(threadKey, draft) }
+    }
+    DisposableEffect(threadKey) {
+        onDispose {
+            appModel.setComposerDraft(
+                threadKey,
+                AppModel.ComposerDraft(
+                    text = textFieldValue.text,
+                    attachment = attachedImage,
+                    fileAttachments = attachedFiles,
+                ),
+            )
+        }
     }
     var showAttachMenu by remember { mutableStateOf(false) }
     var showExpanded by remember { mutableStateOf(false) }
@@ -264,6 +288,7 @@ fun ComposerBar(
     // Slash command state
     val slashQuery by remember {
         derivedStateOf {
+            val text = textFieldValue.text
             if (text.startsWith("/")) text.removePrefix("/").lowercase() else null
         }
     }
@@ -282,9 +307,10 @@ fun ComposerBar(
     var fileSearchResults by remember { mutableStateOf<List<String>>(emptyList()) }
     var showFileMenu by remember { mutableStateOf(false) }
     var fileSearchJob by remember { mutableStateOf<Job?>(null) }
-    LaunchedEffect(text) {
+    LaunchedEffect(threadKey) {
+      snapshotFlow { textFieldValue.text }.collect { text ->
         val atIdx = text.lastIndexOf('@')
-        if (atIdx >= 0 && atIdx < text.length - 1 && !text.substring(atIdx).contains(' ')) {
+        if (atIdx >= 0 && atIdx < text.length - 1 && text.indexOf(' ', atIdx) < 0) {
             val query = text.substring(atIdx + 1)
             fileSearchJob?.cancel()
             fileSearchJob = scope.launch {
@@ -302,8 +328,10 @@ fun ComposerBar(
                 }
             }
         } else {
+            fileSearchJob?.cancel()
             showFileMenu = false
         }
+      }
     }
 
     // Pending user input answers
@@ -319,10 +347,7 @@ fun ComposerBar(
                     threadKey.serverId,
                     AppThreadGoalGetRequest(threadId = threadKey.threadId),
                 )
-                onSlashError?.invoke(
-                    current?.let { goalSummary(context, it) }
-                        ?: context.getString(R.string.conversation_goal_none),
-                )
+                onSlashError?.invoke(current?.let(::goalSummary) ?: "No goal is set for this thread.")
             }
             "pause" -> {
                 appModel.client.setThreadGoal(
@@ -393,9 +418,7 @@ fun ComposerBar(
                 try {
                     handleGoalCommand(args)
                 } catch (e: Exception) {
-                    onSlashError?.invoke(
-                        e.message ?: context.getString(R.string.conversation_goal_update_failed),
-                    )
+                    onSlashError?.invoke(e.message ?: "Failed to update goal")
                 }
             }
             "fork" -> scope.launch {
@@ -413,9 +436,7 @@ fun ComposerBar(
                     appModel.store.setActiveThread(newKey)
                     appModel.refreshThreadSnapshot(newKey)
                 } catch (e: Exception) {
-                    onSlashError?.invoke(
-                        e.message ?: context.getString(R.string.conversation_fork_failed),
-                    )
+                    onSlashError?.invoke(e.message ?: "Failed to fork conversation")
                 }
             }
             "review" -> scope.launch {
@@ -429,9 +450,7 @@ fun ComposerBar(
                         ),
                     )
                 } catch (e: Exception) {
-                    onSlashError?.invoke(
-                        e.message ?: context.getString(R.string.conversation_review_failed),
-                    )
+                    onSlashError?.invoke(e.message ?: "Failed to start review")
                 }
             }
             else -> return false
@@ -446,6 +465,7 @@ fun ComposerBar(
         if (pendingUserInput != null) {
             onDismissPendingUserInput?.invoke()
         }
+        val text = textFieldValue.text
         val handledAsSlash = parseSlashCommandInvocation(text)?.let { invocation ->
             if (dispatchSlashCommand(invocation.command.name, invocation.args)) {
                 textFieldValue = TextFieldValue("")
@@ -509,9 +529,15 @@ fun ComposerBar(
             }
         }
     }
-    val canSend = text.isNotBlank() || attachedImage != null || attachedFiles.isNotEmpty()
-    val composerThread = appSnapshot?.threads?.firstOrNull { it.key == threadKey }
-    val composerServer = appSnapshot?.servers?.firstOrNull { it.serverId == threadKey.serverId }
+    val canSend = hasNonBlankText || attachedImage != null || attachedFiles.isNotEmpty()
+    // derivedStateOf: recompose only when this thread/server entry changes,
+    // not on every streaming snapshot emission, and never rescan per keystroke.
+    val composerThread by remember(threadKey) {
+        derivedStateOf { appSnapshot?.threads?.firstOrNull { it.key == threadKey } }
+    }
+    val composerServer by remember(threadKey) {
+        derivedStateOf { appSnapshot?.servers?.firstOrNull { it.serverId == threadKey.serverId } }
+    }
     val launchSelection by appModel.launchState.snapshot.collectAsState()
     val composerModelSelection = launchSelection.selectedModel.trim().ifBlank {
         (composerThread?.model ?: composerThread?.info?.model ?: "").trim()
@@ -527,9 +553,7 @@ fun ComposerBar(
 
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .background(LitterTheme.surface)
-            .imePadding(),
+            .fillMaxWidth(),
     ) {
         if (attachedImage != null) {
             val previewBitmap = remember(attachedImage?.data) {
@@ -544,7 +568,7 @@ fun ComposerBar(
                     previewBitmap?.let { bitmap ->
                         androidx.compose.foundation.Image(
                             bitmap = bitmap.asImageBitmap(),
-                            contentDescription = stringResource(R.string.a11y_attached_image),
+                            contentDescription = "Attached image",
                             modifier = Modifier
                                 .size(60.dp)
                                 .clip(RoundedCornerShape(8.dp)),
@@ -559,7 +583,7 @@ fun ComposerBar(
                     ) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = stringResource(R.string.a11y_remove_attachment),
+                            contentDescription = "Remove attachment",
                             tint = Color.White,
                             modifier = Modifier.size(14.dp),
                         )
@@ -610,11 +634,7 @@ fun ComposerBar(
                                         tokenBudget = null,
                                     ),
                                 )
-                            }.onFailure {
-                                onSlashError?.invoke(
-                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
-                                )
-                            }
+                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
                         }
                     },
                     markComplete = {
@@ -629,11 +649,7 @@ fun ComposerBar(
                                         tokenBudget = null,
                                     ),
                                 )
-                            }.onFailure {
-                                onSlashError?.invoke(
-                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
-                                )
-                            }
+                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
                         }
                     },
                     setObjective = { objective ->
@@ -648,11 +664,7 @@ fun ComposerBar(
                                         tokenBudget = null,
                                     ),
                                 )
-                            }.onFailure {
-                                onSlashError?.invoke(
-                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
-                                )
-                            }
+                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
                         }
                     },
                     setBudget = { budget ->
@@ -670,11 +682,7 @@ fun ComposerBar(
                                         tokenBudget = budget,
                                     ),
                                 )
-                            }.onFailure {
-                                onSlashError?.invoke(
-                                    it.message ?: context.getString(R.string.conversation_goal_update_failed),
-                                )
-                            }
+                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to update goal") }
                         }
                     },
                     clear = {
@@ -684,11 +692,7 @@ fun ComposerBar(
                                     threadKey.serverId,
                                     AppThreadGoalClearRequest(threadId = threadKey.threadId),
                                 )
-                            }.onFailure {
-                                onSlashError?.invoke(
-                                    it.message ?: context.getString(R.string.conversation_goal_clear_failed),
-                                )
-                            }
+                            }.onFailure { onSlashError?.invoke(it.message ?: "Failed to clear goal") }
                         }
                     },
                 )
@@ -714,7 +718,7 @@ fun ComposerBar(
                 Text(
                     text = "\u2610",
                     color = LitterTheme.accent,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Column(
@@ -726,15 +730,15 @@ fun ComposerBar(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = stringResource(R.string.conversation_active_tasks),
+                            text = "Active tasks",
                             color = LitterTheme.textPrimary,
-                            fontSize = LitterTextStyle.caption.scaled,
+                            fontSize = LitterTextStyle.footnote.scaled,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
                             text = summary.progress,
                             color = LitterTheme.accent,
-                            fontSize = LitterTextStyle.caption.scaled,
+                            fontSize = LitterTextStyle.footnote.scaled,
                             fontWeight = FontWeight.SemiBold,
                             fontFamily = BerkeleyMono,
                         )
@@ -742,7 +746,7 @@ fun ComposerBar(
                     Text(
                         text = summary.label,
                         color = LitterTheme.textSecondary,
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -766,9 +770,9 @@ fun ComposerBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(R.string.conversation_input_required),
+                        text = "Input Required",
                         color = LitterTheme.textPrimary,
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                         fontWeight = FontWeight.SemiBold,
                     )
                     if (onDismissPendingUserInput != null) {
@@ -779,11 +783,7 @@ fun ComposerBar(
                             modifier = Modifier
                                 .clickable { onDismissPendingUserInput() }
                                 .padding(4.dp)
-                                .semantics {
-                                    contentDescription = context.getString(
-                                        R.string.conversation_dismiss_input_request,
-                                    )
-                                },
+                                .semantics { contentDescription = "Dismiss input request" },
                         )
                     }
                 }
@@ -803,7 +803,7 @@ fun ComposerBar(
                                 Text(
                                     text = option.label,
                                     color = if (selected) Color.Black else LitterTheme.textPrimary,
-                                    fontSize = LitterTextStyle.caption.scaled,
+                                    fontSize = LitterTextStyle.footnote.scaled,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                     modifier = Modifier
                                         .background(
@@ -836,11 +836,11 @@ fun ComposerBar(
                     Text(
                         text = message,
                         color = Color(0xFFFF6B6B),
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                     )
                 }
                 Text(
-                    text = stringResource(R.string.common_submit),
+                    text = "Submit",
                     color = if (isSubmittingPendingUserInput) LitterTheme.textMuted else Color.Black,
                     fontSize = LitterTextStyle.code.scaled,
                     fontWeight = FontWeight.Bold,
@@ -902,51 +902,33 @@ fun ComposerBar(
             )
         }
 
-        // ChatGPT-style composer: writing surface first, then one compact row
-        // for attachments, model/mode selection, voice, and send/stop.
+        // Litter composer: one raised rounded card. Writing surface first,
+        // then a row of raised controls: attach, model pill, mic, send/stop.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp)
-                .background(LitterTheme.codeBackground, RoundedCornerShape(26.dp))
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+                .composerCardSurface()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
         ) {
-            // Text field
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 44.dp, max = 120.dp)
-                    .padding(start = 8.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
+                    .heightIn(min = 44.dp, max = 160.dp)
+                    .padding(start = 8.dp, end = 2.dp, top = 6.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(modifier = Modifier.weight(1f)) {
-                    if (text.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.composer_message_placeholder),
-                            color = LitterTheme.textMuted,
-                            fontSize = LitterTextStyle.body.scaled,
-                        )
+                    if (isTextEmpty) {
+                        ComposerPlaceholder()
                     }
-                    BasicTextField(
-                        value = textFieldValue,
+                    ComposerInlineTextField(
+                        valueProvider = { textFieldValue },
                         onValueChange = { textFieldValue = it },
-                        textStyle = TextStyle(
-                            color = LitterTheme.textPrimary,
-                            fontSize = LitterTextStyle.body.scaled,
-                            fontFamily = LitterTheme.bodyFont,
-                        ),
-                        cursorBrush = SolidColor(LitterTheme.accent),
-                        // Always reserve trailing space for the expand icon so
-                        // wrapped lines don't slide under it when the icon
-                        // appears (and it doesn't cause a layout jump when it
-                        // toggles on/off at the 60-char threshold).
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 24.dp)
-                            .focusRequester(inlineFocusRequester),
+                        focusRequester = inlineFocusRequester,
                     )
 
-                    val shouldShowExpand = (text.contains('\n') || text.length > 60) &&
+                    val shouldShowExpand = isMultilineOrLong &&
                         !isRecording && !isTranscribing
                     if (shouldShowExpand) {
                         IconButton(
@@ -957,7 +939,7 @@ fun ComposerBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.OpenInFull,
-                                contentDescription = stringResource(R.string.a11y_expand_composer),
+                                contentDescription = "Expand composer",
                                 tint = LitterTheme.textSecondary,
                                 modifier = Modifier.size(12.dp),
                             )
@@ -975,7 +957,7 @@ fun ComposerBar(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("/${cmd.name}", color = LitterTheme.accent, fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.Medium)
                                         Spacer(Modifier.width(8.dp))
-                                        Text(stringResource(cmd.descriptionRes), color = LitterTheme.textMuted, fontSize = LitterTextStyle.caption2.scaled)
+                                        Text(cmd.description, color = LitterTheme.textMuted, fontSize = LitterTextStyle.footnote.scaled)
                                     }
                                 },
                                 onClick = {
@@ -997,9 +979,10 @@ fun ComposerBar(
                     ) {
                         for (path in fileSearchResults) {
                             DropdownMenuItem(
-                                text = { Text(path, color = LitterTheme.textPrimary, fontSize = LitterTextStyle.caption.scaled, fontFamily = LitterTheme.monoFont) },
+                                text = { Text(path, color = LitterTheme.textPrimary, fontSize = LitterTextStyle.footnote.scaled, fontFamily = LitterTheme.monoFont) },
                                 onClick = {
                                     showFileMenu = false
+                                    val text = textFieldValue.text
                                     val atIdx = text.lastIndexOf('@')
                                     if (atIdx >= 0) {
                                         val updated = text.substring(0, atIdx) + "@$path "
@@ -1015,52 +998,27 @@ fun ComposerBar(
                 }
 
             }
-
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (!isRecording && !isTranscribing && !isThinking) {
-                    IconButton(
+                    ComposerCircleButton(
+                        icon = Icons.Default.Add,
+                        contentDescription = "Attach",
                         onClick = { showAttachMenu = true },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(LitterTheme.surface.copy(alpha = 0.78f), CircleShape),
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = stringResource(R.string.composer_attach),
-                            tint = LitterTheme.textPrimary,
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
+                    )
+                    Spacer(Modifier.width(10.dp))
                 }
 
-                Text(
-                    text = buildString {
-                        append(composerModelLabel)
-                        if (composerReasoningLabel.isNotBlank() && composerReasoningLabel != "default") {
-                            append("  ")
-                            append(composerReasoningLabel)
-                        }
-                        append("  ⌄")
-                    },
-                    color = LitterTheme.textPrimary,
-                    fontSize = LitterTextStyle.caption.scaled,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .widthIn(max = 176.dp)
-                        .clickable { onToggleModelSelector?.invoke() }
-                        .background(LitterTheme.surface.copy(alpha = 0.78f), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ComposerModelPill(
+                    label = composerModelLabel,
+                    onClick = onToggleModelSelector,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
 
                 if (showCollaborationModeChip) {
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
                     CollaborationModeChip(
                         mode = collaborationMode,
                         onClick = { onOpenCollaborationModePicker?.invoke() },
@@ -1068,8 +1026,12 @@ fun ComposerBar(
                 }
 
                 Spacer(Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
                 when {
-                    isRecording -> IconButton(
+                    isRecording -> ComposerCircleButton(
+                        icon = Icons.Default.Stop,
+                        contentDescription = "Stop recording",
+                        tint = LitterTheme.accentStrong,
                         onClick = {
                             scope.launch {
                                 val auth = runCatching {
@@ -1087,58 +1049,16 @@ fun ComposerBar(
                                 }
                             }
                         },
-                        modifier = Modifier.size(40.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Stop,
-                            contentDescription = stringResource(R.string.a11y_stop_recording),
-                            tint = LitterTheme.accentStrong,
-                        )
-                    }
-
-                    isTranscribing -> LinearProgressIndicator(
-                        modifier = Modifier.width(32.dp),
-                        color = LitterTheme.accent,
-                        trackColor = Color.Transparent,
                     )
 
-                    canSend -> IconButton(
-                        onClick = sendCurrent,
-                        enabled = !isTranscribing,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(LitterTheme.accent),
+                    isTranscribing -> Box(
+                        modifier = Modifier.size(LitterComposer.control),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = stringResource(R.string.common_send),
-                            tint = Color.Black,
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-
-                    isThinking -> IconButton(
-                        onClick = {
-                            val turnId = activeTurnId ?: return@IconButton
-                            scope.launch {
-                                runCatching {
-                                    appModel.client.interruptTurn(
-                                        threadKey.serverId,
-                                        AppInterruptTurnRequest(threadId = threadKey.threadId, turnId = turnId),
-                                    )
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(LitterTheme.textPrimary, CircleShape),
-                    ) {
-                        Icon(
-                            Icons.Default.Stop,
-                            contentDescription = stringResource(R.string.common_cancel),
-                            tint = LitterTheme.surface,
-                            modifier = Modifier.size(15.dp),
+                        LinearProgressIndicator(
+                            modifier = Modifier.width(28.dp),
+                            color = LitterTheme.accent,
+                            trackColor = Color.Transparent,
                         )
                     }
 
@@ -1150,11 +1070,12 @@ fun ComposerBar(
                         }
                         val voiceController = remember { com.litter.android.state.VoiceRuntimeController.shared }
                         val voiceSession by voiceController.activeVoiceSession.collectAsState()
-                        val voiceSnapshot by appModel.snapshot.collectAsState()
-                        val voicePhase = voiceSnapshot?.voiceSession?.phase
+                        val voicePhase by remember {
+                            derivedStateOf { appSnapshot?.voiceSession?.phase }
+                        }
                         val voiceInputLevel = voiceSession?.inputLevel ?: 0f
 
-                        if (realtimeAvailable && text.isEmpty() && attachedImage == null && attachedFiles.isEmpty()) {
+                        if (realtimeAvailable && isTextEmpty && attachedImage == null && attachedFiles.isEmpty()) {
                             com.litter.android.ui.voice.InlineVoiceButton(
                                 phase = voicePhase,
                                 inputLevel = voiceInputLevel,
@@ -1165,10 +1086,12 @@ fun ComposerBar(
                                 onStop = {
                                     scope.launch { voiceController.stopActiveVoiceSession(appModel) }
                                 },
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.size(LitterComposer.control),
                             )
                         } else {
-                            IconButton(
+                            ComposerCircleButton(
+                                icon = Icons.Default.Mic,
+                                contentDescription = "Voice",
                                 onClick = {
                                     if (transcriptionManager.hasMicPermission(context)) {
                                         transcriptionManager.startRecording(context)
@@ -1176,23 +1099,37 @@ fun ComposerBar(
                                         micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                     }
                                 },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.Mic,
-                                    contentDescription = stringResource(R.string.conversation_voice),
-                                    tint = LitterTheme.textSecondary,
-                                )
-                            }
+                            )
                         }
                     }
+                }
+                Spacer(Modifier.width(10.dp))
+                if (!canSend && isThinking) {
+                    ComposerStopButton(
+                        onClick = {
+                            val turnId = activeTurnId ?: return@ComposerStopButton
+                            scope.launch {
+                                runCatching {
+                                    appModel.client.interruptTurn(
+                                        threadKey.serverId,
+                                        AppInterruptTurnRequest(threadId = threadKey.threadId, turnId = turnId),
+                                    )
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    ComposerSendButton(
+                        enabled = canSend && !isRecording && !isTranscribing,
+                        onClick = sendCurrent,
+                    )
                 }
             }
         }
 
         if (showExpanded) {
             ComposerExpandedDialog(
-                text = text,
+                text = textFieldValue.text,
                 onTextChange = {
                     textFieldValue = TextFieldValue(
                         text = it,
@@ -1261,7 +1198,7 @@ fun ComposerBar(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = stringResource(R.string.composer_attach),
+                    text = "Attach",
                     color = LitterTheme.textPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1269,7 +1206,7 @@ fun ComposerBar(
 
                 if (clipboardHasImage) {
                     AttachmentActionRow(
-                        title = stringResource(R.string.conversation_paste_image),
+                        title = "Paste Image",
                         onClick = {
                             showAttachMenu = false
                             val clip = clipboardManager.primaryClip
@@ -1282,7 +1219,7 @@ fun ComposerBar(
                 }
 
                 AttachmentActionRow(
-                    title = stringResource(R.string.composer_photo_library),
+                    title = "Photo Library",
                     onClick = {
                         showAttachMenu = false
                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -1290,7 +1227,7 @@ fun ComposerBar(
                 )
 
                 AttachmentActionRow(
-                    title = stringResource(R.string.composer_choose_file),
+                    title = "Choose File",
                     onClick = {
                         showAttachMenu = false
                         filePicker.launch(ALL_FILE_MIME_TYPES)
@@ -1298,7 +1235,7 @@ fun ComposerBar(
                 )
 
                 AttachmentActionRow(
-                    title = stringResource(R.string.conversation_take_photo),
+                    title = "Take Photo",
                     onClick = {
                         showAttachMenu = false
                         cameraLauncher.launch(null)
@@ -1315,6 +1252,31 @@ private data class QueuedFollowUpUiStyle(
     val background: Color,
     val border: Color,
 )
+
+/**
+ * The only composable that reads the live [TextFieldValue] in composition, so
+ * each keystroke recomposes this field rather than the whole [ComposerBar].
+ */
+@Composable
+private fun ComposerInlineTextField(
+    valueProvider: () -> TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    focusRequester: FocusRequester,
+) {
+    BasicTextField(
+        value = valueProvider(),
+        onValueChange = onValueChange,
+        textStyle = LitterType.body,
+        cursorBrush = SolidColor(LitterTheme.accent),
+        // Always reserve trailing space for the expand icon so wrapped lines
+        // don't slide under it when the icon appears (and it doesn't cause a
+        // layout jump when it toggles on/off at the 60-char threshold).
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = 24.dp)
+            .focusRequester(focusRequester),
+    )
+}
 
 @Composable
 private fun QueuedFollowUpsPreviewPanel(
@@ -1339,16 +1301,16 @@ private fun QueuedFollowUpsPreviewPanel(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = stringResource(R.string.conversation_queued_next),
+                text = "Queued Next",
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.weight(1f))
             Text(
                 text = previews.size.toString(),
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.caption2.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .background(LitterTheme.surface.copy(alpha = 0.9f), RoundedCornerShape(999.dp))
@@ -1402,7 +1364,7 @@ private fun QueuedFollowUpCard(
                 Text(
                     text = style.title,
                     color = style.tint,
-                    fontSize = LitterTextStyle.caption2.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -1410,7 +1372,7 @@ private fun QueuedFollowUpCard(
             Text(
                 text = preview.text,
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1418,9 +1380,9 @@ private fun QueuedFollowUpCard(
 
         if (preview.kind == AppQueuedFollowUpKind.MESSAGE) {
             Text(
-                text = stringResource(R.string.composer_steer),
+                text = "\u21b3 Steer",
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .background(LitterTheme.surface.copy(alpha = 0.96f), RoundedCornerShape(999.dp))
@@ -1435,7 +1397,7 @@ private fun QueuedFollowUpCard(
         ) {
             Icon(
                 Icons.Default.Close,
-                contentDescription = stringResource(R.string.conversation_delete_queued_followup),
+                contentDescription = "Delete queued follow-up",
                 tint = LitterTheme.textSecondary,
                 modifier = Modifier.size(14.dp),
             )
@@ -1443,12 +1405,11 @@ private fun QueuedFollowUpCard(
     }
 }
 
-@Composable
 private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUiStyle =
     when (kind) {
         AppQueuedFollowUpKind.MESSAGE ->
             QueuedFollowUpUiStyle(
-                title = stringResource(R.string.conversation_queued_message),
+                title = "Queued message",
                 tint = LitterTheme.accent,
                 background = LitterTheme.accent.copy(alpha = 0.08f),
                 border = LitterTheme.accent.copy(alpha = 0.24f),
@@ -1456,7 +1417,7 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
 
         AppQueuedFollowUpKind.PENDING_STEER ->
             QueuedFollowUpUiStyle(
-                title = stringResource(R.string.conversation_steer_queued),
+                title = "Steer queued",
                 tint = LitterTheme.accentStrong,
                 background = LitterTheme.accentStrong.copy(alpha = 0.10f),
                 border = LitterTheme.accentStrong.copy(alpha = 0.28f),
@@ -1464,7 +1425,7 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
 
         AppQueuedFollowUpKind.RETRYING_STEER ->
             QueuedFollowUpUiStyle(
-                title = stringResource(R.string.conversation_retrying_steer),
+                title = "Retrying steer",
                 tint = LitterTheme.warning,
                 background = LitterTheme.warning.copy(alpha = 0.10f),
                 border = LitterTheme.warning.copy(alpha = 0.28f),
@@ -1507,12 +1468,12 @@ internal fun CollaborationModeChip(
         Text(
             text = label,
             color = contentColor,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.SemiBold,
         )
         Icon(
             Icons.Default.KeyboardArrowDown,
-            contentDescription = stringResource(R.string.conversation_open_collaboration_picker),
+            contentDescription = "Open collaboration mode picker",
             tint = contentColor,
             modifier = Modifier.size(14.dp),
         )
@@ -1527,9 +1488,7 @@ private fun PlanProgressPanel(
     val completed = remember(progress.plan) {
         progress.plan.count { it.status == uniffi.codex_mobile_client.AppPlanStepStatus.COMPLETED }
     }
-    val noPlanTaskLabel = stringResource(R.string.conversation_plan_no_task)
-    val planCompleteLabel = stringResource(R.string.conversation_plan_complete)
-    val currentStepLabel = remember(progress.plan, noPlanTaskLabel, planCompleteLabel) {
+    val currentStepLabel = remember(progress.plan) {
         val currentStep = progress.plan.firstOrNull {
             it.status == uniffi.codex_mobile_client.AppPlanStepStatus.IN_PROGRESS
         } ?: progress.plan.firstOrNull {
@@ -1539,11 +1498,7 @@ private fun PlanProgressPanel(
         }
 
         currentStep?.step?.trim()?.takeIf { it.isNotEmpty() }
-            ?: if (progress.plan.isEmpty()) {
-                noPlanTaskLabel
-            } else {
-                planCompleteLabel
-            }
+            ?: if (progress.plan.isEmpty()) "No plan task" else "Plan complete"
     }
     Column(
         modifier = Modifier
@@ -1562,19 +1517,15 @@ private fun PlanProgressPanel(
                 .clickable { expanded = !expanded },
         ) {
             Text(
-                text = if (expanded) {
-                    stringResource(R.string.conversation_plan_progress)
-                } else {
-                    stringResource(R.string.conversation_plan)
-                },
+                text = if (expanded) "Plan Progress" else "Plan",
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 text = "$completed/${progress.plan.size}",
                 color = LitterTheme.accent,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = BerkeleyMono,
             )
@@ -1582,7 +1533,7 @@ private fun PlanProgressPanel(
                 Text(
                     text = currentStepLabel,
                     color = LitterTheme.textPrimary,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -1592,11 +1543,7 @@ private fun PlanProgressPanel(
             }
             Icon(
                 imageVector = if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = if (expanded) {
-                    stringResource(R.string.conversation_plan_collapse)
-                } else {
-                    stringResource(R.string.conversation_plan_expand)
-                },
+                contentDescription = if (expanded) "Collapse plan progress" else "Expand plan progress",
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(16.dp),
             )
@@ -1606,7 +1553,7 @@ private fun PlanProgressPanel(
                 Text(
                     text = explanation,
                     color = LitterTheme.textSecondary,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                 )
             }
             progress.plan.forEachIndexed { index, step ->
@@ -1627,20 +1574,20 @@ private fun PlanProgressPanel(
                     Text(
                         text = icon,
                         color = tint,
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = "${index + 1}.",
                         color = LitterTheme.textMuted,
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                         fontWeight = FontWeight.SemiBold,
                         fontFamily = BerkeleyMono,
                     )
                     Text(
                         text = step.step,
                         color = LitterTheme.textPrimary,
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                     )
                 }
             }
@@ -1680,9 +1627,9 @@ private fun ComposerFileAttachmentRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = stringResource(R.string.composer_file_label),
+            text = "FILE",
             color = LitterTheme.accent,
-            fontSize = LitterTextStyle.caption2.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.SemiBold,
             fontFamily = BerkeleyMono,
         )
@@ -1690,7 +1637,7 @@ private fun ComposerFileAttachmentRow(
             Text(
                 text = attachment.label,
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1698,7 +1645,7 @@ private fun ComposerFileAttachmentRow(
             Text(
                 text = attachment.path,
                 color = LitterTheme.textMuted,
-                fontSize = LitterTextStyle.caption2.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1709,7 +1656,7 @@ private fun ComposerFileAttachmentRow(
         ) {
             Icon(
                 Icons.Default.Close,
-                contentDescription = stringResource(R.string.a11y_remove_file),
+                contentDescription = "Remove file",
                 tint = LitterTheme.textMuted,
                 modifier = Modifier.size(14.dp),
             )
@@ -1819,35 +1766,29 @@ internal fun parseSlashCommandInvocation(text: String): SlashInvocation? {
     return SlashInvocation(command = command, args = args)
 }
 
-private fun goalSummary(context: Context, goal: AppThreadGoal): String {
-    val status = goalStatusLabel(context, goal.status)
-    return goal.tokenBudget?.let { budget ->
-        context.getString(
-            R.string.conversation_goal_summary_budget,
-            goal.objective,
-            status,
-            goal.tokensUsed,
-            budget,
-        )
-    } ?: context.getString(
-        R.string.conversation_goal_summary,
-        goal.objective,
-        status,
-        goal.tokensUsed,
-    )
+private fun goalSummary(goal: AppThreadGoal): String {
+    return buildString {
+        append("Goal: ")
+        append(goal.objective)
+        append("\nStatus: ")
+        append(goalStatusLabel(goal.status))
+        append("\nTokens used: ")
+        append(goal.tokensUsed)
+        goal.tokenBudget?.let {
+            append("\nToken budget: ")
+            append(it)
+        }
+    }
 }
 
-private fun goalStatusLabel(context: Context, status: AppThreadGoalStatus): String =
+private fun goalStatusLabel(status: AppThreadGoalStatus): String =
     when (status) {
-        AppThreadGoalStatus.ACTIVE -> context.getString(R.string.conversation_goal_status_active)
-        AppThreadGoalStatus.PAUSED -> context.getString(R.string.conversation_goal_status_paused)
-        AppThreadGoalStatus.BLOCKED -> context.getString(R.string.conversation_goal_status_blocked)
-        AppThreadGoalStatus.USAGE_LIMITED ->
-            context.getString(R.string.conversation_goal_status_usage_limited)
-        AppThreadGoalStatus.BUDGET_LIMITED ->
-            context.getString(R.string.conversation_goal_status_budget_limited)
-        AppThreadGoalStatus.COMPLETE ->
-            context.getString(R.string.conversation_goal_status_complete)
+        AppThreadGoalStatus.ACTIVE -> "active"
+        AppThreadGoalStatus.PAUSED -> "paused"
+        AppThreadGoalStatus.BLOCKED -> "blocked"
+        AppThreadGoalStatus.USAGE_LIMITED -> "limited by usage"
+        AppThreadGoalStatus.BUDGET_LIMITED -> "limited by budget"
+        AppThreadGoalStatus.COMPLETE -> "complete"
     }
 
 data class GoalCardActions(
@@ -1879,12 +1820,12 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
         AppThreadGoalStatus.COMPLETE -> LitterTheme.success
     }
     val statusLabel = when (goal.status) {
-        AppThreadGoalStatus.ACTIVE -> stringResource(R.string.conversation_goal_status_active)
-        AppThreadGoalStatus.PAUSED -> stringResource(R.string.conversation_goal_status_paused)
-        AppThreadGoalStatus.BLOCKED -> stringResource(R.string.conversation_goal_status_blocked)
-        AppThreadGoalStatus.USAGE_LIMITED -> stringResource(R.string.conversation_goal_status_usage_limit)
-        AppThreadGoalStatus.BUDGET_LIMITED -> stringResource(R.string.conversation_goal_status_limited)
-        AppThreadGoalStatus.COMPLETE -> stringResource(R.string.conversation_goal_status_complete)
+        AppThreadGoalStatus.ACTIVE -> "active"
+        AppThreadGoalStatus.PAUSED -> "paused"
+        AppThreadGoalStatus.BLOCKED -> "blocked"
+        AppThreadGoalStatus.USAGE_LIMITED -> "usage limit"
+        AppThreadGoalStatus.BUDGET_LIMITED -> "limited"
+        AppThreadGoalStatus.COMPLETE -> "complete"
     }
     val budgetProgress: Float? = goal.tokenBudget?.takeIf { it > 0 }?.let { budget ->
         (goal.tokensUsed.toFloat() / budget.toFloat()).coerceIn(0f, 1f)
@@ -1906,11 +1847,11 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
     }
     val canTogglePause = goal.status != AppThreadGoalStatus.COMPLETE
     val pauseResumeLabel: String? = when (goal.status) {
-        AppThreadGoalStatus.ACTIVE -> stringResource(R.string.conversation_goal_pause)
-        AppThreadGoalStatus.PAUSED -> stringResource(R.string.conversation_goal_resume)
-        AppThreadGoalStatus.BLOCKED -> stringResource(R.string.conversation_goal_resume_blocked)
-        AppThreadGoalStatus.USAGE_LIMITED -> stringResource(R.string.conversation_goal_resume_usage)
-        AppThreadGoalStatus.BUDGET_LIMITED -> stringResource(R.string.conversation_goal_resume_budget)
+        AppThreadGoalStatus.ACTIVE -> "Pause goal"
+        AppThreadGoalStatus.PAUSED -> "Resume goal"
+        AppThreadGoalStatus.BLOCKED -> "Resume goal (override block)"
+        AppThreadGoalStatus.USAGE_LIMITED -> "Resume goal (override usage cap)"
+        AppThreadGoalStatus.BUDGET_LIMITED -> "Resume goal (override cap)"
         AppThreadGoalStatus.COMPLETE -> null
     }
 
@@ -1919,19 +1860,6 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
     var showBudgetDialog by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
 
-    // Pulsing status dot — only animates while the goal is active. Mirrors
-    // the iOS pill's 0.35 ↔ 1.0 ease-in-out at 1.1s autoreverse.
-    val pulse = rememberInfiniteTransition(label = "goalPulse")
-    val pulseAlpha by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "goalPulseAlpha",
-    )
-    val statusDotAlpha = if (goal.status == AppThreadGoalStatus.ACTIVE) pulseAlpha else 1f
     val animatedProgress by animateFloatAsState(
         targetValue = budgetProgress ?: 0f,
         animationSpec = spring(
@@ -1945,9 +1873,8 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(LitterRadius.raisedShape)
             .background(LitterTheme.codeBackground.copy(alpha = 0.92f))
-            .border(1.dp, tint.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1959,32 +1886,22 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
             // BUDGET_LIMITED). Disabled once the goal is COMPLETE.
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(tint.copy(alpha = 0.14f))
-                    .border(0.5.dp, tint.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
                     .clickable(enabled = canTogglePause) { actions.togglePause() }
                     .padding(horizontal = 8.dp, vertical = 3.dp),
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .background(tint.copy(alpha = statusDotAlpha), CircleShape),
-                )
                 Text(
-                    text = statusLabel.uppercase(),
+                    text = statusLabel.lowercase(),
                     color = tint,
-                    fontSize = 10f.scaled,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = BerkeleyMono,
+                    style = LitterType.meta,
                 )
             }
 
             Text(
                 text = goal.objective,
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
@@ -1999,7 +1916,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreHoriz,
-                        contentDescription = stringResource(R.string.conversation_goal_actions),
+                        contentDescription = "Goal actions",
                         tint = LitterTheme.textSecondary,
                         modifier = Modifier.size(16.dp),
                     )
@@ -2018,14 +1935,14 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.conversation_goal_edit), color = LitterTheme.textPrimary) },
+                        text = { Text("Edit objective", color = LitterTheme.textPrimary) },
                         onClick = {
                             showMenu = false
                             showEditDialog = true
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.conversation_goal_budget), color = LitterTheme.textPrimary) },
+                        text = { Text("Set token budget", color = LitterTheme.textPrimary) },
                         onClick = {
                             showMenu = false
                             showBudgetDialog = true
@@ -2033,7 +1950,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                     )
                     if (goal.status != AppThreadGoalStatus.COMPLETE) {
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.conversation_goal_complete), color = LitterTheme.textPrimary) },
+                            text = { Text("Mark complete", color = LitterTheme.textPrimary) },
                             onClick = {
                                 showMenu = false
                                 actions.markComplete()
@@ -2041,7 +1958,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.conversation_goal_clear), color = LitterTheme.danger) },
+                        text = { Text("Clear goal", color = LitterTheme.danger) },
                         onClick = {
                             showMenu = false
                             showClearConfirm = true
@@ -2081,7 +1998,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                         Text(
                             text = budgetLabel,
                             color = LitterTheme.textSecondary,
-                            fontSize = 10f.scaled,
+                            fontSize = 13f.scaled,
                             fontWeight = FontWeight.SemiBold,
                             fontFamily = BerkeleyMono,
                         )
@@ -2089,7 +2006,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                     Text(
                         text = "$percent%",
                         color = progressTextTint,
-                        fontSize = 10f.scaled,
+                        fontSize = 13f.scaled,
                         fontWeight = FontWeight.Bold,
                         fontFamily = BerkeleyMono,
                     )
@@ -2111,7 +2028,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                     Text(
                         text = "T ${formatGoalTokens(goal.tokensUsed)}",
                         color = LitterTheme.textSecondary,
-                        fontSize = 10f.scaled,
+                        fontSize = 13f.scaled,
                         fontWeight = FontWeight.SemiBold,
                         fontFamily = BerkeleyMono,
                     )
@@ -2120,7 +2037,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                     Text(
                         text = "·",
                         color = LitterTheme.textMuted.copy(alpha = 0.6f),
-                        fontSize = 10f.scaled,
+                        fontSize = 13f.scaled,
                         fontFamily = BerkeleyMono,
                     )
                 }
@@ -2138,7 +2055,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                         Text(
                             text = formatGoalSeconds(goal.timeUsedSeconds),
                             color = LitterTheme.textSecondary,
-                            fontSize = 10f.scaled,
+                            fontSize = 13f.scaled,
                             fontWeight = FontWeight.SemiBold,
                             fontFamily = BerkeleyMono,
                         )
@@ -2151,11 +2068,11 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
 
     if (showEditDialog) {
         GoalTextInputDialog(
-            title = stringResource(R.string.conversation_goal_edit_title),
+            title = "Edit Objective",
             initial = goal.objective,
-            placeholder = stringResource(R.string.conversation_goal_objective_placeholder),
+            placeholder = "What do you want to accomplish?",
             singleLine = false,
-            confirmLabel = stringResource(R.string.common_save),
+            confirmLabel = "Save",
             onConfirm = { value ->
                 val trimmed = value.trim()
                 if (trimmed.isNotEmpty()) actions.setObjective(trimmed)
@@ -2167,13 +2084,13 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
 
     if (showBudgetDialog) {
         GoalTextInputDialog(
-            title = stringResource(R.string.conversation_goal_budget_title),
+            title = "Token Budget",
             initial = goal.tokenBudget?.toString().orEmpty(),
-            placeholder = stringResource(R.string.conversation_goal_budget_placeholder),
+            placeholder = "e.g. 50000",
             singleLine = true,
             keyboardNumeric = true,
-            confirmLabel = stringResource(R.string.common_save),
-            helper = stringResource(R.string.conversation_goal_budget_helper),
+            confirmLabel = "Save",
+            helper = "The agent will pause when the cap is reached.",
             onConfirm = { value ->
                 val parsed = value.trim().toLongOrNull()
                 if (parsed != null && parsed > 0) actions.setBudget(parsed)
@@ -2188,7 +2105,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
             onDismissRequest = { showClearConfirm = false },
             confirmButton = {
                 Text(
-                    text = stringResource(R.string.conversation_goal_clear),
+                    text = "Clear Goal",
                     color = LitterTheme.danger,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
@@ -2201,7 +2118,7 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
             },
             dismissButton = {
                 Text(
-                    text = stringResource(R.string.common_cancel),
+                    text = "Cancel",
                     color = LitterTheme.textPrimary,
                     modifier = Modifier
                         .clickable { showClearConfirm = false }
@@ -2209,11 +2126,11 @@ private fun GoalPanel(goal: AppThreadGoal, actions: GoalCardActions) {
                 )
             },
             title = {
-                Text(stringResource(R.string.conversation_goal_clear_question), color = LitterTheme.textPrimary, fontWeight = FontWeight.SemiBold)
+                Text("Clear this goal?", color = LitterTheme.textPrimary, fontWeight = FontWeight.SemiBold)
             },
             text = {
                 Text(
-                    stringResource(R.string.conversation_goal_clear_detail),
+                    "Removes the goal from this thread. The agent stops tracking objective progress.",
                     color = LitterTheme.textSecondary,
                 )
             },
@@ -2249,7 +2166,7 @@ private fun GoalTextInputDialog(
         },
         dismissButton = {
             Text(
-                text = stringResource(R.string.common_cancel),
+                text = "Cancel",
                 color = LitterTheme.textPrimary,
                 modifier = Modifier
                     .clickable(onClick = onDismiss)
@@ -2300,7 +2217,7 @@ private fun GoalTextInputDialog(
                     Text(
                         text = helper,
                         color = LitterTheme.textSecondary,
-                        fontSize = LitterTextStyle.caption.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                     )
                 }
             }
@@ -2354,7 +2271,7 @@ private fun RateLimitBadge(window: uniffi.codex_mobile_client.RateLimitWindow) {
         Text(
             text = label,
             color = LitterTheme.textSecondary,
-            fontSize = 10f.scaled,
+            fontSize = 13f.scaled,
             fontWeight = FontWeight.SemiBold,
             fontFamily = LitterTheme.monoFont,
         )
@@ -2393,7 +2310,7 @@ private fun ContextBadge(
         Text(
             text = "$normalizedPercent",
             color = tint,
-            fontSize = 9f.scaled,
+            fontSize = 13f.scaled,
             fontWeight = FontWeight.ExtraBold,
             fontFamily = LitterTheme.monoFont,
             modifier = Modifier.align(Alignment.Center),

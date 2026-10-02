@@ -9,7 +9,7 @@ import UIKit
 final class VoiceRuntimeController: VoiceActions {
     static let shared = VoiceRuntimeController()
     static let localServerID = "local"
-    static let persistedLocalVoiceThreadIDKey = "litter.voice.local.thread_id"
+    static let persistedRemoteVoiceThreadIDKey = "litter.voice.remote.thread_id"
 
     private(set) var activeVoiceSession: VoiceSessionState?
     /// Tracks the local mic mute state for the active realtime session.
@@ -23,7 +23,7 @@ final class VoiceRuntimeController: VoiceActions {
 
     @ObservationIgnored private weak var appModel: AppModel?
     @ObservationIgnored private var realtimeSession: RealtimeWebRtcSession?
-    @ObservationIgnored private lazy var handoffManager = RustHandoffManager(localServerId: Self.localServerID)
+    @ObservationIgnored private var handoffManager = RustHandoffManager(localServerId: VoiceRuntimeController.localServerID)
     @ObservationIgnored private var updateSubscription: AppStoreSubscription?
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var handoffActionPollTask: Task<Void, Never>?
@@ -81,17 +81,6 @@ final class VoiceRuntimeController: VoiceActions {
             return existing.threadKey
         }
         if activeVoiceSession != nil { endVoiceSessionImmediately() }
-        guard key.serverId == Self.localServerID else {
-            throw NSError(
-                domain: "Litter",
-                code: 3310,
-                userInfo: [
-                    NSLocalizedDescriptionKey: AppLanguage.localizedString(
-                        "Voice is only available on the local server"
-                    )
-                ]
-            )
-        }
         return try await prepareAndLaunchRealtimeVoiceSession(for: key)
     }
 
@@ -192,9 +181,9 @@ final class VoiceRuntimeController: VoiceActions {
         sandboxMode: AppSandboxMode?
     ) async throws -> ThreadKey {
         let appModel = requireAppModel()
-        let serverId = try await ensureLocalServerConnected()
+        let serverId = try await ensureRemoteServerConnected()
 
-        if let storedThreadId = persistedLocalVoiceThreadId() {
+        if let storedThreadId = persistedVoiceThreadId(serverId: serverId) {
             let key = ThreadKey(serverId: serverId, threadId: storedThreadId)
             if let resolvedKey = await appModel.ensureThreadLoaded(key: key),
                let thread = appModel.threadSnapshot(for: resolvedKey),
@@ -209,7 +198,7 @@ final class VoiceRuntimeController: VoiceActions {
                 await appModel.refreshSnapshot()
                 return resolvedKey
             } else {
-                setPersistedLocalVoiceThreadId(nil)
+                setPersistedVoiceThreadId(nil, serverId: serverId)
             }
         }
 
@@ -241,25 +230,22 @@ final class VoiceRuntimeController: VoiceActions {
         }
         SavedThreadsStore.add(.init(threadKey: key))
         appModel.store.setActiveThread(key: key)
-        setPersistedLocalVoiceThreadId(key.threadId)
+        setPersistedVoiceThreadId(key.threadId, serverId: serverId)
         await appModel.refreshSnapshot()
         return key
     }
 
-    private func ensureLocalServerConnected() async throws -> String {
-        if let server = appModel?.snapshot?.serverSnapshot(for: Self.localServerID), server.isConnected {
+    private func ensureRemoteServerConnected() async throws -> String {
+        let model = try requireAppModel()
+        if let key = model.snapshot?.activeThread,
+           let server = model.snapshot?.serverSnapshot(for: key.serverId),
+           server.isConnected && !server.isLocal {
+            return key.serverId
+        }
+        if let server = model.snapshot?.servers.first(where: { $0.isConnected && !$0.isLocal }) {
             return server.serverId
         }
-        let serverId = try await requireAppModel().serverBridge.connectLocalServer(
-            serverId: Self.localServerID,
-            displayName: requireAppModel().resolvedLocalServerDisplayName(),
-            host: "127.0.0.1",
-            port: 0
-        )
-        await requireAppModel().restoreStoredLocalAuthState(serverId: serverId)
-        await requireAppModel().refreshSnapshot()
-        syncHandoffServers()
-        return serverId
+        throw NSError(domain: "Litter", code: 3310, userInfo: [NSLocalizedDescriptionKey: "Connect a remote Codex computer to use voice."])
     }
 
     /// Synchronously prepares the in-memory voice session (resolves the
@@ -294,6 +280,7 @@ final class VoiceRuntimeController: VoiceActions {
         }
 
         let appModel = requireAppModel()
+        handoffManager = RustHandoffManager(localServerId: key.serverId)
         syncHandoffServers()
         await cleanupKnownRealtimeVoiceSessions(beforeStartingOn: key)
 
@@ -454,8 +441,10 @@ final class VoiceRuntimeController: VoiceActions {
         if let stopKey = voiceStopRequestedThreadKey, !stopKey.threadId.isEmpty {
             keys.insert(stopKey)
         }
-        if let persistedLocalThreadId = persistedLocalVoiceThreadId(), !persistedLocalThreadId.isEmpty {
-            keys.insert(ThreadKey(serverId: Self.localServerID, threadId: persistedLocalThreadId))
+        for server in appModel?.snapshot?.servers ?? [] where !server.isLocal {
+            if let threadId = persistedVoiceThreadId(serverId: server.serverId) {
+                keys.insert(ThreadKey(serverId: server.serverId, threadId: threadId))
+            }
         }
         return Array(keys)
     }
@@ -858,18 +847,24 @@ final class VoiceRuntimeController: VoiceActions {
         appModel?.snapshot?.serverSnapshot(for: serverId)?.isConnected == true
     }
 
-    private func persistedLocalVoiceThreadId() -> String? {
-        let stored = UserDefaults.standard.string(forKey: Self.persistedLocalVoiceThreadIDKey)?
+    func pinnedVoiceThreadKey() async -> ThreadKey? {
+        guard let serverId = try? await ensureRemoteServerConnected(),
+              let threadId = persistedVoiceThreadId(serverId: serverId) else { return nil }
+        return ThreadKey(serverId: serverId, threadId: threadId)
+    }
+
+    private func persistedVoiceThreadId(serverId: String) -> String? {
+        let stored = UserDefaults.standard.string(forKey: "\(Self.persistedRemoteVoiceThreadIDKey).\(serverId)")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return stored.isEmpty ? nil : stored
     }
 
-    private func setPersistedLocalVoiceThreadId(_ threadId: String?) {
+    private func setPersistedVoiceThreadId(_ threadId: String?, serverId: String) {
         let trimmed = threadId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.persistedLocalVoiceThreadIDKey)
+            UserDefaults.standard.removeObject(forKey: "\(Self.persistedRemoteVoiceThreadIDKey).\(serverId)")
         } else {
-            UserDefaults.standard.set(trimmed, forKey: Self.persistedLocalVoiceThreadIDKey)
+            UserDefaults.standard.set(trimmed, forKey: "\(Self.persistedRemoteVoiceThreadIDKey).\(serverId)")
         }
     }
 

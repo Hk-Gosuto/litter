@@ -24,11 +24,18 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -53,6 +60,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -62,12 +71,10 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sigkitten.litter.android.R
 import com.litter.android.state.contextPercent
 import com.litter.android.state.hasActiveTurn
 import com.litter.android.state.isActiveStatus
@@ -76,6 +83,10 @@ import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.ChatWallpaperBackground
 import com.litter.android.ui.ConversationPrefs
 import com.litter.android.ui.LocalAppModel
+import com.litter.android.ui.LitterQuiet
+import com.litter.android.ui.LitterRadius
+import com.litter.android.ui.LitterSpacing
+import com.litter.android.ui.LitterType
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.scaled
@@ -176,6 +187,18 @@ fun ConversationScreen(
         displayedTurns.isNotEmpty()
     var isLoadingOlderTurns by remember(threadKey) { mutableStateOf(false) }
     var expandedTurnIds by remember(threadKey, collapseTurns) { mutableStateOf(setOf<String>()) }
+    val turnCollapseState = remember(threadKey, collapseTurns) { TranscriptPresentationState() }
+    val chainPrefs = remember(context) { TurnChainPreference.get(context) }
+    var chainOverrides by remember(threadKey, collapseTurns) { mutableStateOf(mapOf<String, Boolean>()) }
+    val transcriptRows = remember(transcriptTurns, turnCollapseState, expandedTurnIds, chainOverrides) {
+        buildTranscriptRows(
+            transcriptTurns,
+            turnCollapseState,
+            expandedTurnIds,
+            chainOverrides,
+            chainPrefs.expandedByDefault,
+        )
+    }
     var streamingRenderTick by remember(threadKey) { mutableStateOf(0) }
     var followScrollToken by remember(threadKey) { mutableStateOf(0) }
     var hasPositionedInitialTail by remember(threadKey) { mutableStateOf(false) }
@@ -190,10 +213,6 @@ fun ConversationScreen(
     } == true
     val isWaitingForData = items.isEmpty() && threadHasServerData && !waitingForDataExpired
     var lastObservedUpdatedAt by remember(threadKey) { mutableStateOf<Long?>(null) }
-    LaunchedEffect(transcriptTurns.map { it.id to it.isCollapsedByDefault }) {
-        val validIds = transcriptTurns.mapTo(mutableSetOf()) { it.id }
-        expandedTurnIds = expandedTurnIds.intersect(validIds)
-    }
     LaunchedEffect(thread?.info?.updatedAt, isThinking) {
         val updatedAt = thread?.info?.updatedAt
         if (updatedAt != null && updatedAt != lastObservedUpdatedAt && isThinking) {
@@ -325,12 +344,20 @@ fun ConversationScreen(
         }
     }
 
+    // Only reparse diffs when context items change, not on each assistant token.
+    val contextItems = remember(items) {
+        items.filter {
+            it.content is HydratedConversationItemContent.TodoList ||
+                it.content is HydratedConversationItemContent.FileChange ||
+                it.content is HydratedConversationItemContent.TurnDiff
+        }
+    }
     // Pinned context: latest TODO progress + combined session diff summary
-    val pinnedContext = remember(items) {
+    val pinnedContext = remember(contextItems) {
         var todoProgress: String? = null
         val rawDiffSections = mutableListOf<SessionDiffSection>()
-        for (i in items.indices.reversed()) {
-            when (val c = items[i].content) {
+        for (i in contextItems.indices.reversed()) {
+            when (val c = contextItems[i].content) {
                 is HydratedConversationItemContent.TodoList -> {
                     if (todoProgress == null) {
                         val done = c.v1.steps.count {
@@ -387,10 +414,11 @@ fun ConversationScreen(
         }
     }
 
-    val displayedTurnCount = displayedTurns.size + (if (hasMoreTurnsAbove) 1 else 0)
-    LaunchedEffect(threadKey, displayedTurnCount, transcriptTailSignature, followScrollToken, streamingRenderTick) {
+    val bottomAnchorIndex = transcriptRows.size +
+        (if (hasMoreTurnsAbove) 1 else 0) +
+        (if (isWaitingForData || isInitialTurnsLoading) 1 else 0)
+    LaunchedEffect(threadKey, bottomAnchorIndex, transcriptTailSignature, followScrollToken, streamingRenderTick) {
         if (shouldFollowTail && displayedTurns.isNotEmpty()) {
-            val bottomAnchorIndex = conversationBottomAnchorIndex(displayedTurnCount)
             if (!hasPositionedInitialTail || isThinking) {
                 listState.scrollToItem(bottomAnchorIndex)
                 hasPositionedInitialTail = true
@@ -420,12 +448,79 @@ fun ConversationScreen(
                     // Use transparent gradient when wallpaper is set
                     val fadeColor = if (hasWallpaper) Color.Transparent else LitterTheme.background
 
+                    // Row callbacks are created once per thread so transcript rows
+                    // don't see new lambda instances on every snapshot update.
+                    val currentItems = rememberUpdatedState(items)
+                    val currentThread = rememberUpdatedState(thread)
+                    val onEditMessageStable: (String) -> Unit = remember(threadKey) {
+                        { messageId ->
+                            // Resolve the user-message position in the
+                            // currently-loaded transcript. The Rust
+                            // `editMessage` / `forkThreadFromMessage` APIs
+                            // expect an index into `thread.items` filtered
+                            // to user messages — recomputing here keeps
+                            // the index correct under pagination, where a
+                            // cached `sourceTurnIndex` from a prior hydrate
+                            // would be stale.
+                            loadedUserItemIndex(currentItems.value, messageId)?.let { turnIndex ->
+                                scope.launch {
+                                    val prefill = appModel.store.editMessage(threadKey, turnIndex)
+                                    appModel.queueComposerPrefill(threadKey, prefill)
+                                }
+                            }
+                        }
+                    }
+                    val onForkFromMessageStable: (String) -> Unit = remember(threadKey) {
+                        { messageId ->
+                            loadedUserItemIndex(currentItems.value, messageId)?.let { turnIndex ->
+                                scope.launch {
+                                    try {
+                                        val newKey = appModel.store.forkThreadFromMessage(
+                                            threadKey,
+                                            turnIndex,
+                                            appModel.launchState.forkThreadFromMessageRequest(
+                                                cwdOverride = currentThread.value?.info?.cwd,
+                                                threadKey = threadKey,
+                                            ),
+                                        )
+                                        appModel.store.setActiveThread(newKey)
+                                        appModel.refreshThreadSnapshot(newKey)
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        }
+                    }
+                    val onWidgetPromptStable: (String) -> Unit = remember(threadKey) {
+                        { text ->
+                            scope.launch {
+                                try {
+                                    val payload = com.litter.android.state.AppComposerPayload(
+                                        text = text,
+                                        additionalInputs = emptyList(),
+                                        approvalPolicy = appModel.launchState.approvalPolicyValue(threadKey),
+                                        sandboxPolicy = appModel.launchState.turnSandboxPolicy(threadKey),
+                                        model = appModel.launchState.snapshot.value.selectedModel.trim().ifEmpty { null },
+                                        reasoningEffort = null,
+                                        serviceTier = null,
+                                    )
+                                    appModel.startTurn(threadKey, payload)
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(top = 68.dp),
+                        verticalArrangement = Arrangement.spacedBy(LitterSpacing.xs),
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 16.dp)
+                            // Keep the transcript a fixed, centered reading
+                            // column on tablets and foldables.
+                            .wrapContentWidth(Alignment.CenterHorizontally)
+                            .widthIn(max = LitterSpacing.readableColumn + LitterSpacing.margin * 2)
+                            .fillMaxWidth()
+                            .padding(horizontal = LitterSpacing.margin)
                             .then(
                                 if (!hasWallpaper) {
                                     Modifier.drawWithContent {
@@ -457,9 +552,9 @@ fun ConversationScreen(
                                         )
                                     } else {
                                         Text(
-                                            stringResource(R.string.conversation_loading),
+                                            "Loading conversation…",
                                             color = LitterTheme.textMuted,
-                                            fontSize = LitterTextStyle.caption.scaled,
+                                            fontSize = LitterTextStyle.footnote.scaled,
                                         )
                                     }
                                 }
@@ -491,9 +586,9 @@ fun ConversationScreen(
                                         )
                                     } else {
                                         Text(
-                                            stringResource(R.string.conversation_load_earlier),
+                                            "Load earlier messages",
                                             color = LitterTheme.accent,
-                                            fontSize = LitterTextStyle.caption.scaled,
+                                            fontSize = LitterTextStyle.footnote.scaled,
                                             fontWeight = FontWeight.SemiBold,
                                         )
                                     }
@@ -501,120 +596,50 @@ fun ConversationScreen(
                             }
                         }
 
-                        items(
-                            items = displayedTurns,
-                            key = { turn -> turn.id },
-                        ) { turn ->
-                            val isExpanded = !turn.isCollapsedByDefault || expandedTurnIds.contains(turn.id)
-                            val streamingAssistantItemId = remember(turn.items, turn.isActiveTurn) {
-                                if (!turn.isActiveTurn) {
-                                    null
-                                } else {
-                                    turn.items.lastOrNull {
-                                        it.content is HydratedConversationItemContent.Assistant
-                                    }?.id
-                                }
-                            }
-                            if (isExpanded) {
-                                val timelineEntries = remember(turn.items, turn.isActiveTurn) {
-                                    buildTimelineEntries(turn.items, turn.isActiveTurn)
-                                }
-                                val latestCommandExecutionItemId = remember(timelineEntries) {
-                                    timelineEntries.asReversed().firstNotNullOfOrNull { entry ->
-                                        when (entry) {
-                                            is TimelineEntry.Single -> {
-                                                if (entry.item.content is HydratedConversationItemContent.CommandExecution) {
-                                                    entry.item.id
-                                                } else {
-                                                    null
-                                                }
-                                            }
-
-                                            is TimelineEntry.Exploration -> null
-                                        }
+                        transcriptRows(transcriptRows) { row ->
+                            when (row) {
+                                is TranscriptRow.Entry -> when (val entry = row.entry) {
+                                    is TimelineEntry.Single -> {
+                                        ConversationTimelineItem(
+                                            item = entry.item,
+                                            serverId = threadKey.serverId,
+                                            threadId = threadKey.threadId,
+                                            threadCwd = thread?.info?.cwd,
+                                            agentDirectoryVersion = agentDirectoryVersion,
+                                            latestCommandExecutionItemId = row.latestCommandExecutionItemId,
+                                            isLiveTurn = row.isActiveTurn,
+                                            isStreamingMessage = entry.item.id == row.streamingAssistantItemId,
+                                            onStreamingSnapshotRendered = if (entry.item.id == row.streamingAssistantItemId) {
+                                                { streamingRenderTick += 1 }
+                                            } else {
+                                                null
+                                            },
+                                            onEditMessage = onEditMessageStable,
+                                            onForkFromMessage = onForkFromMessageStable,
+                                            onOpenSavedApp = onOpenSavedApp,
+                                            onWidgetPrompt = onWidgetPromptStable,
+                                        )
                                     }
+                                    is TimelineEntry.Exploration -> ExplorationGroupRow(
+                                        group = entry.group,
+                                        showsCollapsedPreview = row.isLastEntry,
+                                    )
                                 }
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    timelineEntries.forEachIndexed { index, entry ->
-                                        when (entry) {
-                                            is TimelineEntry.Single -> {
-                                                ConversationTimelineItem(
-                                                    item = entry.item,
-                                                    serverId = threadKey.serverId,
-                                                    threadId = threadKey.threadId,
-                                                    threadCwd = thread?.info?.cwd,
-                                                    agentDirectoryVersion = agentDirectoryVersion,
-                                                    latestCommandExecutionItemId = latestCommandExecutionItemId,
-                                                    isLiveTurn = turn.isActiveTurn,
-                                                    isStreamingMessage = entry.item.id == streamingAssistantItemId,
-                                                    onStreamingSnapshotRendered = if (entry.item.id == streamingAssistantItemId) {
-                                                        { streamingRenderTick += 1 }
-                                                    } else {
-                                                        null
-                                                    },
-                                                    onEditMessage = { messageId ->
-                                                        // Resolve the user-message position in the
-                                                        // currently-loaded transcript. The Rust
-                                                        // `editMessage` / `forkThreadFromMessage` APIs
-                                                        // expect an index into `thread.items` filtered
-                                                        // to user messages — recomputing here keeps
-                                                        // the index correct under pagination, where a
-                                                        // cached `sourceTurnIndex` from a prior hydrate
-                                                        // would be stale.
-                                                        loadedUserItemIndex(items, messageId)?.let { turnIndex ->
-                                                            scope.launch {
-                                                                val prefill = appModel.store.editMessage(threadKey, turnIndex)
-                                                                appModel.queueComposerPrefill(threadKey, prefill)
-                                                            }
-                                                        }
-                                                    },
-                                                    onForkFromMessage = { messageId ->
-                                                        loadedUserItemIndex(items, messageId)?.let { turnIndex ->
-                                                            scope.launch {
-                                                                try {
-                                                                    val newKey = appModel.store.forkThreadFromMessage(
-                                                                        threadKey,
-                                                                        turnIndex,
-                                                                        appModel.launchState.forkThreadFromMessageRequest(
-                                                                            cwdOverride = thread.info.cwd,
-                                                                            threadKey = threadKey,
-                                                                        ),
-                                                                    )
-                                                                    appModel.store.setActiveThread(newKey)
-                                                                    appModel.refreshThreadSnapshot(newKey)
-                                                                } catch (_: Exception) {}
-                                                            }
-                                                        }
-                                                    },
-                                                    onOpenSavedApp = onOpenSavedApp,
-                                                    onWidgetPrompt = { text ->
-                                                        scope.launch {
-                                                            try {
-                                                                val payload = com.litter.android.state.AppComposerPayload(
-                                                                    text = text,
-                                                                    additionalInputs = emptyList(),
-                                                                    approvalPolicy = appModel.launchState.approvalPolicyValue(threadKey),
-                                                                    sandboxPolicy = appModel.launchState.turnSandboxPolicy(threadKey),
-                                                                    model = appModel.launchState.snapshot.value.selectedModel.trim().ifEmpty { null },
-                                                                    reasoningEffort = null,
-                                                                    serviceTier = null,
-                                                                )
-                                                                appModel.startTurn(threadKey, payload)
-                                                            } catch (_: Exception) {}
-                                                        }
-                                                    },
-                                                )
-                                            }
-
-                                            is TimelineEntry.Exploration -> {
-                                                ExplorationGroupRow(
-                                                    group = entry.group,
-                                                    showsCollapsedPreview = index == timelineEntries.lastIndex,
-                                                )
-                                            }
-                                        }
-                                    }
-
+                                is TranscriptRow.Chain -> TurnChainSummaryRow(
+                                    chain = row.chain,
+                                    expanded = row.expanded,
+                                    onToggle = {
+                                        val next = !row.expanded
+                                        chainOverrides = chainOverrides + (row.expansionId to next)
+                                        // Remember the choice for turns that finish later.
+                                        if (!row.turn.isActiveTurn) chainPrefs.expandedByDefault = next
+                                    },
+                                )
+                                is TranscriptRow.Collapsed -> CollapsedTurnCard(turn = row.turn) {
+                                    expandedTurnIds = expandedTurnIds + row.expansionId
+                                }
+                                is TranscriptRow.Footer -> Column {
+                                    val turn = row.turn
                                     // Debug turn metrics
                                     if (com.litter.android.state.DebugSettings.enabled && com.litter.android.state.DebugSettings.showTurnMetrics) {
                                         val metricsText = remember(turn.items) {
@@ -634,37 +659,31 @@ fun ConversationScreen(
                                         }
                                         Text(
                                             text = metricsText,
-                                            color = LitterTheme.textMuted.copy(alpha = 0.6f),
-                                            fontSize = 10f.scaled,
-                                            fontFamily = com.litter.android.ui.BerkeleyMono,
+                                            style = LitterType.meta,
                                             modifier = Modifier.padding(top = 2.dp, start = 4.dp),
                                         )
                                     }
-
-                                    if (turn.isActiveTurn) {
-                                        StreamingCursor()
-                                    }
-
-                                    if (turn.isCollapsedByDefault) {
+                                    if (turn.isActiveTurn) StreamingCursor()
+                                    if (row.canCollapse) {
                                         Text(
-                                            text = stringResource(R.string.conversation_show_less),
-                                            color = LitterTheme.textMuted,
-                                            fontSize = LitterTextStyle.caption2.scaled,
-                                            fontWeight = FontWeight.Medium,
+                                            text = "show less",
+                                            style = LitterType.meta,
                                             modifier = Modifier
-                                                .clickable {
-                                                    expandedTurnIds = expandedTurnIds - turn.id
-                                                }
-                                                .padding(top = 2.dp),
+                                                .clickable { expandedTurnIds = expandedTurnIds - row.expansionId }
+                                                .padding(vertical = LitterSpacing.xxs),
+                                        )
+                                    }
+                                    if (!turn.isActiveTurn) {
+                                        // Faint 1dp rule between whole turns; with the list's
+                                        // 8dp item spacing this lands at ~32dp between turns.
+                                        HorizontalDivider(
+                                            thickness = 1.dp,
+                                            color = LitterQuiet.turnDivider,
+                                            modifier = Modifier.padding(top = LitterSpacing.sm, bottom = LitterSpacing.sm - 1.dp),
                                         )
                                     }
                                 }
-                            } else {
-                                CollapsedTurnCard(turn = turn) {
-                                    expandedTurnIds = expandedTurnIds + turn.id
-                                }
                             }
-                            Spacer(Modifier.height(4.dp))
                         }
 
                         item { Spacer(Modifier.height(80.dp)) }
@@ -676,7 +695,7 @@ fun ConversationScreen(
                     SmallFloatingActionButton(
                         onClick = {
                             scope.launch {
-                                listState.animateScrollToItem(conversationBottomAnchorIndex(displayedTurnCount))
+                                listState.animateScrollToItem(bottomAnchorIndex)
                             }
                         },
                         modifier = Modifier
@@ -685,11 +704,7 @@ fun ConversationScreen(
                         containerColor = LitterTheme.surface,
                         contentColor = LitterTheme.textPrimary,
                     ) {
-                        Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            stringResource(R.string.conversation_scroll_bottom),
-                            modifier = Modifier.size(20.dp),
-                        )
+                        Icon(Icons.Default.KeyboardArrowDown, "Scroll to bottom", modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -739,7 +754,12 @@ fun ConversationScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(composerScrimColor),
+                        .background(composerScrimColor)
+                        // Scrim spans the screen; the composer lines up with
+                        // the transcript column on wide screens.
+                        .wrapContentWidth(Alignment.CenterHorizontally)
+                        .widthIn(max = LitterSpacing.readableColumn + LitterSpacing.margin * 2)
+                        .fillMaxWidth(),
                 ) {
                     // Pinned context strip
                     if (pinnedContext != null) {
@@ -811,8 +831,7 @@ fun ConversationScreen(
                                         )
                                         appModel.refreshThreadSnapshot(threadKey)
                                     } catch (e: Exception) {
-                                        slashErrorMessage = e.message
-                                            ?: context.getString(R.string.conversation_rename_failed)
+                                        slashErrorMessage = e.message ?: "Failed to rename conversation"
                                     }
                                 }
                             } else {
@@ -855,7 +874,13 @@ fun ConversationScreen(
                         onDismissPendingUserInput = onDismissPendingUserInput,
                     )
 
-                    Spacer(Modifier.navigationBarsPadding())
+                    // One bottom inset: the keyboard when it is up, otherwise the
+                    // navigation bar (the composer used to add both).
+                    Spacer(
+                        Modifier.windowInsetsBottomHeight(
+                            WindowInsets.ime.union(WindowInsets.navigationBars),
+                        ),
+                    )
                 }
             }
         }
@@ -869,7 +894,7 @@ fun ConversationScreen(
                 onBack = onBack,
                 onInfo = onInfo,
                 onReloadError = { reloadErrorMessage = it },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
             )
         }
 
@@ -966,8 +991,7 @@ fun ConversationScreen(
                             try {
                                 appModel.store.setThreadCollaborationMode(threadKey, mode)
                             } catch (e: Exception) {
-                                slashErrorMessage = e.message
-                                    ?: context.getString(R.string.conversation_switch_collaboration_failed)
+                                slashErrorMessage = e.message ?: "Failed to switch collaboration mode"
                             }
                         }
                     },
@@ -1020,12 +1044,12 @@ fun ConversationScreen(
         if (showRenameDialog) {
             AlertDialog(
                 onDismissRequest = { showRenameDialog = false },
-                title = { Text(stringResource(R.string.conversation_rename_thread)) },
+                title = { Text("Rename Thread") },
                 text = {
                     OutlinedTextField(
                         value = renameDraft,
                         onValueChange = { renameDraft = it },
-                        label = { Text(stringResource(R.string.conversation_new_thread_title)) },
+                        label = { Text("New thread title") },
                         singleLine = true,
                     )
                 },
@@ -1049,18 +1073,17 @@ fun ConversationScreen(
                                     )
                                     appModel.refreshThreadSnapshot(threadKey)
                                 } catch (e: Exception) {
-                                    slashErrorMessage = e.message
-                                        ?: context.getString(R.string.conversation_rename_failed)
+                                    slashErrorMessage = e.message ?: "Failed to rename conversation"
                                 }
                             }
                         },
                     ) {
-                        Text(stringResource(R.string.common_rename))
+                        Text("Rename")
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showRenameDialog = false }) {
-                        Text(stringResource(R.string.common_cancel))
+                        Text("Cancel")
                     }
                 },
             )
@@ -1069,8 +1092,8 @@ fun ConversationScreen(
         thread?.pendingPlanImplementationPrompt?.let {
             AlertDialog(
                 onDismissRequest = { appModel.store.dismissPlanImplementationPrompt(threadKey) },
-                title = { Text(stringResource(R.string.conversation_implement_plan_title)) },
-                text = { Text(stringResource(R.string.conversation_implement_plan_message)) },
+                title = { Text("Implement this plan?") },
+                text = { Text("Switch back to Default mode and send \"Implement the plan.\"") },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -1078,20 +1101,19 @@ fun ConversationScreen(
                                 try {
                                     appModel.store.implementPlan(threadKey)
                                 } catch (e: Exception) {
-                                    slashErrorMessage = e.message
-                                        ?: context.getString(R.string.conversation_implement_failed)
+                                    slashErrorMessage = e.message ?: "Failed to implement plan"
                                 }
                             }
                         },
                     ) {
-                        Text(stringResource(R.string.conversation_implement_plan_confirm))
+                        Text("Yes, implement")
                     }
                 },
                 dismissButton = {
                     TextButton(
                         onClick = { appModel.store.dismissPlanImplementationPrompt(threadKey) },
                     ) {
-                        Text(stringResource(R.string.conversation_implement_plan_cancel))
+                        Text("No, stay in Plan")
                     }
                 },
             )
@@ -1100,11 +1122,11 @@ fun ConversationScreen(
         slashErrorMessage?.let { message ->
             AlertDialog(
                 onDismissRequest = { slashErrorMessage = null },
-                title = { Text(stringResource(R.string.conversation_slash_command_error)) },
+                title = { Text("Slash Command Error") },
                 text = { Text(message) },
                 confirmButton = {
                     TextButton(onClick = { slashErrorMessage = null }) {
-                        Text(stringResource(R.string.common_ok))
+                        Text("OK")
                     }
                 },
             )
@@ -1113,11 +1135,11 @@ fun ConversationScreen(
         reloadErrorMessage?.let { message ->
             AlertDialog(
                 onDismissRequest = { reloadErrorMessage = null },
-                title = { Text(stringResource(R.string.conversation_reload_failed)) },
+                title = { Text("Reload Failed") },
                 text = { Text(message) },
                 confirmButton = {
                     TextButton(onClick = { reloadErrorMessage = null }) {
-                        Text(stringResource(R.string.common_ok))
+                        Text("OK")
                     }
                 },
             )
@@ -1168,13 +1190,13 @@ private fun CollaborationModeSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(R.string.conversation_collaboration_mode),
+                text = "Collaboration Mode",
                 color = LitterTheme.textPrimary,
                 fontSize = 18f.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.settings_done))
+                Text("Done")
             }
         }
 
@@ -1203,15 +1225,15 @@ private fun CollaborationModeSheet(
                         Text(
                             text = collaborationModeEffortLabel(effort),
                             color = LitterTheme.textSecondary,
-                            fontSize = LitterTextStyle.caption2.scaled,
+                            fontSize = LitterTextStyle.footnote.scaled,
                         )
                     }
                 }
                 if (preset.kind == selectedMode) {
                     Text(
-                        text = stringResource(R.string.common_selected),
+                        text = "Selected",
                         color = LitterTheme.accent,
-                        fontSize = LitterTextStyle.caption2.scaled,
+                        fontSize = LitterTextStyle.footnote.scaled,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
@@ -1220,20 +1242,19 @@ private fun CollaborationModeSheet(
     }
 }
 
-@Composable
 private fun collaborationModeEffortLabel(
     effort: uniffi.codex_mobile_client.ReasoningEffort,
 ): String =
     when (effort) {
-        uniffi.codex_mobile_client.ReasoningEffort.None -> stringResource(R.string.effort_none)
-        uniffi.codex_mobile_client.ReasoningEffort.Minimal -> stringResource(R.string.effort_minimal)
-        uniffi.codex_mobile_client.ReasoningEffort.Low -> stringResource(R.string.effort_low)
-        uniffi.codex_mobile_client.ReasoningEffort.Medium -> stringResource(R.string.effort_medium)
-        uniffi.codex_mobile_client.ReasoningEffort.High -> stringResource(R.string.effort_high)
-        uniffi.codex_mobile_client.ReasoningEffort.XHigh -> stringResource(R.string.effort_xhigh)
-        uniffi.codex_mobile_client.ReasoningEffort.Max -> stringResource(R.string.effort_max)
-        uniffi.codex_mobile_client.ReasoningEffort.Ultra -> stringResource(R.string.effort_ultra)
-        uniffi.codex_mobile_client.ReasoningEffort.Persistent -> stringResource(R.string.effort_persistent)
+        uniffi.codex_mobile_client.ReasoningEffort.None -> "None"
+        uniffi.codex_mobile_client.ReasoningEffort.Minimal -> "Minimal"
+        uniffi.codex_mobile_client.ReasoningEffort.Low -> "Low"
+        uniffi.codex_mobile_client.ReasoningEffort.Medium -> "Medium"
+        uniffi.codex_mobile_client.ReasoningEffort.High -> "High"
+        uniffi.codex_mobile_client.ReasoningEffort.XHigh -> "XHigh"
+        uniffi.codex_mobile_client.ReasoningEffort.Max -> "Max"
+        uniffi.codex_mobile_client.ReasoningEffort.Ultra -> "Ultra"
+        uniffi.codex_mobile_client.ReasoningEffort.Persistent -> "Persistent"
         is uniffi.codex_mobile_client.ReasoningEffort.Custom -> effort.value
     }
 
@@ -1290,14 +1311,13 @@ private fun uniffi.codex_mobile_client.AppThreadSnapshot.composerContextPercent(
         .coerceIn(0, 100)
 }
 
-private fun conversationBottomAnchorIndex(turnCount: Int): Int = turnCount + 1
 
 @Composable
 private fun PlanContextBadge(progress: String) {
     Text(
-        text = stringResource(R.string.conversation_plan_value, progress),
+        text = "Plan $progress",
         color = LitterTheme.accent,
-        fontSize = LitterTextStyle.caption2.scaled,
+        fontSize = LitterTextStyle.footnote.scaled,
         fontWeight = FontWeight.Medium,
         modifier = Modifier
             .background(LitterTheme.surface.copy(alpha = 0.72f), RoundedCornerShape(999.dp))
@@ -1321,29 +1341,29 @@ private fun DiffSummaryBadge(
         Text(
             text = "\u2194",
             color = LitterTheme.accent,
-            fontSize = LitterTextStyle.caption2.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.SemiBold,
         )
         if (summary.hasChanges) {
             Text(
                 text = "+${summary.additions}",
                 color = LitterTheme.success,
-                fontSize = LitterTextStyle.caption2.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = BerkeleyMono,
             )
             Text(
                 text = "-${summary.deletions}",
                 color = LitterTheme.danger,
-                fontSize = LitterTextStyle.caption2.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = BerkeleyMono,
             )
         } else {
             Text(
-                text = stringResource(R.string.conversation_diff),
+                text = "Diff",
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.caption2.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -1467,14 +1487,14 @@ private fun SessionDiffSheet(
                 Text(
                     text = "+${totalSummary.additions}",
                     color = LitterTheme.success,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = BerkeleyMono,
                 )
                 Text(
                     text = "-${totalSummary.deletions}",
                     color = LitterTheme.danger,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = BerkeleyMono,
                 )
@@ -1541,7 +1561,7 @@ private fun SessionDiffSheet(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.settings_done), color = LitterTheme.accent)
+                    Text("Done", color = LitterTheme.accent)
                 }
             }
         }
@@ -1566,28 +1586,28 @@ private fun SessionDiffSectionHeader(
         Text(
             text = section.title.uppercase(),
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption2.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = "+${section.summary.additions}",
             color = LitterTheme.success,
-            fontSize = LitterTextStyle.caption2.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.SemiBold,
             fontFamily = BerkeleyMono,
         )
         Text(
             text = "-${section.summary.deletions}",
             color = LitterTheme.danger,
-            fontSize = LitterTextStyle.caption2.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.SemiBold,
             fontFamily = BerkeleyMono,
         )
         Text(
             text = if (expanded) "▲" else "▼",
             color = LitterTheme.textMuted,
-            fontSize = LitterTextStyle.caption2.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.Bold,
         )
     }
@@ -1632,34 +1652,15 @@ private fun lastUserAndAssistantText(
 }
 
 /**
- * Shimmering "Thinking..." text shown while the assistant is working.
+ * Quiet "thinking…" line shown while the assistant is working. Static by
+ * design: the stop button and streaming text already signal live work.
  */
 @Composable
 private fun StreamingCursor() {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val shimmerOffset by transition.animateFloat(
-        initialValue = -1f,
-        targetValue = 2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "shimmerOffset",
-    )
-    val shimmerBrush = Brush.linearGradient(
-        colors = listOf(
-            LitterTheme.textSecondary.copy(alpha = 0.4f),
-            LitterTheme.accent,
-            LitterTheme.textSecondary.copy(alpha = 0.4f),
-        ),
-        start = Offset(shimmerOffset * 200f, 0f),
-        end = Offset((shimmerOffset + 0.6f) * 200f, 0f),
-    )
     Text(
-        text = stringResource(R.string.conversation_thinking),
-        fontSize = LitterTextStyle.body.scaled,
-        fontWeight = FontWeight.Medium,
-        style = TextStyle(brush = shimmerBrush),
+        text = "thinking…",
+        style = LitterType.meta,
+        modifier = Modifier.padding(vertical = LitterSpacing.xxs),
     )
 }
 
@@ -1676,7 +1677,7 @@ private fun MinigameLaunchButton(onClick: () -> Unit) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = Icons.Filled.SportsEsports,
-                contentDescription = stringResource(R.string.conversation_play_minigame),
+                contentDescription = "Play a minigame while waiting",
                 tint = LitterTheme.accent,
                 modifier = Modifier.size(18.dp),
             )

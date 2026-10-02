@@ -3,8 +3,8 @@
 //! Manages connection health, retry logic, auth flow, sandbox fallback,
 //! and initialize handshake for a single Codex server.
 //!
-//! Uses upstream `RemoteAppServerClient` for remote connections and
-//! upstream `InProcessClientHandle` for local (in-process) connections.
+//! Uses the remote-only `RemoteAppServerClient` transport. Legacy local
+//! connection bindings return an error without starting a runtime.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,14 +12,14 @@ use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use codex_app_server_client::{
-    AppServerClient, AppServerEvent, RemoteAppServerClient,
-    RemoteAppServerConnectArgs,
-    RemoteAppServerEndpoint,
+    AppServerClient, AppServerEvent, AppServerRequestHandle, RemoteAppServerClient,
+    RemoteAppServerConnectArgs, RemoteAppServerEndpoint,
 };
 use codex_app_server_protocol::{
     ClientNotification, ClientRequest, JSONRPCErrorError, RequestId, Result as JsonRpcResult,
     ServerNotification, ServerRequest,
 };
+use futures::{StreamExt, stream::FuturesUnordered};
 use serde_json::Value as JsonValue;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::{debug, info, warn};
@@ -34,7 +34,6 @@ use crate::types::AgentRuntimeKind;
 
 const REMOTE_RECONNECT_MAX_ATTEMPTS: u32 = 5;
 const REMOTE_RECONNECT_DELAY: Duration = Duration::from_secs(1);
-const OPENAI_BASE_URL_ENV_KEY: &str = "OPENAI_BASE_URL";
 const APP_SERVER_PROXY_WEBSOCKET_URL: &str = "ws://codex-app-server-proxy.localhost/rpc";
 
 #[derive(Clone)]
@@ -113,13 +112,6 @@ fn append_android_debug_log(line: &str) {
     );
 }
 
-fn openai_base_url_from_env() -> Option<String> {
-    std::env::var(OPENAI_BASE_URL_ENV_KEY)
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty())
-}
-
 // ---------------------------------------------------------------------------
 // InProcessConfig
 // ---------------------------------------------------------------------------
@@ -144,230 +136,6 @@ impl Default for InProcessConfig {
             channel_capacity: 256,
         }
     }
-}
-
-#[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
-static IOS_CACERT_PEM: &[u8] = include_bytes!("../cacert.pem");
-
-#[allow(unused_mut)]
-fn prepare_in_process_config(
-    mut config: InProcessConfig,
-) -> Result<InProcessConfig, TransportError> {
-    #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
-    {
-        config = prepare_ios_in_process_config(config)?;
-    }
-
-    #[cfg(target_os = "android")]
-    {
-        config = prepare_android_in_process_config(config)?;
-    }
-
-    Ok(config)
-}
-
-#[cfg(target_os = "android")]
-fn prepare_android_in_process_config(
-    mut config: InProcessConfig,
-) -> Result<InProcessConfig, TransportError> {
-    // On Android, HOME and CODEX_HOME should already be set by UniffiInit.nativeBridgeInit().
-    // If codex_home is not set in the config, resolve from CODEX_HOME env var.
-    if config.codex_home.is_none() {
-        if let Ok(codex_home) = std::env::var("CODEX_HOME") {
-            let path = PathBuf::from(&codex_home);
-            std::fs::create_dir_all(&path).map_err(|e| {
-                TransportError::ConnectionFailed(format!(
-                    "failed to create CODEX_HOME {:?}: {e}",
-                    path
-                ))
-            })?;
-            config.codex_home = Some(path);
-        } else if let Ok(home) = std::env::var("HOME") {
-            let path = PathBuf::from(home).join(".codex");
-            std::fs::create_dir_all(&path).map_err(|e| {
-                TransportError::ConnectionFailed(format!(
-                    "failed to create codex home {:?}: {e}",
-                    path
-                ))
-            })?;
-            unsafe {
-                std::env::set_var("CODEX_HOME", &path);
-            }
-            config.codex_home = Some(path);
-        } else {
-            return Err(TransportError::ConnectionFailed(
-                "Could not find home directory".to_string(),
-            ));
-        }
-    }
-
-    if config.working_directory.is_none() {
-        if let Some(ref codex_home) = config.codex_home {
-            let wd = codex_home.join("workspace");
-            std::fs::create_dir_all(&wd).map_err(|e| {
-                TransportError::ConnectionFailed(format!(
-                    "failed to create workspace {:?}: {e}",
-                    wd
-                ))
-            })?;
-            config.working_directory = Some(wd);
-        }
-    }
-
-    // Set up TLS root certificates for Android
-    if let Some(ref codex_home) = config.codex_home {
-        // Android uses system CAs, but set SSL_CERT_FILE if a bundle exists
-        let pem_path = codex_home.join("cacert.pem");
-        if pem_path.exists() {
-            unsafe {
-                std::env::set_var("SSL_CERT_FILE", &pem_path);
-            }
-        }
-    }
-
-    Ok(config)
-}
-
-#[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
-#[cfg_attr(test, allow(dead_code))]
-fn prepare_ios_in_process_config(
-    mut config: InProcessConfig,
-) -> Result<InProcessConfig, TransportError> {
-    let home_dir = std::env::var_os("HOME").map(PathBuf::from);
-    let docs_root = home_dir.as_ref().map(|home| home.join("Documents"));
-
-    if let Some(root) = &docs_root {
-        for relative in ["home/codex", "tmp", "var/log", "etc"] {
-            std::fs::create_dir_all(root.join(relative)).map_err(|e| {
-                TransportError::ConnectionFailed(format!(
-                    "failed to create local sandbox directory {:?}: {e}",
-                    root.join(relative)
-                ))
-            })?;
-        }
-    }
-
-    if config.working_directory.is_none()
-        && let Some(root) = &docs_root
-    {
-        config.working_directory = Some(root.join("home").join("codex"));
-    }
-
-    if let Some(ref working_directory) = config.working_directory {
-        std::fs::create_dir_all(working_directory).map_err(|e| {
-            TransportError::ConnectionFailed(format!(
-                "failed to create local working directory {:?}: {e}",
-                working_directory
-            ))
-        })?;
-        unsafe {
-            std::env::set_var("SSH_HOME", working_directory);
-            std::env::set_var("CURL_HOME", working_directory);
-        }
-    }
-
-    if config.codex_home.is_none() {
-        config.codex_home = Some(resolve_ios_codex_home(&home_dir)?);
-    }
-
-    if let Some(ref codex_home) = config.codex_home {
-        config.codex_home = Some(prepare_ios_runtime_environment(codex_home)?);
-    }
-
-    Ok(config)
-}
-
-#[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
-#[cfg_attr(test, allow(dead_code))]
-fn resolve_ios_codex_home(home_dir: &Option<PathBuf>) -> Result<PathBuf, TransportError> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    if let Ok(existing) = std::env::var("CODEX_HOME")
-        && !existing.is_empty()
-    {
-        candidates.push(PathBuf::from(existing));
-    }
-
-    if let Some(home) = home_dir {
-        candidates.push(
-            home.join("Library")
-                .join("Application Support")
-                .join("codex"),
-        );
-        candidates.push(home.join("Documents").join(".codex"));
-        candidates.push(home.join(".codex"));
-    }
-
-    if let Ok(tmpdir) = std::env::var("TMPDIR") {
-        candidates.push(PathBuf::from(tmpdir).join("codex-home"));
-    }
-
-    for candidate in candidates {
-        match std::fs::create_dir_all(&candidate) {
-            Ok(()) => return Ok(candidate),
-            Err(err) => {
-                warn!(
-                    "failed to create CODEX_HOME candidate {:?}: {err}",
-                    candidate
-                );
-            }
-        }
-    }
-
-    Err(TransportError::ConnectionFailed(
-        "unable to initialize any writable CODEX_HOME location".to_string(),
-    ))
-}
-
-#[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
-fn prepare_ios_runtime_environment(
-    codex_home: &std::path::Path,
-) -> Result<PathBuf, TransportError> {
-    std::fs::create_dir_all(codex_home).map_err(|e| {
-        TransportError::ConnectionFailed(format!(
-            "failed to create CODEX_HOME {:?}: {e}",
-            codex_home
-        ))
-    })?;
-
-    let canonical = codex_home
-        .canonicalize()
-        .unwrap_or_else(|_| codex_home.to_path_buf());
-    unsafe {
-        std::env::set_var("CODEX_HOME", &canonical);
-    }
-    init_ios_tls_roots(&canonical)?;
-
-    Ok(canonical)
-}
-
-#[cfg(any(all(target_os = "ios", not(target_abi = "macabi")), test))]
-fn init_ios_tls_roots(codex_home: &std::path::Path) -> Result<(), TransportError> {
-    if let Some(existing) = std::env::var_os("SSL_CERT_FILE") {
-        let existing_path = std::path::PathBuf::from(existing);
-        if existing_path.is_file() {
-            return Ok(());
-        }
-        warn!(
-            "replacing stale SSL_CERT_FILE {:?} with a regenerated local bundle",
-            existing_path
-        );
-    }
-
-    let pem_path = codex_home.join("cacert.pem");
-    if !pem_path.exists() {
-        std::fs::write(&pem_path, IOS_CACERT_PEM).map_err(|e| {
-            TransportError::ConnectionFailed(format!(
-                "failed to write local TLS roots {:?}: {e}",
-                pem_path
-            ))
-        })?;
-    }
-
-    unsafe {
-        std::env::set_var("SSL_CERT_FILE", &pem_path);
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -577,12 +345,14 @@ fn spawn_test_command_worker(
 }
 
 impl ServerSession {
-    /// Legacy entry point retained for existing platform callers; local execution is disabled.
+    /// Compatibility entry point for previous platform bindings.
     pub async fn connect_local(
         _config: ServerConfig,
         _in_process: InProcessConfig,
     ) -> Result<Self, TransportError> {
-        Err(TransportError::ConnectionFailed("Local Codex is unavailable. Connect a remote computer.".to_string()))
+        Err(TransportError::ConnectionFailed(
+            "Local Codex is unavailable. Connect a remote computer.".into(),
+        ))
     }
 
     /// Connect to a remote Codex server via plain WebSocket.
@@ -625,7 +395,7 @@ impl ServerSession {
         let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
         let mut runtime_command_txs = std::collections::HashMap::new();
         let mut runtime_transports: Vec<Arc<dyn RemoteTransport>> = Vec::new();
-        let mut worker_handles = Vec::new();
+        let mut workers = tokio::task::JoinSet::new();
         let mut primary_tx = None;
 
         for resource in resources {
@@ -642,7 +412,7 @@ impl ServerSession {
             if let Some(transport) = resource.transport.as_ref() {
                 runtime_transports.push(Arc::clone(transport));
             }
-            worker_handles.push(spawn_remote_runtime_worker(
+            workers.spawn(remote_runtime_worker(
                 runtime_kind,
                 resource.client,
                 resource.keepalive,
@@ -659,9 +429,8 @@ impl ServerSession {
             TransportError::ConnectionFailed("no runtime command channel available".to_string())
         })?;
         let worker_handle = tokio::spawn(async move {
-            for handle in worker_handles {
-                let _ = handle.await;
-            }
+            // Dropping the supervisor also cancels every runtime worker.
+            while workers.join_next().await.is_some() {}
         });
 
         let _ = health_tx.send(ConnectionHealth::Connected);
@@ -743,14 +512,7 @@ impl ServerSession {
         runtime_kind: AgentRuntimeKind,
         request: ClientRequest,
     ) -> Result<JsonValue, RpcError> {
-        let wire_method = serde_json::to_value(&request)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("method")
-                    .and_then(|method| method.as_str().map(str::to_string))
-            })
-            .unwrap_or_else(|| "<unknown>".to_string());
+        let wire_method = request.method_name();
         let (response_tx, response_rx) = oneshot::channel();
         let command_tx = self
             .runtime_command_txs
@@ -898,9 +660,11 @@ impl ServerSession {
 
     async fn disconnect_inner(&self, kill_reused_app_server: bool) {
         let _ = self.health_tx.send(ConnectionHealth::Disconnected);
-        let _ = self.command_tx.send(SessionCommand::Shutdown).await;
+        // Shutdown is best-effort; a full queue must not prevent the bounded
+        // worker cancellation below (for example while reconnect is stuck).
+        let _ = self.command_tx.try_send(SessionCommand::Shutdown);
         for tx in self.runtime_command_txs.values() {
-            let _ = tx.send(SessionCommand::Shutdown).await;
+            let _ = tx.try_send(SessionCommand::Shutdown);
         }
         if let Some(ssh_client) = self.ssh_client.as_ref() {
             if let Some(pid) = self.ssh_pid.as_ref() {
@@ -970,11 +734,9 @@ pub(crate) fn remote_connect_args(config: &ServerConfig) -> (String, RemoteAppSe
 pub(crate) async fn connect_remote_client(
     args: &RemoteAppServerConnectArgs,
 ) -> Result<AppServerClient, TransportError> {
-    #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
-        let home_dir = std::env::var_os("HOME").map(PathBuf::from);
-        let codex_home = resolve_ios_codex_home(&home_dir)?;
-        let _ = prepare_ios_runtime_environment(&codex_home)?;
+        crate::tls_roots::init_mobile_tls_roots();
     }
 
     Ok(AppServerClient::Remote(
@@ -990,7 +752,7 @@ pub(crate) async fn connect_remote_client_over_app_server_proxy(
     codex_path: &str,
     remote_shell: RemoteShell,
 ) -> Result<AppServerClient, TransportError> {
-    let label = "app-server-proxy:managed".to_string();
+    let label = "app-server-proxy:default".to_string();
     let mut proxy_args = args.clone();
     // The SSH exec proxy supplies the connected byte stream. The WebSocket
     // client still needs a syntactically valid URI for the HTTP Upgrade
@@ -1210,6 +972,7 @@ async fn rebootstrap_app_server_proxy_over_ssh(
         .ssh_client
         .bootstrap_codex_app_server_proxy_with_binary_and_shell(
             &crate::ssh::RemoteCodexBinary::Codex(codex_path.to_string()),
+            transport.working_dir.as_deref(),
             remote_shell,
         )
         .await
@@ -1374,7 +1137,7 @@ impl RemoteTransport for SlingshotReconnectTransport {
     }
 }
 
-fn spawn_remote_runtime_worker(
+async fn remote_runtime_worker(
     runtime_kind: AgentRuntimeKind,
     mut client: AppServerClient,
     initial_keepalive: Option<Arc<dyn SessionKeepalive>>,
@@ -1384,126 +1147,151 @@ fn spawn_remote_runtime_worker(
     reconnect_args: RemoteAppServerConnectArgs,
     reconnect_url: String,
     reconnect_transport: Option<Arc<dyn RemoteTransport>>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut keepalive: Option<Arc<dyn SessionKeepalive>> = initial_keepalive;
-        loop {
-            tokio::select! {
-                command = command_rx.recv() => {
-                    let Some(command) = command else { break; };
-                    match command {
-                        SessionCommand::Request { request, response_tx } => {
-                            let request_retry = request.clone();
-                            let mut result = send_remote_request(&client, request).await;
-                            if matches!(result, Err(RpcError::Transport(_)))
-                                && reconnect_remote_client(
-                                    &mut client,
-                                    &mut keepalive,
-                                    &reconnect_args,
-                                    &reconnect_url,
-                                    &health_tx,
-                                    reconnect_transport.as_ref(),
-                                )
-                                .await
-                            {
-                                result = send_remote_request(&client, request_retry).await;
-                            }
-                            let _ = response_tx.send(result);
-                        }
-                        SessionCommand::Notify { notification, response_tx } => {
-                            let result = client.notify(notification).await.map_err(|error| {
-                                RpcError::Transport(TransportError::SendFailed(error.to_string()))
-                            });
-                            let _ = response_tx.send(result);
-                        }
-                        SessionCommand::Resolve { request_id, result, response_tx } => {
-                            let result = client
-                                .resolve_server_request(request_id, result)
-                                .await
-                                .map_err(|error| {
-                                    RpcError::Transport(TransportError::SendFailed(
-                                        error.to_string(),
-                                    ))
-                                });
-                            let _ = response_tx.send(result);
-                        }
-                        SessionCommand::Reject { request_id, error, response_tx } => {
-                            let result = client
-                                .reject_server_request(request_id, error)
-                                .await
-                                .map_err(|error| {
-                                    RpcError::Transport(TransportError::SendFailed(
-                                        error.to_string(),
-                                    ))
-                                });
-                            let _ = response_tx.send(result);
-                        }
-                        SessionCommand::Shutdown => {
-                            let _ = client.shutdown().await;
-                            break;
-                        }
-                    }
-                }
-                event = client.next_event() => {
-                    let Some(event) = event else {
-                        if reconnect_remote_client(
-                            &mut client,
-                            &mut keepalive,
-                            &reconnect_args,
-                            &reconnect_url,
-                            &health_tx,
-                            reconnect_transport.as_ref(),
-                        )
-                        .await {
-                            continue;
-                        }
-                        break;
-                    };
-                    if let AppServerEvent::Disconnected { .. } = &event
+) {
+    let mut keepalive: Option<Arc<dyn SessionKeepalive>> = initial_keepalive;
+    let mut requests = FuturesUnordered::new();
+    let mut generation = 0;
+    loop {
+        tokio::select! {
+            Some(completed) = requests.next(), if !requests.is_empty() => {
+                let (mut pending, result): (PendingRemoteRequest, Result<JsonValue, RpcError>) = completed;
+                if matches!(result, Err(RpcError::Transport(_)))
+                    && !pending.retried && !pending.response_tx.is_closed()
+                {
+                    // A disconnect event or another failed request may have
+                    // already replaced this connection. Reconnect only once.
+                    if pending.generation == generation
                         && reconnect_remote_client(
-                            &mut client,
-                            &mut keepalive,
-                            &reconnect_args,
-                            &reconnect_url,
-                            &health_tx,
-                            reconnect_transport.as_ref(),
-                        )
-                        .await
+                            &mut client, &mut keepalive, &reconnect_args,
+                            &reconnect_url, &health_tx, reconnect_transport.as_ref(),
+                        ).await
                     {
+                        generation += 1;
+                    }
+                    if pending.generation != generation {
+                        pending.generation = generation;
+                        pending.retried = true;
+                        requests.push(dispatch_remote_request(client.request_handle(), pending));
                         continue;
                     }
+                }
+                let _ = pending.response_tx.send(result);
+            }
+            command = command_rx.recv() => {
+                let Some(command) = command else { break; };
+                match command {
+                    SessionCommand::Request { request, response_tx } => {
+                        // Keep replies in this worker, without blocking event
+                        // delivery, approvals, or unrelated foreground RPCs.
+                        requests.push(dispatch_remote_request(client.request_handle(), PendingRemoteRequest {
+                            request, response_tx, generation, retried: false,
+                        }));
+                    }
+                    SessionCommand::Notify { notification, response_tx } => {
+                        let result = client.notify(notification).await.map_err(|error| {
+                            RpcError::Transport(TransportError::SendFailed(error.to_string()))
+                        });
+                        let _ = response_tx.send(result);
+                    }
+                    SessionCommand::Resolve { request_id, result, response_tx } => {
+                        let result = client
+                            .resolve_server_request(request_id, result)
+                            .await
+                            .map_err(|error| {
+                                RpcError::Transport(TransportError::SendFailed(
+                                    error.to_string(),
+                                ))
+                            });
+                        let _ = response_tx.send(result);
+                    }
+                    SessionCommand::Reject { request_id, error, response_tx } => {
+                        let result = client
+                            .reject_server_request(request_id, error)
+                            .await
+                            .map_err(|error| {
+                                RpcError::Transport(TransportError::SendFailed(
+                                    error.to_string(),
+                                ))
+                            });
+                        let _ = response_tx.send(result);
+                    }
+                    SessionCommand::Shutdown => {
+                        let _ = client.shutdown().await;
+                        break;
+                    }
+                }
+            }
+            event = client.next_event() => {
+                if matches!(event, None | Some(AppServerEvent::Disconnected { .. })) {
+                    if reconnect_remote_client(
+                        &mut client,
+                        &mut keepalive,
+                        &reconnect_args,
+                        &reconnect_url,
+                        &health_tx,
+                        reconnect_transport.as_ref(),
+                    )
+                    .await {
+                        generation += 1;
+                        continue;
+                    }
+                    if let Some(event) = event {
+                        route_app_server_event(&event_tx, &health_tx, runtime_kind.clone(), &event);
+                    }
+                    break;
+                }
+                if let Some(event) = event {
                     route_app_server_event(&event_tx, &health_tx, runtime_kind.clone(), &event);
                 }
             }
         }
-        // Send a graceful close to the peer (e.g. iroh `Connection::close`)
-        // before dropping the keepalive Arc. Idempotent on already-errored
-        // connections, and avoids "Aborting ungracefully" log spam from
-        // iroh when the worker exits via `SessionCommand::Shutdown`.
-        if let Some(keepalive) = keepalive.as_ref() {
-            keepalive.close();
+    }
+    // Send a graceful close to the peer (e.g. iroh `Connection::close`)
+    // before dropping the keepalive Arc. Idempotent on already-errored
+    // connections, and avoids "Aborting ungracefully" log spam from
+    // iroh when the worker exits via `SessionCommand::Shutdown`.
+    if let Some(keepalive) = keepalive.as_ref() {
+        keepalive.close();
+    }
+    // Hold the keepalive Arc for the entire worker lifetime so transport-scoped
+    // resources (e.g. an iroh Connection) are dropped only after the worker exits.
+    drop(keepalive);
+}
+
+struct PendingRemoteRequest {
+    request: ClientRequest,
+    response_tx: oneshot::Sender<Result<JsonValue, RpcError>>,
+    generation: u64,
+    retried: bool,
+}
+
+async fn dispatch_remote_request(
+    handle: AppServerRequestHandle,
+    pending: PendingRemoteRequest,
+) -> (PendingRemoteRequest, Result<JsonValue, RpcError>) {
+    let result = send_remote_request(&handle, pending.request.clone()).await;
+    (pending, result)
+}
+
+/// Deadline for request/response RPCs on the launch/open path, so a dead
+/// connection cannot hang the UI forever. Long-running operations (turns,
+/// compaction, etc.) are intentionally left unbounded.
+fn remote_request_timeout(method: &str) -> Option<Duration> {
+    match method {
+        "thread/list" => Some(Duration::from_secs(10)),
+        "model/list" => Some(Duration::from_secs(20)),
+        "thread/resume" | "thread/read" | "thread/turns/list" | "thread/items/list" => {
+            Some(Duration::from_secs(30))
         }
-        // Hold the keepalive Arc for the entire worker lifetime so transport-scoped
-        // resources (e.g. an iroh Connection) are dropped only after the worker exits.
-        drop(keepalive);
-    })
+        _ => None,
+    }
 }
 
 async fn send_remote_request(
-    client: &AppServerClient,
+    client: &AppServerRequestHandle,
     request: ClientRequest,
 ) -> Result<JsonValue, RpcError> {
-    let method = serde_json::to_value(&request).ok().and_then(|value| {
-        value
-            .get("method")
-            .and_then(|method| method.as_str().map(str::to_owned))
-    });
-    let timeout = match method.as_deref() {
-        Some("thread/list") => Some(Duration::from_secs(10)),
-        Some("model/list") => Some(Duration::from_secs(20)),
-        _ => None,
-    };
-    let response = match timeout {
+    let response = match remote_request_timeout(request.method_name()) {
         Some(duration) => tokio::time::timeout(duration, client.request(request))
             .await
             .map_err(|_| RpcError::Timeout)?,
@@ -1558,15 +1346,115 @@ fn route_app_server_event(
     }
 }
 
+#[cfg(test)]
+impl ServerSession {
+    pub(crate) fn test_stub_with_handlers(
+        config: ServerConfig,
+        request_handler: Option<TestRequestHandler>,
+        resolve_handler: Option<TestResolveHandler>,
+        reject_handler: Option<TestRejectHandler>,
+    ) -> Self {
+        let (health_tx, health_rx) = watch::channel(ConnectionHealth::Connected);
+        let (command_tx, mut command_rx) = mpsc::channel(16);
+        let (event_tx, _) = broadcast::channel(16);
+        let worker_handle = tokio::spawn(async move {
+            while let Some(command) = command_rx.recv().await {
+                match command {
+                    SessionCommand::Request {
+                        request,
+                        response_tx,
+                    } => {
+                        let result = request_handler
+                            .as_ref()
+                            .map(|handler| handler(request))
+                            .unwrap_or_else(|| {
+                                Err(RpcError::Transport(TransportError::Disconnected))
+                            });
+                        let _ = response_tx.send(result);
+                    }
+                    SessionCommand::Notify { response_tx, .. } => {
+                        let _ = response_tx.send(Ok(()));
+                    }
+                    SessionCommand::Resolve {
+                        request_id,
+                        result,
+                        response_tx,
+                    } => {
+                        let outcome = resolve_handler
+                            .as_ref()
+                            .map(|handler| handler(request_id, result))
+                            .unwrap_or(Ok(()));
+                        let _ = response_tx.send(outcome);
+                    }
+                    SessionCommand::Reject {
+                        request_id,
+                        error,
+                        response_tx,
+                    } => {
+                        let outcome = reject_handler
+                            .as_ref()
+                            .map(|handler| handler(request_id, error))
+                            .unwrap_or(Ok(()));
+                        let _ = response_tx.send(outcome);
+                    }
+                    SessionCommand::Shutdown => break,
+                }
+            }
+        });
+        Self {
+            config,
+            health_tx,
+            health_rx,
+            command_tx,
+            runtime_command_txs: std::collections::HashMap::new(),
+            runtime_transports: Vec::new(),
+            event_tx,
+            ssh_client: None,
+            ssh_pid: None,
+            worker_handle,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_stub_with_runtime_handlers(
+        config: ServerConfig,
+        runtime_handlers: Vec<(AgentRuntimeKind, TestRequestHandler)>,
+    ) -> Self {
+        let (health_tx, health_rx) = watch::channel(ConnectionHealth::Connected);
+        let (command_tx, default_worker_handle) = spawn_test_command_worker(None, None, None);
+        let (event_tx, _) = broadcast::channel(16);
+        let mut runtime_command_txs = std::collections::HashMap::new();
+        let mut worker_handles = vec![default_worker_handle];
+        for (runtime_kind, handler) in runtime_handlers {
+            let (runtime_tx, runtime_worker_handle) =
+                spawn_test_command_worker(Some(handler), None, None);
+            runtime_command_txs.insert(runtime_kind, runtime_tx);
+            worker_handles.push(runtime_worker_handle);
+        }
+        let worker_handle = tokio::spawn(async move {
+            for handle in worker_handles {
+                let _ = handle.await;
+            }
+        });
+
+        Self {
+            config,
+            health_tx,
+            health_rx,
+            command_tx,
+            runtime_command_txs,
+            runtime_transports: Vec::new(),
+            event_tx,
+            ssh_client: None,
+            ssh_pid: None,
+            worker_handle,
+        }
+    }
+}
 
 fn json_value_to_request_id(value: &JsonValue) -> Result<RequestId, RpcError> {
-    match value {
-        JsonValue::Number(n) => Ok(RequestId::Integer(n.as_i64().unwrap_or(0))),
-        JsonValue::String(s) => Ok(RequestId::String(s.clone())),
-        _ => Err(RpcError::Deserialization(
-            "invalid request id type".to_string(),
-        )),
-    }
+    serde_json::from_value(value.clone())
+        .map_err(|error| RpcError::Deserialization(format!("invalid request id: {error}")))
 }
 
 fn next_request_id() -> i64 {
@@ -1581,6 +1469,21 @@ fn next_request_id() -> i64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn remote_request_timeout_bounds_open_path_but_not_turns() {
+        assert_eq!(
+            remote_request_timeout("thread/resume"),
+            Some(Duration::from_secs(30))
+        );
+        assert!(remote_request_timeout("thread/read").is_some());
+        assert!(remote_request_timeout("thread/turns/list").is_some());
+        assert_eq!(
+            remote_request_timeout("thread/list"),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(remote_request_timeout("turn/start"), None);
+    }
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1622,6 +1525,7 @@ mod tests {
     enum TestJsonLineServer {
         DropOnFirstRequest,
         Respond(JsonValue),
+        SlowModels,
     }
 
     async fn app_server_client_for_json_line_server(
@@ -1659,26 +1563,39 @@ mod tests {
                     // after the mobile client has already enqueued an RPC.
                     let _ = lines.next_line().await;
                 }
-                TestJsonLineServer::Respond(response) => {
+                TestJsonLineServer::Respond(_) | TestJsonLineServer::SlowModels => {
+                    let writer = Arc::new(tokio::sync::Mutex::new(writer));
                     while let Ok(Some(line)) = lines.next_line().await {
                         let request: JsonValue = serde_json::from_str(&line)
                             .expect("client should send JSON-RPC request");
                         let Some(id) = request.get("id").cloned() else {
                             continue;
                         };
-                        let response = json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": response
+                        let slow = matches!(behavior, TestJsonLineServer::SlowModels)
+                            && request["method"] == "model/list";
+                        let response = match &behavior {
+                            TestJsonLineServer::Respond(value) => value.clone(),
+                            _ => json!({}),
+                        };
+                        let writer = writer.clone();
+                        tokio::spawn(async move {
+                            if slow {
+                                let notification = json!({"method":"thread/name/updated",
+                                    "params":{"threadId":"latency", "threadName":"ready"}});
+                                let mut output = writer.lock().await;
+                                output
+                                    .write_all(format!("{notification}\n").as_bytes())
+                                    .await
+                                    .unwrap();
+                                output.flush().await.unwrap();
+                                drop(output);
+                                tokio::time::sleep(Duration::from_millis(300)).await;
+                            }
+                            let response = json!({"jsonrpc":"2.0", "id":id, "result":response});
+                            let mut output = writer.lock().await;
+                            let _ = output.write_all(format!("{response}\n").as_bytes()).await;
+                            let _ = output.flush().await;
                         });
-                        if writer
-                            .write_all(format!("{response}\n").as_bytes())
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        let _ = writer.flush().await;
                     }
                 }
             }
@@ -1696,6 +1613,169 @@ mod tests {
 
     struct TestReconnectTransport {
         reconnects: Arc<AtomicUsize>,
+    }
+
+    #[tokio::test]
+    async fn disconnect_cancels_all_runtime_workers_during_reconnect() {
+        struct HangingReconnect {
+            entered: Arc<AtomicUsize>,
+            cancelled: Arc<AtomicUsize>,
+        }
+        struct Cancelled(Arc<AtomicUsize>);
+        impl Drop for Cancelled {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        #[async_trait]
+        impl RemoteTransport for HangingReconnect {
+            async fn reconnect(
+                &self,
+                _: &RemoteAppServerConnectArgs,
+                _: &str,
+            ) -> Result<Reconnected, TransportError> {
+                let _cancelled = Cancelled(self.cancelled.clone());
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                std::future::pending().await
+            }
+        }
+        let entered = Arc::new(AtomicUsize::new(0));
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let mut resources = Vec::new();
+        for runtime in ["codex", "pi"] {
+            resources.push(RuntimeRemoteSessionResource {
+                runtime_kind: runtime.into(),
+                client: app_server_client_for_json_line_server(
+                    TestJsonLineServer::DropOnFirstRequest,
+                    runtime,
+                )
+                .await,
+                keepalive: None,
+                transport: Some(Arc::new(HangingReconnect {
+                    entered: entered.clone(),
+                    cancelled: cancelled.clone(),
+                })),
+            });
+        }
+        let session = ServerSession::connect_remote_multiplexed(
+            ServerConfig {
+                server_id: "cancel-test".into(),
+                display_name: "Cancel".into(),
+                host: "localhost".into(),
+                port: 0,
+                websocket_url: None,
+                is_local: false,
+                tls: false,
+            },
+            resources,
+            RemoteSessionExtras::default(),
+        )
+        .await
+        .unwrap();
+        for (id, sender) in session.runtime_command_txs.values().enumerate() {
+            let (response_tx, _) = oneshot::channel();
+            sender
+                .send(SessionCommand::Request {
+                    request: serde_json::from_value(
+                        json!({"id":id,"method":"model/list","params":{}}),
+                    )
+                    .unwrap(),
+                    response_tx,
+                })
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while entered.load(Ordering::SeqCst) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // Saturate both queues while their workers are stuck reconnecting.
+        for sender in session.runtime_command_txs.values() {
+            while sender.try_send(SessionCommand::Shutdown).is_ok() {}
+        }
+        tokio::time::timeout(Duration::from_secs(1), session.disconnect())
+            .await
+            .expect("disconnect waited on a full command queue");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while cancelled.load(Ordering::SeqCst) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("disconnect left runtime reconnect workers alive");
+    }
+
+    #[tokio::test]
+    async fn remote_runtime_worker_does_not_block_actions_or_events_on_slow_catalog() {
+        let client =
+            app_server_client_for_json_line_server(TestJsonLineServer::SlowModels, "latency").await;
+        let (command_tx, command_rx) = mpsc::channel(16);
+        let (event_tx, mut events) = broadcast::channel(16);
+        let (health_tx, _) = watch::channel(ConnectionHealth::Connected);
+        let worker = tokio::spawn(remote_runtime_worker(
+            "pi".into(),
+            client,
+            None,
+            command_rx,
+            event_tx,
+            health_tx,
+            test_remote_args("latency"),
+            "latency".into(),
+            None,
+        ));
+        let started = Instant::now();
+        let mut responses = Vec::new();
+        for (id, method) in [(2, "model/list"), (3, "config/read")] {
+            let (response_tx, response_rx) = oneshot::channel();
+            command_tx
+                .send(SessionCommand::Request {
+                    request: serde_json::from_value(json!({"id":id,"method":method,"params":{}}))
+                        .unwrap(),
+                    response_tx,
+                })
+                .await
+                .unwrap();
+            responses.push(response_rx);
+        }
+        let fast = responses.pop().unwrap().await.unwrap().unwrap();
+        let action_elapsed = started.elapsed();
+        let event = events.recv().await.unwrap();
+        let event_elapsed = started.elapsed();
+        responses.pop().unwrap().await.unwrap().unwrap();
+        let (response_tx, response_rx) = oneshot::channel();
+        command_tx
+            .send(SessionCommand::Request {
+                request: serde_json::from_value(json!({"id":4,"method":"model/list","params":{}}))
+                    .unwrap(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+        // The notification proves the request reached the server before shutdown.
+        events.recv().await.unwrap();
+        command_tx.send(SessionCommand::Shutdown).await.unwrap();
+        tokio::time::timeout(Duration::from_millis(150), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            response_rx.await.is_err(),
+            "shutdown must drop pending replies"
+        );
+        eprintln!("slow catalog=300ms action={action_elapsed:?} event={event_elapsed:?}");
+        assert_eq!(fast, json!({}));
+        assert!(matches!(event, ServerEvent::Notification { .. }));
+        assert!(
+            action_elapsed < Duration::from_millis(150),
+            "action waited for catalog: {action_elapsed:?}"
+        );
+        assert!(
+            event_elapsed < Duration::from_millis(150),
+            "event waited for catalog: {event_elapsed:?}"
+        );
     }
 
     #[async_trait]
@@ -1732,7 +1812,7 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, _) = broadcast::channel(4);
         let (health_tx, mut health_rx) = watch::channel(ConnectionHealth::Connected);
-        let worker = spawn_remote_runtime_worker(
+        let worker = tokio::spawn(remote_runtime_worker(
             "pi".to_string(),
             initial_client,
             None,
@@ -1742,29 +1822,33 @@ mod tests {
             test_remote_args("drop-test-bridge"),
             "drop-test-bridge".to_string(),
             Some(reconnect_transport),
-        );
+        ));
 
-        let request: ClientRequest = serde_json::from_value(json!({
-            "id": 1,
-            "method": "model/list",
-            "params": {"limit": 5}
-        }))
-        .expect("valid app-server request");
-        let (response_tx, response_rx) = oneshot::channel();
-        command_tx
-            .send(SessionCommand::Request {
-                request,
-                response_tx,
-            })
-            .await
-            .expect("worker should accept request");
+        let mut replies = Vec::new();
+        for id in 1..=3 {
+            let request = serde_json::from_value(json!({
+                "id": id, "method": "model/list", "params": {"limit": 5}
+            }))
+            .expect("valid app-server request");
+            let (response_tx, response_rx) = oneshot::channel();
+            command_tx
+                .send(SessionCommand::Request {
+                    request,
+                    response_tx,
+                })
+                .await
+                .expect("worker should accept request");
+            replies.push(response_rx);
+        }
 
-        let response = tokio::time::timeout(std::time::Duration::from_secs(2), response_rx)
-            .await
-            .expect("dropped stream request should reconnect instead of hanging")
-            .expect("worker should return a response")
-            .expect("request should succeed after reconnect");
-        assert_eq!(response, json!({"source": "reconnected"}));
+        for response_rx in replies {
+            let response = tokio::time::timeout(std::time::Duration::from_secs(2), response_rx)
+                .await
+                .expect("dropped stream request should reconnect instead of hanging")
+                .expect("worker should return a response")
+                .expect("request should succeed after reconnect");
+            assert_eq!(response, json!({"source": "reconnected"}));
+        }
         assert_eq!(reconnects.load(Ordering::SeqCst), 1);
         assert_eq!(*health_rx.borrow_and_update(), ConnectionHealth::Connected);
 
@@ -2123,8 +2207,12 @@ mod tests {
 
     #[test]
     fn json_value_to_request_id_invalid() {
-        let result = json_value_to_request_id(&json!(true));
-        assert!(result.is_err());
+        for value in [json!(true), json!(null), json!(1.5), json!(u64::MAX)] {
+            assert!(
+                json_value_to_request_id(&value).is_err(),
+                "accepted {value}"
+            );
+        }
     }
 
     #[test]
@@ -2142,82 +2230,5 @@ mod tests {
         assert_eq!(config.channel_capacity, 256);
         assert!(config.codex_home.is_none());
         assert!(config.working_directory.is_none());
-    }
-
-    #[test]
-    fn openai_base_url_from_env_trims_empty_and_trailing_slashes() {
-        let _guard = env_lock().lock().expect("env lock should not be poisoned");
-        let original = std::env::var_os(OPENAI_BASE_URL_ENV_KEY);
-
-        unsafe {
-            std::env::set_var(OPENAI_BASE_URL_ENV_KEY, " http://localhost:11434/v1/// ");
-        }
-        assert_eq!(
-            openai_base_url_from_env(),
-            Some("http://localhost:11434/v1".to_string())
-        );
-
-        unsafe {
-            std::env::set_var(OPENAI_BASE_URL_ENV_KEY, "   ");
-        }
-        assert_eq!(openai_base_url_from_env(), None);
-
-        match original {
-            Some(value) => unsafe {
-                std::env::set_var(OPENAI_BASE_URL_ENV_KEY, value);
-            },
-            None => unsafe {
-                std::env::remove_var(OPENAI_BASE_URL_ENV_KEY);
-            },
-        }
-    }
-
-    #[test]
-    fn prepare_ios_runtime_environment_sets_codex_home_and_tls_bundle() {
-        let _guard = env_lock().lock().expect("env lock should not be poisoned");
-        let original_codex_home = std::env::var_os("CODEX_HOME");
-        let original_ssl_cert_file = std::env::var_os("SSL_CERT_FILE");
-        let codex_home = unique_temp_path("ios-runtime");
-
-        unsafe {
-            std::env::set_var("CODEX_HOME", &codex_home);
-            std::env::remove_var("SSL_CERT_FILE");
-        }
-
-        let canonical = prepare_ios_runtime_environment(&codex_home)
-            .expect("ios runtime environment should initialize");
-        let pem_path = canonical.join("cacert.pem");
-
-        assert_eq!(
-            std::env::var_os("CODEX_HOME"),
-            Some(canonical.clone().into())
-        );
-        assert_eq!(
-            std::env::var_os("SSL_CERT_FILE"),
-            Some(pem_path.clone().into())
-        );
-        assert!(pem_path.is_file(), "cacert.pem should be written");
-
-        if let Some(value) = original_codex_home {
-            unsafe {
-                std::env::set_var("CODEX_HOME", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("CODEX_HOME");
-            }
-        }
-
-        if let Some(value) = original_ssl_cert_file {
-            unsafe {
-                std::env::set_var("SSL_CERT_FILE", value);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("SSL_CERT_FILE");
-            }
-        }
-
-        let _ = std::fs::remove_dir_all(codex_home);
     }
 }

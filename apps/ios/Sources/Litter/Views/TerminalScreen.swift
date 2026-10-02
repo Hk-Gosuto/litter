@@ -77,7 +77,7 @@ struct TerminalScreen: View {
             guard !didStart else { return }
             didStart = true
             let options = refreshBackendOptions()
-            let initial = initialBackend(from: options, cwd: cwd)
+            guard let initial = initialBackend(from: options, cwd: cwd) else { return }
             selectedBackendID = initial.id
             await controller.open(backend: initial.backend)
             applyConfigSettings()
@@ -188,7 +188,7 @@ struct TerminalScreen: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: selectedBackend?.systemImage ?? "terminal")
-                    Text(AppLanguage.localizedString(selectedBackend?.title ?? "Local iSH"))
+                    Text(AppLanguage.localizedString(selectedBackend?.title ?? "Connect a computer"))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .bold))
@@ -201,7 +201,7 @@ struct TerminalScreen: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
-            Text(AppLanguage.localizedString(selectedBackend?.subtitle ?? "On device"))
+            Text(AppLanguage.localizedString(selectedBackend?.subtitle ?? "Remote terminal"))
                 .font(.custom("SFMono-Regular", size: 11))
                 .foregroundColor(.white.opacity(0.48))
                 .lineLimit(1)
@@ -470,12 +470,12 @@ struct TerminalScreen: View {
     private func initialBackend(
         from options: [TerminalBackendOption],
         cwd: String?
-    ) -> TerminalBackendOption {
+    ) -> TerminalBackendOption? {
         if let preferredNodeId = normalized(preferredAlleycatNodeId),
            let match = options.first(where: { $0.alleycatNodeId == preferredNodeId }) {
             return match
         }
-        return options.first ?? TerminalBackendOption.localIsh(cwd: cwd)
+        return options.first
     }
 
     private func selectBackend(_ option: TerminalBackendOption) {
@@ -513,7 +513,7 @@ struct TerminalScreen: View {
     }
 
     private func loadBackendOptions(cwd: String?) -> [TerminalBackendOption] {
-        var options = [TerminalBackendOption.localIsh(cwd: cwd)]
+        var options: [TerminalBackendOption] = []
         var seenNodeIds = Set<String>()
         var seenSshKeys = Set<String>()
         let savedServers = SavedServerStore.load()
@@ -604,7 +604,7 @@ struct TerminalScreen: View {
         let options = refreshBackendOptions()
         guard let selectedBackendID,
               options.contains(where: { $0.id == selectedBackendID }) else {
-            self.selectedBackendID = initialBackend(from: options, cwd: cwd).id
+            self.selectedBackendID = initialBackend(from: options, cwd: cwd)?.id
             return
         }
     }
@@ -938,11 +938,3 @@ private struct TerminalGridSize: Equatable {
         rows = UInt16(max(4, min(120, computedRows)))
     }
 }
-
-#if DEBUG
-#Preview("Terminal") {
-    NavigationStack {
-        TerminalScreen(cwd: "/root")
-    }
-}
-#endif

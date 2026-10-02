@@ -22,6 +22,7 @@ class VoiceTranscriptionRoutingTest {
         assertNull(voiceTranscriptionEndpoint(AuthMode.HEADERS))
         assertNull(voiceTranscriptionEndpoint(AuthMode.AGENT_IDENTITY))
         assertNull(voiceTranscriptionEndpoint(AuthMode.BEDROCK_API_KEY))
+        assertNull(voiceTranscriptionEndpoint(AuthMode.BEDROCK_ACCESS_KEYS))
         assertNull(voiceTranscriptionEndpoint(null))
     }
 }

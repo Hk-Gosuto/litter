@@ -491,7 +491,7 @@
     <string name="terminal_preparing_alpine">正在准备本地 Alpine…\n</string>
     <string name="terminal_ptrace_denied">此 Android 环境阻止 ptrace，因此无法使用本地 Alpine。\n与 Alleycat 主机配对后仍可使用远程终端。\n</string>
     <string name="terminal_artifact_missing">未包含 proot 或 Alpine 根文件系统，因此无法使用本地 Alpine。\n与 Alleycat 主机配对后仍可使用远程终端。\n</string>
-    <string name="terminal_pair_remote">与 Alleycat 主机配对以打开远程终端。\n</string>
+    <string name="terminal_pair_remote">连接电脑以打开远程终端。\n</string>
     <string name="terminal_theme">主题</string>
     <string name="terminal_theme_litter_dark">Litter 深色</string>
     <string name="terminal_theme_catppuccin">Catppuccin Frappé</string>

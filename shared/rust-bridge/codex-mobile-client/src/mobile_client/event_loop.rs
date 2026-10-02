@@ -31,6 +31,7 @@ fn session_is_current(
 impl MobileClient {
     pub(super) fn spawn_event_reader(&self, server_id: String, session: Arc<ServerSession>) {
         let mut events = session.events();
+        let mut health = session.health();
         let processor = Arc::clone(&self.event_processor);
         let recorder = Arc::clone(&self.recorder);
         let oauth_callback_tunnels = Arc::clone(&self.oauth_callback_tunnels);
@@ -40,8 +41,21 @@ impl MobileClient {
         let widget_waiters = Arc::clone(&self.widget_waiters);
         let saved_apps_directory = Arc::clone(&self.saved_apps_directory);
         Self::spawn_detached(async move {
+            if !session_is_current(&sessions, &server_id, &oauth_session) {
+                return;
+            }
             loop {
-                let event = events.recv().await;
+                let event = tokio::select! {
+                    event = events.recv() => event,
+                    changed = health.changed() => {
+                        // A quiet session owns its event sender, so waiting only
+                        // on events would retain it forever after disconnect.
+                        if changed.is_err() || !session_is_current(&sessions, &server_id, &oauth_session) {
+                            break;
+                        }
+                        continue;
+                    }
+                };
                 if !session_is_current(&sessions, &server_id, &oauth_session) {
                     info!("event reader exiting for stale server session {server_id}");
                     break;
@@ -253,28 +267,6 @@ impl MobileClient {
         })
     }
 
-    /// Send a raw `ClientRequest` and return the JSON response value.
-    /// Used by tooling (e.g. fixture export) that needs raw upstream data.
-    pub async fn request_raw_for_server(
-        &self,
-        server_id: &str,
-        request: upstream::ClientRequest,
-    ) -> Result<serde_json::Value, String> {
-        let session = self.get_session(server_id).map_err(|e| e.to_string())?;
-        session.request_client(request).await.map_err(|error| {
-            self.reconcile_transport_error(server_id, &error);
-            error.to_string()
-        })
-    }
-
-    /// Return the configs of all currently connected servers (public for tooling).
-    pub fn connected_server_configs(&self) -> Vec<ServerConfig> {
-        self.sessions_read()
-            .values()
-            .map(|s| s.config().clone())
-            .collect()
-    }
-
     pub(crate) fn snapshot_thread(&self, key: &ThreadKey) -> Result<ThreadSnapshot, RpcError> {
         self.app_store
             .snapshot()
@@ -346,8 +338,11 @@ impl MobileClient {
             // capability off as soon as we recognise the legacy shape so
             // downstream code paths (load_thread_turns_page) short-circuit
             // instead of waiting for the runtime -32601 probe.
-            self.app_store
-                .set_server_supports_turn_pagination(server_id, false);
+            self.app_store.set_runtime_turn_pagination(
+                server_id,
+                &runtime_kind,
+                crate::store::TurnPaginationSupport::Unsupported,
+            );
         }
         parsed.map_err(|e| {
             let error = format_typed_rpc_deserialization_error(wire_method, &e, &value);
@@ -1250,6 +1245,39 @@ mod tests {
     use serde::Deserialize;
     use serde::de::Error as _;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn quiet_event_reader_releases_disconnected_session() {
+        let client = MobileClient::new();
+        let config = ServerConfig {
+            server_id: "quiet-reader".into(),
+            display_name: "Quiet".into(),
+            host: "localhost".into(),
+            port: 0,
+            websocket_url: None,
+            is_local: false,
+            tls: false,
+        };
+        let session = Arc::new(ServerSession::test_stub_with_handlers(
+            config, None, None, None,
+        ));
+        client
+            .sessions_write()
+            .insert("quiet-reader".into(), session.clone());
+        let weak = Arc::downgrade(&session);
+        client.spawn_event_reader("quiet-reader".into(), session.clone());
+        tokio::task::yield_now().await;
+        client.sessions_write().remove("quiet-reader");
+        session.disconnect().await;
+        drop(session);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while weak.strong_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("quiet event reader retained a disconnected session");
+    }
 
     #[test]
     fn unknown_local_studio_archive_does_not_leave_a_pending_runtime_route() {

@@ -6,7 +6,10 @@ static SHARED_MOBILE_CLIENT: OnceLock<Arc<MobileClient>> = OnceLock::new();
 static PLATFORM_INIT: OnceLock<()> = OnceLock::new();
 
 fn ensure_platform_init() {
-    PLATFORM_INIT.get_or_init(|| {});
+    PLATFORM_INIT.get_or_init(|| {
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        crate::tls_roots::init_mobile_tls_roots();
+    });
 }
 
 pub(crate) fn shared_runtime() -> Arc<tokio::runtime::Runtime> {

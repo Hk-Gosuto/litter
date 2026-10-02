@@ -1,5 +1,28 @@
 use std::path::Path;
 
+/// Remote WSS/HTTPS connections still need CA roots after removing local startup.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub(crate) fn init_mobile_tls_roots() {
+    if std::env::var_os("SSL_CERT_FILE")
+        .is_some_and(|path| is_usable_pem_bundle(Path::new(&path)))
+    {
+        return;
+    }
+    let directory = std::env::temp_dir().join("litter-tls");
+    let bundle = directory.join("cacert.pem");
+    let result = std::fs::create_dir_all(&directory).and_then(|_| {
+        if is_usable_pem_bundle(&bundle) {
+            Ok(())
+        } else {
+            std::fs::write(&bundle, include_bytes!("cacert.pem"))
+        }
+    });
+    match result {
+        Ok(()) => unsafe { std::env::set_var("SSL_CERT_FILE", bundle) },
+        Err(error) => tracing::warn!("failed to prepare mobile TLS roots: {error}"),
+    }
+}
+
 pub(crate) fn is_usable_pem_bundle(path: &Path) -> bool {
     const CERTIFICATE_HEADER: &[u8] = b"-----BEGIN CERTIFICATE-----";
     const CERTIFICATE_FOOTER: &[u8] = b"-----END CERTIFICATE-----";

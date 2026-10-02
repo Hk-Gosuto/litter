@@ -36,11 +36,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.sigkitten.litter.android.R
 import com.litter.android.state.MinigameOverlayState
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -108,14 +106,14 @@ private fun Header(state: MinigameOverlayState, onClose: () -> Unit) {
         Text(
             text = title,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.Medium,
         )
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onClose) {
             Icon(
                 Icons.Default.Close,
-                contentDescription = stringResource(R.string.conversation_close_minigame),
+                contentDescription = "Close minigame",
                 tint = LitterTheme.textSecondary,
                 modifier = Modifier.size(16.dp),
             )
@@ -170,7 +168,7 @@ private fun LoadingSkeleton() {
         Text(
             text = LOADING_STAGES[stageIndex],
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             fontWeight = FontWeight.Medium,
         )
         Box(
@@ -209,7 +207,7 @@ private fun FailureCard(message: String, onRetry: () -> Unit) {
         Text(
             message,
             color = LitterTheme.textSecondary,
-            fontSize = LitterTextStyle.caption.scaled,
+            fontSize = LitterTextStyle.footnote.scaled,
             style = TextStyle(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
         )
         Spacer(Modifier.height(16.dp))
@@ -220,7 +218,7 @@ private fun FailureCard(message: String, onRetry: () -> Unit) {
                 containerColor = Color.Transparent,
             ),
         ) {
-            Text(stringResource(R.string.conversation_try_again), fontSize = LitterTextStyle.caption.scaled, fontWeight = FontWeight.SemiBold)
+            Text("Try again", fontSize = LitterTextStyle.footnote.scaled, fontWeight = FontWeight.SemiBold)
         }
     }
 }

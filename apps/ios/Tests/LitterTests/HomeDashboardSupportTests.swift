@@ -237,7 +237,7 @@ final class HomeDashboardSupportTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), [active.serverId, primary.serverId])
     }
 
-    func testSortedConnectedServersDeduplicatesEquivalentEndpointsAndPrefersActiveConnection() {
+    func testSortedConnectedServersPreservesDistinctServerIdentitiesAtSameEndpoint() {
         let primary = makeServerSnapshot(
             id: "server-a",
             name: "Mac Studio",
@@ -256,7 +256,7 @@ final class HomeDashboardSupportTests: XCTestCase {
             activeServerId: active.serverId
         )
 
-        XCTAssertEqual(result.map(\.id), [active.serverId])
+        XCTAssertEqual(result.map(\.id), [active.serverId, primary.serverId])
     }
 
     func testHomeDashboardModelRefreshesRecentSessionsWhenObservedSnapshotThreadChanges() async {

@@ -44,10 +44,7 @@ struct AppsListView: View {
                 .presentationDetents([.medium])
         }
         .alert(
-            AppLanguage.localizedString(
-                "Delete \"%@\"?",
-                deleteTarget?.title ?? ""
-            ),
+            "Delete \"\(deleteTarget?.title ?? "")\"?",
             isPresented: Binding(
                 get: { deleteTarget != nil },
                 set: { if !$0 { deleteTarget = nil } }
@@ -154,13 +151,14 @@ struct AppsListView: View {
 
     private func relativeUpdated(_ app: SavedApp) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(app.updatedAtMs) / 1000.0)
+        return "Updated \(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))"
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return AppLanguage.localizedString(
-            "Updated %@",
-            formatter.localizedString(for: date, relativeTo: Date())
-        )
-    }
+        return formatter
+    }()
 
     private var emptyState: some View {
         VStack(spacing: 12) {

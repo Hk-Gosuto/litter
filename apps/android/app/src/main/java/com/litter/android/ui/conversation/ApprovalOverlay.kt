@@ -111,7 +111,7 @@ fun ApprovalOverlay(
                 Text(
                     text = message,
                     color = Color(0xFFFF6B6B),
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                 )
             }
 
@@ -199,7 +199,7 @@ private fun ApprovalCard(
                     com.litter.android.state.PathDisplay.display(cwd, isLocal, context),
                 ),
                 color = LitterTheme.textSecondary,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
             )
         }
 
@@ -209,7 +209,7 @@ private fun ApprovalCard(
                 text = com.litter.android.state.PathDisplay.display(path, isLocal, context),
                 color = LitterTheme.textSecondary,
                 fontFamily = LitterTheme.monoFont,
-                fontSize = LitterTextStyle.caption.scaled,
+                fontSize = LitterTextStyle.footnote.scaled,
             )
         }
 
@@ -282,7 +282,7 @@ private fun UserInputCard(
                 Text(
                     text = requester,
                     color = LitterTheme.accent,
-                    fontSize = LitterTextStyle.caption2.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                 )
             } else {
                 Spacer(modifier = Modifier.weight(1f))
@@ -320,7 +320,7 @@ private fun UserInputCard(
                         Text(
                             text = option.label,
                             color = if (isSelected) Color.Black else LitterTheme.textPrimary,
-                            fontSize = LitterTextStyle.caption.scaled,
+                            fontSize = LitterTextStyle.footnote.scaled,
                             modifier = Modifier
                                 .background(
                                     if (isSelected) LitterTheme.accent else LitterTheme.codeBackground,

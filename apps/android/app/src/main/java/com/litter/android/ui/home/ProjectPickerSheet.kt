@@ -1,5 +1,6 @@
 package com.litter.android.ui.home
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,11 +38,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.scaled
@@ -79,25 +78,25 @@ fun ProjectPickerSheet(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.common_close), color = LitterTheme.textSecondary)
+                Text("Close", color = LitterTheme.textSecondary)
             }
             Spacer(Modifier.weight(1f))
             Text(
-                text = stringResource(R.string.project_title),
+                text = "Projects",
                 color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.subheadline.scaled,
+                fontSize = LitterTextStyle.body.scaled,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onCreateNew) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = stringResource(R.string.project_new),
-                    tint = LitterTheme.accent,
+                    contentDescription = "New project",
+                    tint = LitterTheme.textPrimary,
                 )
             }
         }
@@ -106,7 +105,7 @@ fun ProjectPickerSheet(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text(stringResource(R.string.project_search), color = LitterTheme.textMuted) },
+            placeholder = { Text("Search projects", color = LitterTheme.textMuted) },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
@@ -119,7 +118,7 @@ fun ProjectPickerSheet(
                     IconButton(onClick = { query = "" }) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.project_clear_search),
+                            contentDescription = "Clear",
                             tint = LitterTheme.textMuted,
                         )
                     }
@@ -128,10 +127,10 @@ fun ProjectPickerSheet(
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 4.dp),
+                .padding(horizontal = 20.dp, vertical = 4.dp),
         )
 
-        HorizontalDivider(color = LitterTheme.textMuted.copy(alpha = 0.15f))
+        Spacer(Modifier.height(8.dp))
 
         if (filtered.isEmpty()) {
             Column(
@@ -149,19 +148,19 @@ fun ProjectPickerSheet(
                     modifier = Modifier.size(32.dp),
                 )
                 Text(
-                    text = stringResource(R.string.project_empty),
+                    text = "No projects yet",
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.body.scaled,
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = stringResource(R.string.project_empty_helper),
+                    text = "Tap + to pick a directory and start your first thread.",
                     color = LitterTheme.textMuted,
-                    fontSize = LitterTextStyle.caption.scaled,
+                    fontSize = LitterTextStyle.footnote.scaled,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
                 TextButton(onClick = onCreateNew) {
-                    Text(stringResource(R.string.project_new), color = LitterTheme.accent)
+                    Text("New Project", color = LitterTheme.textPrimary)
                 }
             }
         } else {
@@ -191,49 +190,30 @@ private fun ProjectRow(
     onClick: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    Row(
+    val path = com.litter.android.state.PathDisplay.display(project.cwd, isLocal, context)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 62.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
-        Icon(
-            imageVector = Icons.Default.Folder,
-            contentDescription = null,
-            tint = LitterTheme.textSecondary,
-            modifier = Modifier
-                .size(18.dp)
-                .padding(top = 2.dp),
+        Text(
+            text = projectDefaultLabel(project.cwd),
+            color = LitterTheme.textPrimary,
+            fontSize = LitterTextStyle.body.scaled,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = projectDefaultLabel(project.cwd),
-                color = LitterTheme.textPrimary,
-                fontSize = LitterTextStyle.body.scaled,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (serverName != null) {
-                    Text(
-                        text = serverName,
-                        color = LitterTheme.accent.copy(alpha = 0.75f),
-                        fontSize = LitterTextStyle.caption2.scaled,
-                        fontFamily = LitterTheme.monoFont,
-                        maxLines = 1,
-                    )
-                }
-                Text(
-                    text = com.litter.android.state.PathDisplay.display(project.cwd, isLocal, context),
-                    color = LitterTheme.textMuted,
-                    fontSize = LitterTextStyle.caption2.scaled,
-                    fontFamily = LitterTheme.monoFont,
-                    maxLines = 1,
-                )
-            }
-        }
+        Text(
+            text = listOfNotNull(serverName, path).joinToString(" · ").lowercase(),
+            color = LitterTheme.textSecondary,
+            fontSize = LitterTextStyle.footnote.scaled,
+            fontFamily = LitterTheme.monoFont,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
