@@ -29,8 +29,8 @@ const MOBILE_COMMAND_ACTION_FIELD_CAP_BYTES: usize = 1024;
 const MOBILE_COMMAND_ACTION_COUNT_CAP: usize = 32;
 const MOBILE_COMMAND_TEXT_TRUNCATION_SUFFIX: &str = "... [truncated on mobile]";
 const MOBILE_COMMAND_OUTPUT_TRUNCATION_SUFFIX: &str = "\n[output truncated on mobile]\n";
-const DESKTOP_FILE_CONTEXT_HEADER: &str = "# Files mentioned by the user:";
-const DESKTOP_FILE_CONTEXT_REQUEST_HEADER: &str = "## My request for Codex:";
+pub(crate) const DESKTOP_FILE_CONTEXT_HEADER: &str = "# Files mentioned by the user:";
+pub(crate) const DESKTOP_FILE_CONTEXT_REQUEST_HEADER: &str = "## My request for Codex:";
 
 // ---------------------------------------------------------------------------
 // Conversion options
@@ -2143,6 +2143,7 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t1",
             vec![ThreadItem::CommandExecution {
+                sandbox_type: None,
                 model_context: None,
                 plugin_id: None,
                 script_path: None,
@@ -2202,6 +2203,7 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t1",
             vec![ThreadItem::CommandExecution {
+                sandbox_type: None,
                 model_context: None,
                 plugin_id: None,
                 script_path: None,
@@ -2684,6 +2686,7 @@ diff --git a/parser.rs b/parser.rs\n\
         let turns = vec![make_turn(
             "t-command-truncate",
             vec![ThreadItem::CommandExecution {
+                sandbox_type: None,
                 model_context: None,
                 plugin_id: None,
                 script_path: None,

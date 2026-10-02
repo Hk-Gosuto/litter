@@ -12,7 +12,8 @@ use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use codex_app_server_client::{
-    AppServerClient, AppServerEvent, RemoteAppServerClient, RemoteAppServerConnectArgs,
+    AppServerClient, AppServerEvent, EmbeddedNetworkPolicy, RemoteAppServerClient,
+    RemoteAppServerConnectArgs,
     RemoteAppServerEndpoint,
 };
 use codex_app_server_protocol::{
@@ -685,6 +686,7 @@ impl ServerSession {
             loader_overrides: LoaderOverrides::default(),
             strict_config: false,
             cloud_config_bundle,
+            embedded_network_policy: EmbeddedNetworkPolicy::default(),
             feedback,
             log_db: None,
             state_db: None,

@@ -589,6 +589,7 @@ impl From<AppThreadGoalSetRequest> for upstream::ThreadGoalSetParams {
     fn from(value: AppThreadGoalSetRequest) -> Self {
         Self {
             thread_id: value.thread_id,
+            origin: None,
             objective: value.objective,
             status: value.status.map(Into::into),
             // Mobile shape uses a flat `Option<i64>` which can only express
@@ -611,6 +612,7 @@ impl From<AppThreadGoalClearRequest> for upstream::ThreadGoalClearParams {
     fn from(value: AppThreadGoalClearRequest) -> Self {
         Self {
             thread_id: value.thread_id,
+            origin: None,
         }
     }
 }
@@ -845,6 +847,7 @@ impl TryFrom<AppStartRealtimeSessionRequest> for upstream::ThreadRealtimeStartPa
             transport: value.transport.map(Into::into),
             voice: value.voice.map(Into::into),
             client_controlled_handoff: value.client_controlled_handoff,
+            backend_reasoning_status: false,
             client_managed_handoffs: None,
             delegation_ack_filler: None,
             flush_transcript_tail_on_session_end: None,

@@ -1765,6 +1765,7 @@ mod tests {
     #[test]
     fn deserialize_typed_response_resolves_read_action_paths_against_command_cwd() {
         let command_item = ThreadItem::CommandExecution {
+            sandbox_type: None,
             model_context: None,
             plugin_id: None,
             script_path: None,

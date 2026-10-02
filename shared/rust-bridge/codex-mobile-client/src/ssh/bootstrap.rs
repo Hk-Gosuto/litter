@@ -151,6 +151,14 @@ impl SshClient {
         codex_binary: &RemoteCodexBinary,
         shell: RemoteShell,
     ) -> Result<bool, SshError> {
+        self.app_server_proxy_supported_uncached(codex_binary, shell).await
+    }
+
+    pub(crate) async fn app_server_proxy_supported_uncached(
+        &self,
+        codex_binary: &RemoteCodexBinary,
+        shell: RemoteShell,
+    ) -> Result<bool, SshError> {
         let command = match shell {
             RemoteShell::Posix => format!(
                 "{profile_init}\n{bin} app-server proxy --help >/dev/null 2>&1",

@@ -6,10 +6,7 @@ static SHARED_MOBILE_CLIENT: OnceLock<Arc<MobileClient>> = OnceLock::new();
 static PLATFORM_INIT: OnceLock<()> = OnceLock::new();
 
 fn ensure_platform_init() {
-    PLATFORM_INIT.get_or_init(|| {
-        #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
-        crate::ish_exec::install();
-    });
+    PLATFORM_INIT.get_or_init(|| {});
 }
 
 pub(crate) fn shared_runtime() -> Arc<tokio::runtime::Runtime> {

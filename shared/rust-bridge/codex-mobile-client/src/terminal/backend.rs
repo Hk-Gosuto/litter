@@ -30,7 +30,9 @@ pub(crate) async fn open_backend(
 ) -> Result<OpenBackendResult, TerminalError> {
     validate_size(size)?;
     match kind {
-        TerminalBackendKind::LocalIsh { cwd } => super::local_ish::open(cwd, size).await,
+        TerminalBackendKind::LocalIsh { .. } => Err(TerminalError::Unsupported {
+            detail: "embedded iSH is disabled; use a remote Codex terminal".to_string(),
+        }),
         TerminalBackendKind::LocalProot { cwd } => super::local_proot::open(cwd, size).await,
         TerminalBackendKind::RemoteAlleycat {
             node_id,

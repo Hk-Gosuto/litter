@@ -6,10 +6,6 @@
 // Upstream app-server dispatch futures exceed the default layout query depth on iOS.
 #![recursion_limit = "256"]
 
-#[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
-pub mod ish_exec;
-
-#[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
 pub mod ish_runtime;
 
 // Always-compiled UniFFI-visible types. The host cdylib that

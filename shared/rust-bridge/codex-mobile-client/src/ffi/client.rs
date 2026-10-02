@@ -3419,7 +3419,6 @@ mod tests {
             display: Option<&str>,
         ) -> upstream::PluginSummary {
             upstream::PluginSummary {
-                extensions: None,
                 id: id.into(),
                 remote_plugin_id: None,
                 version: None,
