@@ -406,11 +406,33 @@ drafts, off-main launch/attachment work, no hidden keyboard warmup, stable
 message scroll identities and expansion across turn acknowledgements. Android
 keeps system font scaling and Android 15 system-bar compatibility, viewport
 prefetch, paged rendering and bounded hydration while retaining the original
-cards. Its work-chain expansion uses those card styles; iOS retains its
-original individual reasoning/tool collapse controls.
+cards. Both platforms retain individual reasoning/tool controls; finishing a
+turn does not replace its tool cards with a collapsed work-chain summary.
 
 Validation: 281 iOS unit tests and three UI regressions passed (follow-up
 history, 500-message scrolling and harness settings edits/read-only policy);
 79 Android JVM tests passed. Design-specific section grouping assertions were
 removed along with the discarded section UI. Rust runtime sources and mobile
 FFI artifacts are unchanged from the previously validated remote-only build.
+
+## Remote-only and conversation review (2026-10-04)
+
+- Saved-server migration on both platforms retires legacy embedded-runtime
+  records by ID/source, retaining explicit loopback tunnels and paired hosts.
+  The shared Rust home cache also drops unreachable embedded-session previews.
+- Android excludes cached Alpine/proot assets and native executables from
+  packaging, including incremental builds from pre-migration checkouts.
+- Android transcript regression coverage verifies that tool rows keep their
+  identities and remain visible when a streaming turn finishes.
+- Android message actions report edit/fork RPC failures instead of allowing
+  an uncaught edit exception or silently hiding fork errors. A successful fork
+  opens its conversation, matching iOS. Exercise against a connected host for QA.
+- iOS restores the runtime-disable guard for unit tests and conversation UI
+  fixtures, preventing saved-host reconnects during isolated UI tests.
+
+Validation: `make rust-test` (842 passed, 7 ignored), remote-client tests
+(2 passed), `make test-android` (79 passed), iOS simulator unit tests
+(282 passed), and three iOS UI regressions (follow-up history, 500-message
+scrolling, rapid composer input) passed. A Gradle merge check with temporary
+legacy Alpine/proot fixtures confirmed exclusion from assets and JNI outputs.
+Android device UI and real-host edit/fork flows still need end-to-end QA.

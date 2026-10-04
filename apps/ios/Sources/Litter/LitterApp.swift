@@ -353,6 +353,12 @@ struct LitterApp: App {
             .environment(themeManager)
             .environment(wallpaperManager)
             .task {
+                let process = ProcessInfo.processInfo
+                guard !LitterPlatform.isRunningUnitTests,
+                      !process.arguments.contains("--ui-test-conversation-display"),
+                      process.environment["CODEXIOS_UI_TEST_DISABLE_RUNTIME"] != "1" else {
+                    return
+                }
                 appModel.start()
                 voiceRuntime.bind(appModel: appModel)
                 appRuntime.bind(appModel: appModel, voiceRuntime: voiceRuntime)
@@ -360,9 +366,6 @@ struct LitterApp: App {
                 if scenePhase == .active {
                     appRuntime.appDidBecomeActive()
                 }
-                #if targetEnvironment(macCatalyst)
-                // Remote-only build: no local Codex process.
-                #endif
                 // Pair host (BLE advertiser, ultrasonic emitter,
                 // Bonjour publish, WS listener) and the iPhone client
                 // (BLE scanner, ultrasonic reader, NISession) are

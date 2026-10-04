@@ -102,6 +102,7 @@ fun ConversationScreen(
     onNavigateToSessions: (() -> Unit)? = null,
     onShowDirectoryPicker: (() -> Unit)? = null,
     onOpenSavedApp: ((String) -> Unit)? = null,
+    onOpenConversation: ((ThreadKey) -> Unit)? = null,
 ) {
     val appModel = LocalAppModel.current
     val snapshot by appModel.snapshot.collectAsState()
@@ -177,9 +178,8 @@ fun ConversationScreen(
     var isLoadingOlderTurns by remember(threadKey) { mutableStateOf(false) }
     var expandedTurnIds by remember(threadKey, collapseTurns) { mutableStateOf(setOf<String>()) }
     val turnCollapseState = remember(threadKey, collapseTurns) { TranscriptPresentationState() }
-    var chainOverrides by remember(threadKey) { mutableStateOf(mapOf<String, Boolean>()) }
-    val transcriptRows = remember(transcriptTurns, turnCollapseState, expandedTurnIds, chainOverrides) {
-        buildTranscriptRows(transcriptTurns, turnCollapseState, expandedTurnIds, chainOverrides)
+    val transcriptRows = remember(transcriptTurns, turnCollapseState, expandedTurnIds) {
+        buildTranscriptRows(transcriptTurns, turnCollapseState, expandedTurnIds)
     }
     var streamingRenderTick by remember(threadKey) { mutableStateOf(0) }
     var followScrollToken by remember(threadKey) { mutableStateOf(0) }
@@ -265,6 +265,7 @@ fun ConversationScreen(
     var showSessionDiffSheet by remember { mutableStateOf(false) }
     var slashErrorMessage by remember { mutableStateOf<String?>(null) }
     var reloadErrorMessage by remember { mutableStateOf<String?>(null) }
+    var messageActionError by remember(threadKey) { mutableStateOf<String?>(null) }
     var collaborationModesLoading by remember { mutableStateOf(false) }
     var collaborationModePresets by remember {
         mutableStateOf<List<uniffi.codex_mobile_client.AppCollaborationModePreset>>(emptyList())
@@ -541,8 +542,14 @@ fun ConversationScreen(
                                                 // would be stale.
                                                 loadedUserItemIndex(items, messageId)?.let { turnIndex ->
                                                     scope.launch {
-                                                        val prefill = appModel.store.editMessage(threadKey, turnIndex)
-                                                        appModel.queueComposerPrefill(threadKey, prefill)
+                                                        try {
+                                                            val prefill = appModel.store.editMessage(threadKey, turnIndex)
+                                                            appModel.queueComposerPrefill(threadKey, prefill)
+                                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                                            throw e
+                                                        } catch (e: Exception) {
+                                                            messageActionError = e.localizedMessage ?: e.toString()
+                                                        }
                                                     }
                                                 }
                                             },
@@ -560,7 +567,12 @@ fun ConversationScreen(
                                                             )
                                                             appModel.store.setActiveThread(newKey)
                                                             appModel.refreshThreadSnapshot(newKey)
-                                                        } catch (_: Exception) {}
+                                                            onOpenConversation?.invoke(newKey)
+                                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                                            throw e
+                                                        } catch (e: Exception) {
+                                                            messageActionError = e.localizedMessage ?: e.toString()
+                                                        }
                                                     }
                                                 }
                                             },
@@ -588,11 +600,6 @@ fun ConversationScreen(
                                         showsCollapsedPreview = row.isLastEntry,
                                     )
                                 }
-                                is TranscriptRow.Chain -> TurnChainSummaryRow(
-                                    chain = row.chain,
-                                    expanded = row.expanded,
-                                    onToggle = { chainOverrides = chainOverrides + (row.expansionId to !row.expanded) },
-                                )
                                 is TranscriptRow.Collapsed -> CollapsedTurnCard(turn = row.turn) {
                                     expandedTurnIds = expandedTurnIds + row.expansionId
                                 }
@@ -1064,6 +1071,19 @@ fun ConversationScreen(
                         onClick = { appModel.store.dismissPlanImplementationPrompt(threadKey) },
                     ) {
                         Text(stringResource(R.string.conversation_implement_plan_cancel))
+                    }
+                },
+            )
+        }
+
+        messageActionError?.let { message ->
+            AlertDialog(
+                onDismissRequest = { messageActionError = null },
+                title = { Text(stringResource(R.string.common_failed)) },
+                text = { Text(message) },
+                confirmButton = {
+                    TextButton(onClick = { messageActionError = null }) {
+                        Text(stringResource(R.string.common_ok))
                     }
                 },
             )

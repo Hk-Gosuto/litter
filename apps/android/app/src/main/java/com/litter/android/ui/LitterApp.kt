@@ -382,6 +382,7 @@ fun LitterApp(
                         onInfo = { navigate(Route.ConversationInfo(route.key)) },
                         onShowDirectoryPicker = { openDirectoryPicker(route.key.serverId) },
                         onOpenSavedApp = { appId -> navigate(Route.SavedApp(appId)) },
+                        onOpenConversation = navigateToConversation,
                     )
                 }
 

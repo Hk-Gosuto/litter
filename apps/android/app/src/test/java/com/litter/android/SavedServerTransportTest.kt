@@ -11,6 +11,19 @@ import org.junit.Test
 
 class SavedServerTransportTest {
     @Test
+    fun remoteOnlyMigrationKeepsExplicitLoopbackAndPairedServers() {
+        val loopback = SavedServer("forwarded", "Tunnel", "127.0.0.1", 8390, hasCodexServer = true)
+        val paired = alleycatServer("paired", "node-a")
+        val legacyId = loopback.copy(id = "local")
+        val legacySource = loopback.copy(id = "renamed-local", source = "local")
+
+        assertEquals(
+            listOf(loopback, paired),
+            SavedServerStore.remoteServers(listOf(legacyId, loopback, legacySource, paired)),
+        )
+    }
+
+    @Test
     fun forgettingAlleycatServerReturnsOnlyUnreferencedNodeToken() {
         val primary = alleycatServer(id = "primary", nodeId = " NODE-A ")
         val duplicate = alleycatServer(id = "duplicate", nodeId = "node-a")

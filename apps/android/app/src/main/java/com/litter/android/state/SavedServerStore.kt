@@ -257,7 +257,7 @@ object SavedServerStore {
         return try {
             val array = JSONArray(json)
             val decoded = (0 until array.length()).map { SavedServer.fromJson(array.getJSONObject(it)) }
-            val migrated = decoded.map { migrateDisplayName(it.normalizedForPersistence()) }
+            val migrated = remoteServers(decoded).map { migrateDisplayName(it.normalizedForPersistence()) }
             if (decoded != migrated) {
                 save(context, migrated)
             }
@@ -269,9 +269,13 @@ object SavedServerStore {
 
     fun save(context: Context, servers: List<SavedServer>) {
         val array = JSONArray()
-        servers.forEach { array.put(it.toJson()) }
+        remoteServers(servers).forEach { array.put(it.toJson()) }
         prefs(context).edit().putString(KEY, array.toString()).apply()
     }
+
+    /** Retire embedded-runtime entries while preserving explicit loopback connections. */
+    internal fun remoteServers(servers: List<SavedServer>): List<SavedServer> =
+        servers.filter { it.id != "local" && it.source != "local" }
 
     fun remember(context: Context, server: SavedServer) {
         val existing = load(context).toMutableList()

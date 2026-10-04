@@ -17,6 +17,7 @@ enum SavedServerStore {
     private static var cachedServers: [SavedServer] = []
 
     static func save(_ servers: [SavedServer]) {
+        let servers = remoteServers(from: servers)
         guard let data = try? JSONEncoder().encode(servers) else { return }
         UserDefaults.standard.set(data, forKey: savedServersKey)
         cachedRaw = data
@@ -34,7 +35,7 @@ enum SavedServerStore {
             return cachedServers
         }
         let decoded = (try? JSONDecoder().decode([SavedServer].self, from: data)) ?? []
-        let migrated = decoded.map { saved -> SavedServer in
+        let migrated = remoteServers(from: decoded).map { saved -> SavedServer in
             let server = saved.toDiscoveredServer()
             let restored = SavedServer
                 .from(server, rememberedByUser: saved.rememberedByUser)
@@ -60,6 +61,11 @@ enum SavedServerStore {
             cachedServers = migrated
         }
         return migrated
+    }
+
+    /// Retire embedded-runtime entries while preserving explicit loopback connections.
+    static func remoteServers(from servers: [SavedServer]) -> [SavedServer] {
+        servers.filter { $0.id != "local" && $0.source != .local }
     }
 
     static func upsert(_ server: DiscoveredServer) {

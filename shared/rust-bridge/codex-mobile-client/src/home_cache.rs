@@ -127,6 +127,8 @@ fn load_at(path: &Path) -> Vec<AppSessionSummary> {
         Ok(cache) if cache.version == CURRENT_VERSION => cache
             .sessions
             .into_iter()
+            // The embedded server can no longer reconnect to replace these rows.
+            .filter(|session| session.server_id != "local")
             .take(MAX_CACHED_SESSIONS)
             .map(AppSessionSummary::from)
             .collect(),
@@ -153,6 +155,7 @@ fn save_at(path: &Path, summaries: &[AppSessionSummary]) {
         version: CURRENT_VERSION,
         sessions: summaries
             .iter()
+            .filter(|summary| summary.key.server_id != "local")
             .take(MAX_CACHED_SESSIONS)
             .map(CachedSession::from)
             .collect(),
@@ -220,6 +223,30 @@ mod tests {
         assert_eq!(loaded[0].last_user_message, None);
         let raw = fs::read_to_string(&path).unwrap();
         assert!(!raw.contains("secret prompt"));
+    }
+
+    #[test]
+    fn remote_only_cache_retires_local_history_without_hiding_remote_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CACHE_FILE);
+        let local = summary("local", "old-thread", "Embedded history", 30);
+        let mut remote = summary("forwarded", "remote-thread", "Remote history", 20);
+        remote.server_host = "127.0.0.1".to_string();
+
+        // Simulate a cache written before embedded execution was removed.
+        let legacy = PersistedCache {
+            version: CURRENT_VERSION,
+            sessions: vec![CachedSession::from(&local), CachedSession::from(&remote)],
+        };
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let loaded = load_at(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].key, remote.key);
+
+        save_at(&path, &[local, remote]);
+        let saved: PersistedCache = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.sessions.len(), 1);
+        assert_eq!(saved.sessions[0].server_id, "forwarded");
     }
 
     #[test]

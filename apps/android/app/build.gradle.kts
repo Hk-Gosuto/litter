@@ -83,9 +83,8 @@ android {
     }
 
     androidResources {
-        // Keep the proot rootfs as gzip bytes; Rust extracts it into
-        // app-private storage during bootstrap.
-        noCompress += "tgz"
+        // Older checkouts may still contain downloaded embedded-runtime assets.
+        ignoreAssetsPatterns += listOf("alpine-fs.*", "proot.version", "proot-COPYING.txt", "talloc-COPYING.txt")
     }
 
     sourceSets {
@@ -104,6 +103,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += setOf("**/libproot.so", "**/libproot_loader.so")
         }
     }
 }
