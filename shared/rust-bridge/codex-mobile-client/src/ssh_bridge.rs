@@ -511,6 +511,10 @@ impl RemoteTransport for SshBridgeReconnectTransport {
             transport = ?self.transport,
             "ssh bridge runtime reconnect start"
         );
+        self.ssh
+            .reconnect_if_needed()
+            .await
+            .map_err(|error| crate::transport::TransportError::ConnectionFailed(error.to_string()))?;
         let (client, close_handle) = connect_app_server_client_via_ssh_with_close(
             Arc::clone(&self.ssh),
             &self.state_dir,

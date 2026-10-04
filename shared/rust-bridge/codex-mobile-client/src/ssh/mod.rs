@@ -95,6 +95,11 @@ pub struct SshClient {
     /// background tasks can open channels concurrently with foreground
     /// exec calls.
     handle: Arc<Mutex<Handle<ClientHandler>>>,
+    // Retained only for this live session; reconnect never persists credentials.
+    credentials: SshCredentials,
+    verified_fingerprint: String,
+    reconnect_lock: Mutex<()>,
+    disconnected: std::sync::atomic::AtomicBool,
     /// Tracks forwarding background tasks so we can abort them on disconnect.
     pub(super) forward_tasks: Mutex<HashMap<u16, ForwardTask>>,
     /// Optional login password to reuse for unlocking the remote macOS

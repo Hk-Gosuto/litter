@@ -436,3 +436,21 @@ Validation: `make rust-test` (842 passed, 7 ignored), remote-client tests
 scrolling, rapid composer input) passed. A Gradle merge check with temporary
 legacy Alpine/proot fixtures confirmed exclusion from assets and JNI outputs.
 Android device UI and real-host edit/fork flows still need end-to-end QA.
+
+## SSH chat recovery (2026-10-04)
+
+The shared Rust SSH client re-authenticates a closed transport before rebuilding
+its app-server proxy/tunnel, serializing concurrent reconnects and keeping the
+original verified host key pinned. Exhausted short retries now enter a bounded
+retry interval instead of terminating the session worker. Offline actions fail
+immediately during that interval, and explicit disconnect cancels recovery.
+Whole-session replacement also restores active/tracked thread subscriptions.
+
+Validation: Rust tests cover a real loopback SSH server dropping its connection,
+concurrent recovery, forwarding through the original local port after recovery,
+changed host-key rejection, explicit disconnect, and RPC recovery after five
+failures without navigation or a reachability callback. `make rust-test`
+passed 846 tests (7 ignored), the final `make ios-sim-fast` build passed, and
+the iOS simulator unit suite passed 282 tests during integration validation.
+iOS is the primary integration-validation target for this fix; Android uses
+the same Rust implementation and needs a later device recovery pass.

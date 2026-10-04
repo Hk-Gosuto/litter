@@ -1002,6 +1002,10 @@ impl RemoteTransport for SshReconnectTransport {
         args: &RemoteAppServerConnectArgs,
         websocket_url: &str,
     ) -> Result<Reconnected, TransportError> {
+        self.ssh_client
+            .reconnect_if_needed()
+            .await
+            .map_err(|error| TransportError::ConnectionFailed(error.to_string()))?;
         match &self.mode {
             SshReconnectMode::AppServerProxy {
                 codex_path,
@@ -1151,6 +1155,7 @@ async fn remote_runtime_worker(
     let mut keepalive: Option<Arc<dyn SessionKeepalive>> = initial_keepalive;
     let mut requests = FuturesUnordered::new();
     let mut generation = 0;
+    let mut retry_pause = Duration::from_secs(5);
     loop {
         tokio::select! {
             Some(completed) = requests.next(), if !requests.is_empty() => {
@@ -1167,6 +1172,7 @@ async fn remote_runtime_worker(
                         ).await
                     {
                         generation += 1;
+                        retry_pause = Duration::from_secs(5);
                     }
                     if pending.generation != generation {
                         pending.generation = generation;
@@ -1233,12 +1239,21 @@ async fn remote_runtime_worker(
                     )
                     .await {
                         generation += 1;
+                        retry_pause = Duration::from_secs(5);
                         continue;
                     }
                     if let Some(event) = event {
                         route_app_server_event(&event_tx, &health_tx, runtime_kind.clone(), &event);
                     }
-                    break;
+                    // Exhausting the quick attempts must not permanently
+                    // kill a foreground chat's connection worker. Fail the
+                    // outstanding requests and keep trying at a bounded rate.
+                    requests.clear();
+                    if !wait_for_remote_retry(&mut command_rx, retry_pause).await {
+                        break;
+                    }
+                    retry_pause = (retry_pause * 2).min(Duration::from_secs(30));
+                    continue;
                 }
                 if let Some(event) = event {
                     route_app_server_event(&event_tx, &health_tx, runtime_kind.clone(), &event);
@@ -1256,6 +1271,32 @@ async fn remote_runtime_worker(
     // Hold the keepalive Arc for the entire worker lifetime so transport-scoped
     // resources (e.g. an iroh Connection) are dropped only after the worker exits.
     drop(keepalive);
+}
+
+/// Stay responsive to disconnect while offline. New user actions fail rather
+/// than being queued for unexpected execution once connectivity returns.
+async fn wait_for_remote_retry(
+    commands: &mut mpsc::Receiver<SessionCommand>,
+    delay: Duration,
+) -> bool {
+    let deadline = tokio::time::sleep(delay);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return true,
+            command = commands.recv() => match command {
+                None | Some(SessionCommand::Shutdown) => return false,
+                Some(SessionCommand::Request { response_tx, .. }) => {
+                    let _ = response_tx.send(Err(RpcError::Transport(TransportError::Disconnected)));
+                }
+                Some(SessionCommand::Notify { response_tx, .. }) |
+                Some(SessionCommand::Resolve { response_tx, .. }) |
+                Some(SessionCommand::Reject { response_tx, .. }) => {
+                    let _ = response_tx.send(Err(RpcError::Transport(TransportError::Disconnected)));
+                }
+            }
+        }
+    }
 }
 
 struct PendingRemoteRequest {
@@ -1523,6 +1564,7 @@ mod tests {
     }
 
     enum TestJsonLineServer {
+        DropAfterInitialize,
         DropOnFirstRequest,
         Respond(JsonValue),
         SlowModels,
@@ -1557,6 +1599,7 @@ mod tests {
             let _ = lines.next_line().await;
 
             match behavior {
+                TestJsonLineServer::DropAfterInitialize => {}
                 TestJsonLineServer::DropOnFirstRequest => {
                     // Consume one request and then close the stream without a
                     // response, simulating the app-server process/bridge dying
@@ -1857,6 +1900,114 @@ mod tests {
             .await
             .expect("worker should accept shutdown");
         worker.await.expect("worker should shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn remote_worker_recovers_after_quick_retries_are_exhausted_without_navigation() {
+        struct RecoverAfterOutage(AtomicUsize);
+        #[async_trait]
+        impl RemoteTransport for RecoverAfterOutage {
+            async fn reconnect(
+                &self,
+                _: &RemoteAppServerConnectArgs,
+                _: &str,
+            ) -> Result<Reconnected, TransportError> {
+                let attempt = self.0.fetch_add(1, Ordering::SeqCst);
+                if attempt < REMOTE_RECONNECT_MAX_ATTEMPTS as usize {
+                    return Err(TransportError::ConnectionFailed(
+                        "network unavailable".into(),
+                    ));
+                }
+                Ok(Reconnected {
+                    client: app_server_client_for_json_line_server(
+                        TestJsonLineServer::Respond(json!({"recovered": true})),
+                        "recovered",
+                    )
+                    .await,
+                    keepalive: None,
+                })
+            }
+        }
+        let transport = Arc::new(RecoverAfterOutage(AtomicUsize::new(0)));
+        let client = app_server_client_for_json_line_server(
+            TestJsonLineServer::DropAfterInitialize,
+            "outage",
+        )
+        .await;
+        let (commands, command_rx) = mpsc::channel(4);
+        let (events, _) = broadcast::channel(4);
+        let (health, mut health_rx) = watch::channel(ConnectionHealth::Connected);
+        let worker = tokio::spawn(remote_runtime_worker(
+            "codex".into(),
+            client,
+            None,
+            command_rx,
+            events,
+            health,
+            test_remote_args("outage"),
+            "outage".into(),
+            Some(transport.clone()),
+        ));
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                health_rx.changed().await.unwrap();
+                let connected = *health_rx.borrow_and_update() == ConnectionHealth::Connected;
+                if connected
+                    && transport.0.load(Ordering::SeqCst) > REMOTE_RECONNECT_MAX_ATTEMPTS as usize
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("worker must recover without a network callback or new user request");
+        let (response_tx, response_rx) = oneshot::channel();
+        commands
+            .send(SessionCommand::Request {
+                request: serde_json::from_value(json!({"id":1,"method":"model/list","params":{}}))
+                    .unwrap(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), response_rx)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            json!({"recovered":true})
+        );
+        commands.send(SessionCommand::Shutdown).await.unwrap();
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn offline_retry_rejects_new_actions_and_honors_shutdown() {
+        let (commands, mut command_rx) = mpsc::channel(4);
+        let wait = tokio::spawn(async move {
+            wait_for_remote_retry(&mut command_rx, Duration::from_secs(30)).await
+        });
+        let (response_tx, response_rx) = oneshot::channel();
+        commands
+            .send(SessionCommand::Request {
+                request: serde_json::from_value(json!({"id":1,"method":"model/list","params":{}}))
+                    .unwrap(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            response_rx.await.unwrap(),
+            Err(RpcError::Transport(TransportError::Disconnected))
+        ));
+        commands.send(SessionCommand::Shutdown).await.unwrap();
+        assert!(
+            !tokio::time::timeout(Duration::from_secs(1), wait)
+                .await
+                .unwrap()
+                .unwrap()
+        );
     }
 
     #[test]

@@ -2813,6 +2813,11 @@ impl MobileClient {
     }
 
     fn spawn_post_connect_warmup(&self, server_id: String, session: Arc<ServerSession>) {
+        // Whole-session replacement bypasses the old health transition. Resume
+        // any active/tracked threads here too; the helper skips fresh servers
+        // without such threads. Do not depend on an old session still being in
+        // the map: a previous failed connect may already have removed it.
+        run_post_reconnect_resubscribe(Arc::clone(&self.app_store), server_id.clone());
         run_connect_warmup(
             Arc::clone(&self.sessions),
             Arc::clone(&self.app_store),
