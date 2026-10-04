@@ -224,9 +224,10 @@ struct ConversationView: View {
                     activeThreadKey.threadId,
                     text.count
                 )
+                let preparedAttachments = await ConversationAttachmentSupport.prepareImages(attachmentImages)
                 let payload = try makeComposerPayload(
                     text: text,
-                    attachmentImages: attachmentImages,
+                    preparedAttachments: preparedAttachments,
                     fileAttachments: fileAttachments,
                     skillMentions: skillMentions,
                     pluginMentions: pluginMentions
@@ -262,7 +263,7 @@ struct ConversationView: View {
             do {
                 let payload = try makeComposerPayload(
                     text: text,
-                    attachmentImages: [],
+                    preparedAttachments: [],
                     fileAttachments: [],
                     skillMentions: [],
                     pluginMentions: []
@@ -366,12 +367,11 @@ struct ConversationView: View {
 
     private func makeComposerPayload(
         text: String,
-        attachmentImages: [UIImage],
+        preparedAttachments: [PreparedImageAttachment],
         fileAttachments: [ComposerFileAttachment],
         skillMentions: [SkillMentionSelection],
         pluginMentions: [PluginMentionSelection]
     ) throws -> AppComposerPayload {
-        let preparedAttachments = attachmentImages.compactMap(ConversationAttachmentSupport.prepareImage)
         var additionalInputs = skillMentions.map { mention in
             AppUserInput.skill(name: mention.name, path: AbsolutePath(value: mention.path))
         }
@@ -1388,7 +1388,10 @@ struct ConversationMessageList: View {
             expandedRecentTurnCount: expandedRecentTurnCount
         )
         transcriptBuildKey = nextBuildKey
-        applyTranscriptTurns(TranscriptTurn.preservingCollapseState(in: nextTurns, from: transcriptTurns), resetExpansion: resetExpansion)
+        let turnsToApply = resetExpansion
+            ? nextTurns
+            : TranscriptTurn.preservingCollapseState(in: nextTurns, from: transcriptTurns)
+        applyTranscriptTurns(turnsToApply, resetExpansion: resetExpansion)
     }
 
     private func makeTranscriptBuildKey() -> Int {
@@ -1995,9 +1998,7 @@ private struct ConversationInputBar: View {
     private var composerModelLabel: String {
         let pending = appState.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let selection = pending.isEmpty ? snapshot.threadModel : pending
-        let runtime = pending.isEmpty
-            ? appModel.threadSnapshot(for: snapshot.threadKey)?.agentRuntimeKind
-            : appState.selectedAgentRuntimeKind
+        let runtime = pending.isEmpty ? snapshot.threadAgentRuntimeKind : appState.selectedAgentRuntimeKind
         if let model = snapshot.availableModels.first(where: {
             modelMatchesSelection($0, selection, runtime: runtime)
         }) {

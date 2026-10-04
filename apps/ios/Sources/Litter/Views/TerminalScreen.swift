@@ -516,7 +516,7 @@ struct TerminalScreen: View {
         var options: [TerminalBackendOption] = []
         var seenNodeIds = Set<String>()
         var seenSshKeys = Set<String>()
-        let savedServers = SavedServerStore.load()
+        let savedServers = SavedServerStore.load().filter { $0.source != .local && $0.id != "local" }
         let savedByNodeId = savedServers.reduce(into: [String: SavedServer]()) { result, saved in
             guard let nodeId = normalized(saved.alleycatNodeId),
                   result[nodeId] == nil else {
@@ -807,19 +807,6 @@ private struct TerminalBackendOption: Identifiable, Hashable {
     let supportsResize: Bool
     let runningLabel: String
     let backend: TerminalBackendKind
-
-    static func localIsh(cwd: String?) -> TerminalBackendOption {
-        TerminalBackendOption(
-            id: "local-ish",
-            title: "Local iSH",
-            subtitle: cwd?.isEmpty == false ? cwd! : "/root",
-            systemImage: "iphone",
-            alleycatNodeId: nil,
-            supportsResize: true,
-            runningLabel: "running",
-            backend: .localIsh(cwd: normalized(cwd))
-        )
-    }
 
     static func remoteAlleycat(
         name: String,

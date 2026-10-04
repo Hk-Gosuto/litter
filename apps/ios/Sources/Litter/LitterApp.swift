@@ -32,21 +32,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         LitterPlatform.bootstrapLocalRuntimeIfNeeded()
         LLog.bootstrap()
 
-        #if targetEnvironment(macCatalyst)
-        // On unsandboxed Mac Catalyst, send the spawned codex child a
-        // SIGTERM during termination so it does not outlive the app.
-        // willTerminate runs on the main thread and gives ~5s; the
-        // blocking variant detaches the actual stop off the main actor
-        // so awaiting it does not deadlock.
-        NotificationCenter.default.addObserver(
-            forName: UIApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            LocalCodexBootstrap.shared.stopBlocking(timeout: 2.5)
-        }
-        #endif
-
         NotificationCenter.default.addObserver(
             forName: UIApplication.protectedDataDidBecomeAvailableNotification,
             object: nil,

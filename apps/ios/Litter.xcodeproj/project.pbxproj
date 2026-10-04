@@ -18,7 +18,6 @@
 		03587EF282BCD78673E5C90C /* LLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD7A3A61A3B02E7E5BF0FBD /* LLog.swift */; };
 		039D6B6B26D29936E31B67BA /* MinigameOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B22B0C284B20FB135A3A35BE /* MinigameOverlayView.swift */; };
 		03B054AAAFF1A47EB7582377 /* UserMountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E1E2519849D8BEDC1496591 /* UserMountStore.swift */; };
-		040DA1C4B152364555F79660 /* LocalCodexBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D330E51EBB1EC86C197A9296 /* LocalCodexBootstrap.swift */; };
 		04743D5A1900185832682235 /* SSHLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9876F2929290D47ED57D77 /* SSHLoginSheet.swift */; };
 		04A9DBF10C6021392CB30528 /* ComputerUseToolCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A00D8BD24DF9E3C4F5EA2C /* ComputerUseToolCallView.swift */; };
 		04F73698EF31FE7A30ACF87B /* chatgpt-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 01AC6347A1E502A4DDE879A1 /* chatgpt-dark.json */; };
@@ -474,7 +473,6 @@
 		B23DF0EC00DE8A4DE6390161 /* AnimatedSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78076308EEAAE64BC3BFDC1F /* AnimatedSplashView.swift */; };
 		B254C9592B726152D12F4109 /* SavedServerStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 782886BB7B618AF20A1843EC /* SavedServerStoreTests.swift */; };
 		B2AFC54D3C1CE47C58453313 /* codex-light.json in Resources */ = {isa = PBXBuildFile; fileRef = FA7B1E3B542D557D080E913D /* codex-light.json */; };
-		B2E94DB79FAB25F0F5AB3C86 /* LocalCodexBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D330E51EBB1EC86C197A9296 /* LocalCodexBootstrap.swift */; };
 		B3FEC7D6A1528065E759A5B8 /* WatchHapticDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A295F9828114C38B7CB29209 /* WatchHapticDetector.swift */; };
 		B40C5F8D4A2630356E518253 /* light-plus.json in Resources */ = {isa = PBXBuildFile; fileRef = CFF9DBA865CCBB3308B5667D /* light-plus.json */; };
 		B422F490347299F2A70CA407 /* IshFS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2BFE640367D986B437735F /* IshFS.swift */; };
@@ -1090,7 +1088,6 @@
 		D188262D8F066E6F71DD5F59 /* WatchTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTheme.swift; sourceTree = "<group>"; };
 		D1E96C6677B2AA22A101A29C /* ContextBadgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextBadgeView.swift; sourceTree = "<group>"; };
 		D2608C1F271D28BFEFBA5EFB /* kanagawa-lotus.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "kanagawa-lotus.json"; sourceTree = "<group>"; };
-		D330E51EBB1EC86C197A9296 /* LocalCodexBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexBootstrap.swift; sourceTree = "<group>"; };
 		D4BBEE5D22A050571A528EF0 /* catppuccin-mocha-Ry8aD-5u.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "catppuccin-mocha-Ry8aD-5u.json"; sourceTree = "<group>"; };
 		D5294396A986F27242D0F814 /* ProjectChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectChip.swift; sourceTree = "<group>"; };
 		D58FC0D181B46D56485C2AAB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -1619,7 +1616,6 @@
 				F05E1F150502D4C5682EBBFD /* LitterPalette.swift */,
 				A1388480E7FFD4489CE617C6 /* LitterPlatform.swift */,
 				7DD7A3A61A3B02E7E5BF0FBD /* LLog.swift */,
-				D330E51EBB1EC86C197A9296 /* LocalCodexBootstrap.swift */,
 				2325BAE1FF0D41A4D5ADE3AD /* MessageRecorder.swift */,
 				A75C53171D642CD800C76553 /* MobilePreferencesDirectory.swift */,
 				952E431DD6FA6740D6585B4A /* NetworkReachabilityObserver.swift */,
@@ -2443,7 +2439,6 @@
 				567985EEB59AFFF8AA6A594B /* LitterRunningTurnPayload.swift in Sources */,
 				63693B9E11A54EA462F89306 /* LitterServerListPayload.swift in Sources */,
 				8162FA999156618F9B3D7ADF /* LiveActivityPreview.swift in Sources */,
-				040DA1C4B152364555F79660 /* LocalCodexBootstrap.swift in Sources */,
 				568C0B1181B1ACFFBD7B165D /* LockScreenCardView.swift in Sources */,
 				5380A526444F33B701903335 /* MacCommands.swift in Sources */,
 				31EB5932CBEDDB0E7FFB1158 /* MessageBubbleView.swift in Sources */,
@@ -2626,7 +2621,6 @@
 				C632952310F5DDF9035C75DD /* LitterApp.swift in Sources */,
 				DDDBAC7DC8C46B69B63EC8F5 /* LitterPalette.swift in Sources */,
 				4DA3C30A27C7B36F36947F83 /* LitterPlatform.swift in Sources */,
-				B2E94DB79FAB25F0F5AB3C86 /* LocalCodexBootstrap.swift in Sources */,
 				BCA65492090DEDCFF7BB9A54 /* MacCommands.swift in Sources */,
 				5F8720FFBD0E99012B4921E0 /* MessageBubbleView.swift in Sources */,
 				CDE1951B9FF93BCC856C0A3E /* MessageContentBridge.swift in Sources */,
