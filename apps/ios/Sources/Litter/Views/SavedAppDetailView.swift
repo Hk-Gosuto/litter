@@ -26,12 +26,13 @@ struct SavedAppDetailView: View {
     /// calls in this view reuse the same hidden thread. Dies with the
     /// view — that's the whole point (Option B in the plan).
     @State private var cachedStructuredThreadId: String?
-    /// Whether this app's origin thread still exists, mirrored out of
+    @State private var cachedStructuredServerId: String?
+    /// This app's origin thread key, mirrored out of
     /// `AppModel.shared.snapshot` by `snapshotObserver`. The old
     /// `threadExists(_:)` scanned `snapshot.threads` from `body` (via
     /// `topBar(for:)`), which re-rendered — and re-scanned — at the ~8 fps
     /// streaming snapshot cadence.
-    @State private var originThreadExists = false
+    @State private var originThreadKey: ThreadKey?
     @State private var snapshotObserver = AppSnapshotObserver()
 
     var body: some View {
@@ -108,10 +109,10 @@ struct SavedAppDetailView: View {
             // re-runs the lookup on every (coalesced) snapshot revision, so a
             // thread appearing/disappearing while this view is open still
             // shows/hides the button.
-            snapshotObserver.start(appModel: AppModel.shared) { refreshOriginThreadExists() }
+            snapshotObserver.start(appModel: AppModel.shared) { refreshOriginThreadKey() }
         }
         .onChange(of: payload?.app.originThreadId) { _, _ in
-            refreshOriginThreadExists()
+            refreshOriginThreadKey()
         }
         .onDisappear {
             snapshotObserver.stop()
@@ -223,9 +224,9 @@ struct SavedAppDetailView: View {
                 .modifier(GlassCircleModifier())
                 .accessibilityLabel("App options")
 
-                if let threadId = app.originThreadId, originThreadExists {
+                if let key = originThreadKey {
                     Button {
-                        SavedAppsNavigation.shared.requestConversation(threadId: threadId)
+                        SavedAppsNavigation.shared.requestConversation(key: key)
                         dismiss()
                     } label: {
                         Image(systemName: "text.bubble.fill")
@@ -271,16 +272,10 @@ struct SavedAppDetailView: View {
 
     /// Called from `snapshotObserver` and on payload changes — never from
     /// `body`. Writes `@State` only on a real change.
-    private func refreshOriginThreadExists() {
-        let exists: Bool
-        if let threadId = payload?.app.originThreadId,
-           let threads = AppModel.shared.snapshot?.threads {
-            exists = threads.contains(where: { $0.key.threadId == threadId })
-        } else {
-            exists = false
-        }
-        if originThreadExists != exists {
-            originThreadExists = exists
+    private func refreshOriginThreadKey() {
+        let key = resolvedOriginThreadKey()
+        if originThreadKey != key {
+            originThreadKey = key
         }
     }
 
@@ -388,11 +383,11 @@ struct SavedAppDetailView: View {
         responseFormatJSON: String,
         respond: @escaping (String, String?, String?) -> Void
     ) {
-        guard let serverId = SavedAppDetailView.resolveActiveServerId() else {
-            respond(requestId, nil, "No connected server available")
+        guard let serverId = resolveActiveServerId() else {
+            respond(requestId, nil, AppLanguage.localizedString("No connected Codex server available"))
             return
         }
-        let cached = cachedStructuredThreadId
+        let cached = cachedStructuredServerId == serverId ? cachedStructuredThreadId : nil
         Task.detached {
             let result = await AppModel.shared.client.structuredResponse(
                 serverId: serverId,
@@ -404,6 +399,7 @@ struct SavedAppDetailView: View {
             case .success(let threadId, let responseJson):
                 await MainActor.run {
                     cachedStructuredThreadId = threadId
+                    cachedStructuredServerId = serverId
                 }
                 respond(requestId, responseJson, nil)
             case .error(let message):
@@ -413,8 +409,8 @@ struct SavedAppDetailView: View {
     }
 
     private func runUpdate(prompt: String) async {
-        guard let serverId = SavedAppDetailView.resolveActiveServerId() else {
-            updateError = AppLanguage.localizedString("No connected server available")
+        guard let serverId = resolveActiveServerId() else {
+            updateError = AppLanguage.localizedString("No connected Codex server available")
             return
         }
         isUpdating = true
@@ -434,14 +430,17 @@ struct SavedAppDetailView: View {
         }
     }
 
+    private func resolvedOriginThreadKey() -> ThreadKey? {
+        guard let app = payload?.app, let id = app.originThreadId else { return nil }
+        let matches = AppModel.shared.snapshot?.threads.filter {
+            $0.key.threadId == id && (app.originServerId == nil || $0.key.serverId == app.originServerId)
+        } ?? []
+        return matches.count == 1 ? matches.first?.key : nil
+    }
+
     @MainActor
-    private static func resolveActiveServerId() -> String? {
-        let snapshot = AppModel.shared.snapshot
-        // Prefer the active thread's server; fall back to any known server
-        // id. If nothing is connected, the update will fail loudly in the
-        // overlay.
-        if let serverId = snapshot?.activeThread?.serverId { return serverId }
-        return snapshot?.servers.first?.serverId
+    private func resolveActiveServerId() -> String? {
+        AppModel.shared.client.savedAppServerId(directory: SavedAppsDirectory.path, appId: appId)
     }
 }
 

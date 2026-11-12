@@ -8,7 +8,7 @@ use crate::reconnect::{
     ReconnectResult, SavedServerRecord, SlingshotCredentialProvider, SshCredentialProvider,
     compute_reconnect_plan_with_slingshot, execute_reconnect_plan,
 };
-use crate::session::connection::{InProcessConfig, ServerConfig};
+use crate::session::connection::ServerConfig;
 use crate::store::ServerHealthSnapshot;
 use crate::store::snapshot::AppLifecyclePhaseSnapshot;
 use codex_app_server_protocol as upstream;
@@ -22,43 +22,6 @@ use tracing::{info, warn};
 const ACCOUNT_PROBE_CONCURRENCY: usize = 4;
 /// Deadline for a single account probe.
 const ACCOUNT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-fn normalized_local_display_name(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed == "This Device" {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn resolved_local_display_name(
-    snapshot: &crate::store::AppSnapshot,
-    saved_servers: &[SavedServerRecord],
-    server_id: &str,
-) -> String {
-    snapshot
-        .servers
-        .get(server_id)
-        .filter(|server| server.is_local)
-        .and_then(|server| normalized_local_display_name(&server.display_name))
-        .or_else(|| {
-            snapshot
-                .servers
-                .values()
-                .find(|server| server.is_local)
-                .and_then(|server| normalized_local_display_name(&server.display_name))
-        })
-        .or_else(|| {
-            saved_servers
-                .iter()
-                .find(|server| {
-                    server.id == "local" || (server.id == server_id && server.source == "local")
-                })
-                .and_then(|server| normalized_local_display_name(&server.name))
-        })
-        .unwrap_or_else(|| "This Device".to_string())
-}
 
 fn server_counts_as_connected_for_reconnect(
     server: &crate::store::snapshot::ServerSnapshot,
@@ -506,36 +469,18 @@ async fn reconnect_server_inner(
             .is_some_and(|server| server.source == "local");
 
     if is_local {
-        let config = ServerConfig {
-            server_id: server_id.clone(),
-            display_name: resolved_local_display_name(
-                &snapshot,
-                saved_server.as_slice(),
-                &server_id,
+        // Local records can still be present in a pre-remote-only snapshot,
+        // even though platform stores now filter them out. Do not disconnect
+        // anything or invoke the compatibility `connect_local` surface here:
+        // there is no on-device runtime to recover, and the lifecycle layer
+        // must not start the retired local-auth restoration flow.
+        return ReconnectResult {
+            server_id,
+            success: false,
+            needs_local_auth_restore: false,
+            error_message: Some(
+                "Local Codex is unavailable. Connect a remote computer.".to_string(),
             ),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            websocket_url: None,
-            is_local: true,
-            tls: false,
-        };
-        inner.disconnect_server(&server_id);
-        return match inner
-            .connect_local(config, InProcessConfig::default())
-            .await
-        {
-            Ok(_) => ReconnectResult {
-                server_id,
-                success: true,
-                needs_local_auth_restore: true,
-                error_message: None,
-            },
-            Err(e) => ReconnectResult {
-                server_id,
-                success: false,
-                needs_local_auth_restore: false,
-                error_message: Some(e.to_string()),
-            },
         };
     }
 
@@ -602,34 +547,17 @@ async fn reconnect_server_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        ReconnectController, resolved_local_display_name, server_counts_as_connected_for_reconnect,
+        ReconnectController, server_counts_as_connected_for_reconnect,
         server_supports_account_probe, shared_runtime,
     };
     use crate::reconnect::SavedServerRecord;
     use crate::store::snapshot::{
-        AppSnapshot, AppVoiceSessionSnapshot, ServerHealthSnapshot, ServerSnapshot,
-        ServerTransportDiagnostics,
+        ServerHealthSnapshot, ServerSnapshot, ServerTransportDiagnostics,
     };
     use crate::terminal::{TerminalSshTrustBackend, TerminalSshTrustStore};
     use crate::types::AgentRuntimeInfo;
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
-
-    fn empty_snapshot() -> AppSnapshot {
-        AppSnapshot {
-            servers: HashMap::new(),
-            threads: HashMap::new(),
-            active_thread: None,
-            pending_approvals: Vec::new(),
-            pending_approval_seeds: HashMap::new(),
-            pending_user_inputs: Vec::new(),
-            pending_user_input_seeds: HashMap::new(),
-            voice_session: AppVoiceSessionSnapshot::default(),
-            terminal_sessions: Vec::new(),
-            active_terminal_id: None,
-            cached_session_summaries: Vec::new(),
-        }
-    }
 
     fn server_with_health(health: ServerHealthSnapshot) -> ServerSnapshot {
         ServerSnapshot {
@@ -690,123 +618,24 @@ mod tests {
     }
 
     #[test]
-    fn local_display_name_prefers_snapshot_name() {
-        let mut snapshot = empty_snapshot();
-        snapshot.servers.insert(
-            "local".to_string(),
-            ServerSnapshot {
-                server_id: "local".to_string(),
-                display_name: "Desk Mac".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 0,
-                wake_mac: None,
-                is_local: true,
-                health: ServerHealthSnapshot::Disconnected,
-                account: None,
-                requires_openai_auth: false,
-                rate_limits: None,
-                rate_limits_by_runtime: std::collections::HashMap::new(),
-                available_models: None,
-                agent_runtimes: Vec::new(),
-                connection_progress: None,
-                transport: ServerTransportDiagnostics::default(),
-                turn_pagination_by_runtime: std::collections::HashMap::new(),
-            },
-        );
-
-        assert_eq!(
-            resolved_local_display_name(&snapshot, &[], "local"),
-            "Desk Mac"
-        );
-    }
-
-    #[test]
-    fn local_display_name_falls_back_to_saved_server_name() {
-        let saved = SavedServerRecord {
-            id: "local".to_string(),
-            name: "Laptop".to_string(),
-            hostname: "127.0.0.1".to_string(),
-            port: 0,
-            codex_ports: Vec::new(),
-            ssh_port: None,
-            source: "local".to_string(),
-            has_codex_server: false,
-            wake_mac: None,
-            preferred_connection_mode: None,
-            preferred_codex_port: None,
-            ssh_port_forwarding_enabled: None,
-            websocket_url: None,
-            remembered_by_user: true,
-            detached_transport: false,
-            alleycat_host: None,
-            alleycat_udp_port: None,
-            alleycat_node_id: None,
-            alleycat_token: None,
-            alleycat_relay: None,
-            alleycat_agent_name: None,
-            alleycat_agent_wire: None,
-        };
-
-        assert_eq!(
-            resolved_local_display_name(&empty_snapshot(), &[saved], "local"),
-            "Laptop"
-        );
-    }
-
-    #[test]
-    fn local_display_name_ignores_legacy_placeholder() {
-        let mut snapshot = empty_snapshot();
-        snapshot.servers.insert(
-            "local".to_string(),
-            ServerSnapshot {
-                server_id: "local".to_string(),
-                display_name: "This Device".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 0,
-                wake_mac: None,
-                is_local: true,
-                health: ServerHealthSnapshot::Disconnected,
-                account: None,
-                requires_openai_auth: false,
-                rate_limits: None,
-                rate_limits_by_runtime: std::collections::HashMap::new(),
-                available_models: None,
-                agent_runtimes: Vec::new(),
-                connection_progress: None,
-                transport: ServerTransportDiagnostics::default(),
-                turn_pagination_by_runtime: std::collections::HashMap::new(),
-            },
-        );
-
-        let saved = SavedServerRecord {
-            id: "local".to_string(),
-            name: "Desk Mac".to_string(),
-            hostname: "127.0.0.1".to_string(),
-            port: 0,
-            codex_ports: Vec::new(),
-            ssh_port: None,
-            source: "local".to_string(),
-            has_codex_server: false,
-            wake_mac: None,
-            preferred_connection_mode: None,
-            preferred_codex_port: None,
-            ssh_port_forwarding_enabled: None,
-            websocket_url: None,
-            remembered_by_user: true,
-            detached_transport: false,
-            alleycat_host: None,
-            alleycat_udp_port: None,
-            alleycat_node_id: None,
-            alleycat_token: None,
-            alleycat_relay: None,
-            alleycat_agent_name: None,
-            alleycat_agent_wire: None,
-        };
-
-        assert_eq!(
-            resolved_local_display_name(&snapshot, &[saved], "local"),
-            "Desk Mac"
-        );
+    fn retired_local_reconnect_does_not_create_a_server_or_request_auth() {
+        for (id, source) in [("local", "manual"), ("renamed-local", "local")] {
+            let mut record = ssh_record(id, "127.0.0.1");
+            record.source = source.to_string();
+            let (controller, _, _) = replace_controller(vec![record]);
+            let result = controller
+                .rt
+                .block_on(controller.reconnect_server(id.to_string()));
+            assert!(!result.success);
+            assert!(!result.needs_local_auth_restore);
+            assert!(
+                result
+                    .error_message
+                    .unwrap()
+                    .contains("Connect a remote computer")
+            );
+            assert!(controller.inner.app_snapshot().servers.is_empty());
+        }
     }
 
     #[derive(Default, Clone)]

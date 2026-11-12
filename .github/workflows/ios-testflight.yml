@@ -158,7 +158,6 @@ jobs:
           df -h .
           if command -v sccache >/dev/null 2>&1; then sccache --zero-stats || true; fi
           ./apps/ios/scripts/build-rust.sh --preserve-current --device-only
-          make alpine-fs
           ./apps/ios/scripts/regenerate-project.sh
           if command -v sccache >/dev/null 2>&1; then
             echo "==> sccache stats after iOS release prep"
@@ -169,7 +168,6 @@ jobs:
         run: |
           mkdir -p .ci-prep/ios
           tar -czf .ci-prep/ios/ios-release-prep.tgz -C . \
-            apps/ios/Resources/fs \
             apps/ios/GeneratedRust \
             apps/ios/Sources/Litter/Bridge/UniFFICodexClient.generated.swift
 

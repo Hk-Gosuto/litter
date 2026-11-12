@@ -122,8 +122,11 @@ object SavedAppsStore {
      * specific thread. Slugs are unique only within a thread — the same slug
      * in two threads is two independent apps.
      */
-    suspend fun appForSlug(context: Context, slug: String, threadId: String): SavedApp? =
-        appsForThread(context, threadId).firstOrNull { it.appId == slug }
+    suspend fun appForSlug(context: Context, slug: String, threadId: String, serverId: String): SavedApp? {
+        val matches = appsForThread(context, threadId).filter { it.appId == slug }
+        return matches.firstOrNull { it.originServerId == serverId }
+            ?: matches.firstOrNull { it.originServerId == null }
+    }
 
     /**
      * Trailing-edge debounced save keyed by [appId]. A burst of rapid writes

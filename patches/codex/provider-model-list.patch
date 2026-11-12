@@ -1,0 +1,49 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/model.rs b/codex-rs/app-server-protocol/src/protocol/v2/model.rs
+--- a/codex-rs/app-server-protocol/src/protocol/v2/model.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/model.rs
+@@ -52,7 +52,30 @@
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema, TS)]
+ #[serde(rename_all = "camelCase")]
+ #[ts(export_to = "v2/")]
++pub struct ModelProviderListParams {}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct ModelProviderListResponse {
++    pub data: Vec<ModelProviderId>,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct ModelProviderId {
++    pub id: String,
++}
++
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
+ pub struct ModelListParams {
++    /// Query another configured provider without changing the default catalog.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    #[ts(optional = nullable)]
++    pub model_provider: Option<String>,
+     /// Opaque pagination cursor returned by a previous call.
+     #[ts(optional = nullable)]
+     pub cursor: Option<String>,
+diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
+--- a/codex-rs/app-server-protocol/src/protocol/common.rs
++++ b/codex-rs/app-server-protocol/src/protocol/common.rs
+@@ -1127,6 +1127,11 @@
+         params: v2::ModelListParams,
+         serialization: None,
+         response: v2::ModelListResponse,
++    },
++    ModelProviderList => "modelProvider/list" {
++        params: v2::ModelProviderListParams,
++        serialization: None,
++        response: v2::ModelProviderListResponse,
+     },
+     GatewayOAuthRead => "account/gatewayOAuth/read" {
+         params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,

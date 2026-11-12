@@ -234,7 +234,7 @@ private fun SettingsTopLevel(
         }
 
         // ── Local AI ──
-        item { SectionHeader("Local AI") }
+        item { SectionHeader(stringResource(R.string.settings_local_ai)) }
         item {
             SettingsRow(
                 icon = {
@@ -245,7 +245,7 @@ private fun SettingsTopLevel(
                         modifier = Modifier.size(20.dp),
                     )
                 },
-                label = "Local Studio",
+                label = stringResource(R.string.settings_local_studio),
                 subtitle = "localstudio.ai",
                 trailing = {
                     Icon(
@@ -418,7 +418,7 @@ private fun SettingsTopLevel(
             }
         }
 
-        item { NavRow(Icons.Default.Computer, "Harnesses", onOpenHarnesses) }
+        item { NavRow(Icons.Default.Computer, stringResource(R.string.settings_harnesses), onOpenHarnesses) }
 
         // ── Servers ──
         item { SectionHeader(stringResource(R.string.settings_servers_section)) }

@@ -30,6 +30,8 @@ pub enum RpcError {
     Transport(#[from] TransportError),
     #[error("server error {code}: {message}")]
     Server { code: i64, message: String },
+    #[error("server error {code}: {message}")]
+    ServerWithData { code: i64, message: String, data: serde_json::Value },
     #[error("deserialization failed: {0}")]
     Deserialization(String),
     #[error("request cancelled")]

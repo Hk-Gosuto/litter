@@ -215,7 +215,7 @@ final class LitterUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["conversation.modelPickerButton"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Attach"].exists)
-        XCTAssertTrue(app.buttons["Mode: Default"].exists)
+        XCTAssertTrue(app.buttons["Default"].exists)
         let composer = app.textViews["conversation.composerTextView"]
         XCTAssertTrue(composer.exists)
         composer.tap()

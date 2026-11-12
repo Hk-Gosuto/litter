@@ -86,41 +86,33 @@ broader composer autocomplete work.
 3. `debug`: connect a remote server and run `thread/list` plus `turn/start`.
 4. Verify account read/login status refresh still updates UI after reconnect.
 
-## Thinking-indicator Minigame (iOS + Android)
+## Thinking-indicator Minigame — removed (2026-10-04)
 
-Gated by Settings → Experimental → "Thinking minigame" (off by default on
-both platforms). The shimmering "Thinking..." indicator becomes tappable
-while the assistant is generating; tapping it spins up an ephemeral thread
-on `gpt-5.3-codex-spark` (low reasoning, fast tier) and renders the
-returned `show_widget` HTML in a bottom-40% overlay that hides the
-composer.
+Removed at product direction after the remote-only audit. Neither platform
+exposes the experimental setting, launcher or overlay. The dedicated Rust
+RPC and generated binding types are removed. The Thinking status indicator,
+composer, generic HTML widget renderer and Saved Apps remain.
 
-| Check | iOS | Android |
-|---|---|---|
-| Indicator is non-interactive when flag off | "Thinking" shimmer has no tap effect | Shimmer has no clickable ripple |
-| Tap while thinking opens overlay immediately | Slides in with skeleton | Slides in with skeleton |
-| Skeleton swaps to rendered widget on completion | WidgetWebView (no zoom, theme-injected) | MinigameWebView (no zoom, themed) |
-| Composer is hidden while overlay is up | `ConversationBottomChrome` returns `EmptyView` from `safeAreaInset` | Composer `Column` is omitted |
-| Last message is not occluded | safeAreaInset reserves overlay height in scroll inset | LazyColumn has trailing spacer / overlay sits over nav bar inset |
-| Close (X) restores composer + idles overlay | `dismissMinigame()` cancels in-flight task | `dismissMinigame()` cancels coroutine |
-| Repeat tap on a fresh assistant turn generates a new game | New ephemeral thread per request | New ephemeral thread per request |
-| Bridge globals stubbed in minigame mode | `WKUserScript` at `.atDocumentStart` no-ops `sendPrompt`/`saveAppState`/`loadAppState`/`structuredResponse`, and the matching `WKScriptMessageHandler` registrations are skipped | `evaluateJavascript` in `onPageStarted` injects stubs; the matching `@JavascriptInterface` registrations are skipped (`WidgetBridge` for openLink/height/ready only) |
-| Light + dark mode rendering | Widget uses host CSS variables that adapt automatically | Same |
-| Minigame is NOT saved as a regular widget | Waiter intercepts `show_widget` so `auto_upsert_saved_app` is skipped, and `start_minigame` does not call `saved_app_upsert` itself | Same — single shared Rust path |
-| Ephemeral thread is torn down | `thread/archive` after waiter resolves or times out | Same |
-| Generation timeout (~30s) | Overlay shows failure card with "Try again" | Overlay shows failure card with "Try again" |
+Validation: regenerated Swift/Kotlin bindings and the Xcode project; no
+minigame symbols remain in platform sources or generated bindings. Rust tests
+passed (838 passed, 7 ignored); Android JVM tests passed (79). The fast iOS
+simulator build, 282 XCTest unit tests and two UI regressions (composer typing
+and follow-up history) passed. The composer test's stale `Mode: Default`
+assertion was corrected to the existing `Default` label and rerun. Android
+native/APK build was attempted but blocked by missing NDK during Ghostty
+compilation (`AndroidNDKNotFound`); Kotlin compilation passed with the JVM tests.
 
 ## Settings — Server Connection Editor (iOS + Android)
 
-Tapping a saved server row in Settings opens the inline editor. Local servers are
-name-only; alleycat-paired servers are name-only; everything else allows
+Tapping a saved server row in Settings opens the inline editor. Legacy local
+records are removed during migration. Alleycat-paired servers are name-only; everything else allows
 mode + host/port/wake-MAC + URL editing. Save persists, Save & Reconnect
 disconnects and re-establishes the chosen transport.
 
 | Check | iOS | Android |
 |---|---|---|
 | Tap saved server row opens editor | `SettingsServerSheet.edit` opens `SettingsServerConnectionEditor` form sheet | Tap or row-menu "Edit" opens `ServerEditSheet` ModalBottomSheet |
-| Local server: only name editable | Editor displays "managed automatically" copy; only Save & Restart action shown | Same — `ServerEditSheet` shows the same copy and uses "Save & Restart" |
+| Legacy local server | Removed from saved servers; no shipping local editor entry | Same |
 | Alleycat-paired server: only name editable | Editor shows paired-pairing-metadata copy; mode picker hidden | Same — mode picker hidden, message visible |
 | Switch to Direct Codex + Save & Reconnect | Persists, disconnects, calls `serverBridge.connectRemoteServer` | Same — `reconnectController.reconnectServer` reconnects via persisted record |
 | Switch to WebSocket + Save & Reconnect | Persists, disconnects, calls `serverBridge.connectRemoteUrlServer` with `ws://` or `wss://` | Same — record stores `websocketURL`; reconnect dispatches via Rust `ReconnectController` |
@@ -235,13 +227,35 @@ Status normalization parity:
 
 ## Saved Apps (Generative UI persistent apps)
 
-Generative UI is permanent (no flag). Local-server threads register `show_widget` / `visualize_read_me`; remote-server threads do not. Saved apps are created automatically whenever a local-server model finalizes a `show_widget` with an `app_id` slug — there is no manual "Save as App" button.
+Remote-only adaptation (2026-10-04): shared Rust registers `show_widget` and
+`visualize_read_me` on new interactive Codex threads, across WebSocket, SSH,
+Alleycat and Slingshot transports. Existing threads keep their server-side tool
+registration; start a new conversation to obtain the new tools. Ephemeral
+utility threads and other agent runtimes do not gain these tools.
+
+Saved app updates send the existing HTML and state-shape summary over RPC to a
+short-lived remote Codex thread, request JSON containing replacement HTML, and
+save it on the phone only after a successful, valid response. Device filesystem
+paths are never sent as remote working directories. The user state, app UUID,
+origin, dimensions and schema version survive HTML replacement. The edit thread
+uses read-only sandbox permissions and bounded best-effort archive cleanup.
+
+Validation (2026-10-05): `make rust-test` passed (841 passed, 7 ignored),
+including six remote saved-app regressions covering client tool registration,
+server-scoped identities, legacy decoding, host selection, HTML/state round
+trip and invalid/failed response handling. Response isolation is tested with
+colliding thread IDs on different servers and earlier turn IDs. Swift/Kotlin
+bindings were regenerated; `make ios-sim-fast`, all 282 iOS XCTest unit tests
+(including Saved Apps persistence), and 79 Android JVM tests passed. These
+RPC tests use a simulated host; live model generation remains device/host QA.
+Android native APK validation is still blocked by the missing local NDK noted
+in the minigame-removal validation above.
 
 | Area | Check |
 |---|---|
-| Bootstrap | `AppClient.setSavedAppsDirectory(MobilePreferencesDirectory.path(context))` is called once in `AppModel.init`, before any thread starts. Without this, the Rust `show_widget` finalize hook is a silent no-op. |
-| Auto-upsert | When the model finalizes a `show_widget` with `app_id = "fitness-tracker"` on a local-server thread, the Rust hook calls `saved_app_upsert(directory, originThreadId, appId, title, html, w, h, schema)` and writes to `{filesDir}/LitterPreferences/apps/saved_apps.json` + `html/<uuid>.html`. No Kotlin-initiated promote call is needed. |
-| Saved-as chip | Finalized `WidgetRow` whose `HydratedWidgetData.appId` is non-null renders a compact "Saved as `<slug>`" chip below the WebView (11sp mono, accent slug). Tap resolves `SavedAppsStore.appForSlug(slug, threadId)` to a UUID and pushes `Route.SavedApp`. Chip is absent when `appId == null` or the widget isn't finalized. |
+| Bootstrap | `AppClient.setSavedAppsDirectory(SavedAppsDirectory.path(context))` is called once in `AppModel.init`, before any thread starts. Without this, the Rust `show_widget` finalize hook is a silent no-op. |
+| Auto-upsert | When the model finalizes a `show_widget` with `app_id = "fitness-tracker"` on a remote Codex thread, Rust upserts by `(originServerId, originThreadId, appId)` into the platform-selected `SavedAppsDirectory` index + `html/<uuid>.html`. No Kotlin-initiated promote call is needed. |
+| Saved-as chip | Finalized `WidgetRow` whose `HydratedWidgetData.appId` is non-null renders a compact "Saved as `<slug>`" chip below the WebView (11sp mono, accent slug). Tap resolves `SavedAppsStore.appForSlug(slug, threadId, serverId)` to a UUID and pushes `Route.SavedApp`. Chip is absent when `appId == null` or the widget isn't finalized. |
 | Home-row takeover | **Removed.** The takeover row and its `savedAppsByThread` / per-session `sessionApps` feeder pipeline were deleted; no `Takeover` symbol remains under `apps/android`. Saved apps are reachable only via the Saved-as chip and the Apps list. |
 | Apps list entry | Settings sheet "Apps → Saved Apps" row is always visible (no flag gate). Pushes `Route.Apps`. |
 | Apps list | `AppsListScreen` renders apps newest-updated-first: monogram tile + title + relative timestamp. Swipe-to-dismiss cascades `savedAppDelete`. Empty state explains that saved apps are created automatically. |
@@ -250,10 +264,10 @@ Generative UI is permanent (no flag). Local-server threads register `show_widget
 | Structured response | `window.structuredResponse({prompt, responseFormat})` returns a Promise that resolves with parsed JSON. Routes through `__LitterAppBridge.structuredResponse(requestId, prompt, schemaJson)` → `AppClient.structuredResponse` on an ephemeral hidden thread (`ThreadStartParams.ephemeral = true`). First call per view session creates the hidden thread; subsequent calls reuse it via `remember(appId) { mutableStateOf<String?>(null) }`. Reply flows back via `webView.evaluateJavascript("window.__resolveStructuredResponse(...)")`. Navigating away + returning resets the cache so a fresh ephemeral thread is created. The hidden thread never appears in the thread list (ephemeral threads are absent from `thread/list`). |
 | Cold-launch persistence | Increment a counter in a saved app, `am force-stop`, relaunch, reopen the app. `loadAppState()` pulls `window._initialAppState` from the seeded state JSON — count survives. |
 | Update flow | "Update" in the top bar opens `SavedAppUpdateOverlay`. Submit calls `SavedAppsStore.requestUpdate(...)` → `AppClient.updateSavedApp(...)`. WebView dims + shimmer overlay. On success: dismiss + detail re-fetch (state preserved because `replace_html` doesn't touch `state/<id>.json`). Failure: retry inline + toast. |
-| Origin server routing | Update RPC prefers `originThreadId`'s server → active thread's server → any local server → any connected. No connected server → clear error message. |
-| View Conversation | Top bar has a chat-bubble icon (`Icons.AutoMirrored.Filled.Chat`) that pushes `Route.Conversation(originThreadKey)`. Only rendered when `originThreadId` still resolves to a `ThreadKey` in the current snapshot — gone otherwise. |
+| Origin server routing | Both platforms use Rust selection: connected origin Codex host → connected active-thread Codex host → deterministic connected Codex fallback. Offline/local/bridge-only hosts are excluded. Ephemeral structured-response caches are scoped to the selected server. |
+| View Conversation | Top bar has a chat-bubble icon (`Icons.AutoMirrored.Filled.Chat`) that pushes `Route.Conversation(originThreadKey)`. Origin lookup includes `originServerId`; ambiguous legacy thread IDs do not navigate to an arbitrary host. |
 | Rename / delete | Top bar title tap → rename dialog → `savedAppRename`. Overflow "Delete" → destructive confirmation → `savedAppDelete` → pop back to list. |
-| Same slug in two threads | Model emitting `app_id = "fitness-tracker"` in two different origin threads creates two independent saved apps (distinct UUIDs, separate state files). The Apps list shows both. |
+| Same slug across servers/threads | Model emitting `app_id = "fitness-tracker"` in two different origin threads creates two independent saved apps (distinct UUIDs, separate state files). The Apps list shows both. |
 | Regression: timeline widgets with no slug | A `show_widget` call that omits `app_id` (or is pre-R2) renders with the baseline `wrapWidgetHtml(html)` shell, does not trigger auto-save, and shows no Saved-as chip. |
 | Regression: thread delete | Deleting an `originThreadId` thread does not affect saved apps; the `View Conversation` button becomes hidden for those apps but update/state flows still work. |
 
@@ -362,7 +376,7 @@ Both platforms render the composer model picker from the same Rust fields (`Mode
 
 | Check | Required result on both platforms |
 |---|---|
-| Root | Current selection, up to 4 recents, one row per harness with counts, then Options (reasoning, fast, plan, full access) |
+| Root | Current selection, up to 4 recents, one row per harness with counts, then Options (reasoning, fast). Plan mode is on this page only before a thread exists; an existing thread uses the same page without it |
 | Harness page | Modes and plugin modes listed separately from models; multi-provider catalogs over 30 models start folded with the selected provider open |
 | Search | Matches every whitespace token across harness, provider, and model names; results capped at 150 with a total count |
 | Modes | Amp `low`/`medium`/`high`/`ultra` are `Mode`, other Amp entries `PluginMode`; never shown as models |
@@ -454,3 +468,72 @@ passed 846 tests (7 ignored), the final `make ios-sim-fast` build passed, and
 the iOS simulator unit suite passed 282 tests during integration validation.
 iOS is the primary integration-validation target for this fix; Android uses
 the same Rust implementation and needs a later device recovery pass.
+
+## Session re-entry, permissions and weak-network messages (2026-10-08)
+
+| Regression | iOS | Android |
+|---|---|---|
+| Thinking label moves during session re-entry | Gradient uses a timeline without a repeating layout animation; footer disables inherited animations | Compose shimmer changes brush coordinates only; existing tail-follow policy avoids repeated scrolling on thinking ticks |
+| Full access disappears after metadata refresh/reconnect | Shared reducer preserves omitted permission fields; native hydration preserves the last known selection and explicit user overrides | Same shared reducer and matching native hydration behavior |
+| Permissions cannot be changed in historical sessions | Composer exposes read only, auto and full access for supported runtimes | Composer exposes the same presets for supported runtimes |
+| Latest user message disappears while AI streams | Shared reconciliation requires matching turn identity before replacing a local message with an identical historical message | Same shared Rust implementation |
+| Lost turn/start reply after execution started | Server turn/item events confirm the send; retain its message and avoid restoring a duplicate draft. Unconfirmed failed sends still roll back | Same shared Rust implementation |
+| Screenshot thumbnail dragged into composer | UIImage and PNG/JPEG/HEIC/GIF image data go through the attachment path on the text field, home composer and conversation composer | iOS-specific screenshot drag workflow; Android attachment paths remain unchanged |
+
+Validation: `make rust-test` passed 849 tests (7 ignored), `make test-android`
+passed 80 tests, and the iOS simulator unit suite passed 286 tests. Added shared
+regressions cover a lost turn/start reply before confirmation, after TurnStarted,
+and after a completed send with its user-item echo. An iOS test loads an actual
+PNG item provider and verifies attachment delivery on the main thread without
+changing composer text. Real-device screenshot-thumbnail dragging, repeated
+navigation during thinking, and real-host airplane-mode recovery remain manual QA.
+The latest iOS simulator Rust staticlib build and two UI regressions (rapid
+composer input and follow-up history preservation) also passed.
+
+## Remote-only dependency and legacy-flow audit (2026-10-04)
+
+- The resolved mobile Cargo graph excludes `codex-core`, `codex-app-server`,
+  iSH and proot. Protocol and remote transport crates remain required.
+- Removed Alpine/proot build targets, download/build scripts, unused Android
+  bootstrap, iSH vdso validation and CI rootfs archive inputs. Keep Android's
+  asset/JNI exclusions and Make cleanup for artifacts from older checkouts.
+- The iOS Rust build now leaves patch ownership to `sync-codex.sh` instead of
+  maintaining cleanup logic for historical local-execution patches.
+- Legacy local connect/reconnect rejects before reusing, replacing or
+  disconnecting sessions. The public binding signatures remain unchanged.
+- Shared tests: 845 passed, 7 ignored. Remote transport tests: 2 passed.
+  Android JVM tests: 79 passed; Kotlin binding generation completed. Workflow
+  YAML parsing, edited shell syntax and `git diff --check` passed.
+- No new iOS/Android native build or real-host/device end-to-end run was made
+  for this audit. Voice, remote filesystem, pairing and release packaging
+  still require that acceptance. Saved Apps were subsequently adapted as
+  described above; live-host/device acceptance remains separate.
+
+## Asynchronous questions (2026-11-12)
+
+Both platforms reuse the existing themed question panel for `request_user_input_async`.
+Rust preserves `AgentMessage.questions`, uses desktop-compatible question IDs and
+reply envelopes, and projects pending questions through the existing input-request
+snapshot. Legacy blocking input requests keep their RPC response path.
+
+| Behavior | iOS | Android | Shared regression coverage |
+| --- | --- | --- | --- |
+| Choices plus a custom answer; first async choice selected by default | Existing capsule controls and text field | Existing choice controls plus text field | Typed question hydration and literal freeform reply |
+| Skip without a model message | Existing panel button | Existing panel button | Local resolution; no server-request response |
+| Failed answer delivery | Retain draft; show error | Retain draft; show error | Failed steer leaves request pending |
+| Navigate away or collapse | UI drafts keyed by request | UI drafts keyed by request | Runtime questions remain in Rust |
+| Another client answers; history is replayed | Shared state removes question | Shared state removes question | Reply-before-question, skip/replay, server isolation |
+| Turn finishes while an answer is pending | Keep question and draft available | Keep question and draft available | Existing pending answers survive; closed historical questions do not reopen |
+
+Mobile retains an already-visible unanswered question after turn completion, so a
+user returning from the background can send the answer in a new turn. This adapts
+the upstream terminal's draft-recovery behavior to the existing mobile composer.
+Live-host/device acceptance remains manual: ask several questions, edit a custom
+answer, background/reopen, answer from a second client, and retry after a network
+failure. The upstream TUI/desktop visual layout is not imported.
+
+Validation: shared Rust tests passed (856 passed, 7 ignored), Swift/Kotlin bindings
+regenerated, and generated Swift bindings type-checked. The iOS fast simulator
+build passed on iPhone 18 Pro (iOS 27.0); the freshly built app was installed and
+launched successfully. Android native validation was stopped during dependency
+download at the user's request; this change's completed native validation is iOS-only.

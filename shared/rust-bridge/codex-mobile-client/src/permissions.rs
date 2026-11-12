@@ -6,6 +6,9 @@ pub enum AppThreadPermissionPreset {
     Supervised,
     FullAccess,
     Custom,
+    /// On-request approval with a read-only sandbox. Appended so existing
+    /// UniFFI discriminants for the earlier variants stay stable.
+    ReadOnly,
 }
 
 #[uniffi::export]
@@ -16,6 +19,9 @@ pub fn thread_permission_preset(
     match (approval_policy, sandbox_policy) {
         (Some(AppAskForApproval::OnRequest), Some(AppSandboxPolicy::WorkspaceWrite { .. })) => {
             AppThreadPermissionPreset::Supervised
+        }
+        (Some(AppAskForApproval::OnRequest), Some(AppSandboxPolicy::ReadOnly { .. })) => {
+            AppThreadPermissionPreset::ReadOnly
         }
         (Some(AppAskForApproval::Never), Some(AppSandboxPolicy::DangerFullAccess)) => {
             AppThreadPermissionPreset::FullAccess
@@ -61,6 +67,16 @@ mod tests {
                 Some(AppSandboxPolicy::DangerFullAccess),
             ),
             AppThreadPermissionPreset::FullAccess
+        );
+        assert_eq!(
+            thread_permission_preset(
+                Some(AppAskForApproval::OnRequest),
+                Some(AppSandboxPolicy::ReadOnly {
+                    access: AppReadOnlyAccess::FullAccess,
+                    network_access: false,
+                }),
+            ),
+            AppThreadPermissionPreset::ReadOnly
         );
     }
 

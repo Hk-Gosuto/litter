@@ -108,6 +108,7 @@ fn assistant_item(id: usize, bytes: usize) -> HydratedConversationItem {
     HydratedConversationItem {
         id: format!("item-{id}"),
         content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+            async_questions: None,
             text: "x".repeat(bytes),
             agent_nickname: None,
             agent_role: None,

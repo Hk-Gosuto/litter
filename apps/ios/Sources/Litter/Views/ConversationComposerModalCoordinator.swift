@@ -209,7 +209,7 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
                     .ignoresSafeArea()
             }
             .sheet(isPresented: $showModelSelector) {
-                ModelSelectorSheet(
+                ConversationOptionsSheet(
                     models: snapshot.availableModels,
                     catalogLoaded: appModel.snapshot?.serverSnapshot(for: snapshot.threadKey.serverId)?.availableModels != nil,
                     catalogError: appModel.modelCatalogError(for: snapshot.threadKey.serverId),
@@ -224,8 +224,14 @@ struct ConversationComposerModalCoordinator<Content: View>: View {
                     selectedModel: selectedModelBinding,
                     selectedAgentRuntimeKind: selectedAgentRuntimeKindBinding,
                     reasoningEffort: reasoningEffortBinding,
-                    isReasoningEffortLocked: currentThread?.ampReasoningEffortLocked == true
+                    isReasoningEffortLocked: currentThread?.ampReasoningEffortLocked == true,
+                    threadKey: snapshot.threadKey,
+                    collaborationMode: snapshot.collaborationMode,
+                    effectiveApprovalPolicy: snapshot.effectiveApprovalPolicy,
+                    effectiveSandboxPolicy: snapshot.effectiveSandboxPolicy
                 )
+                .environment(appModel)
+                .environment(appState)
                 .presentationDetents([.medium, .large], selection: $modelSelectorDetent)
                 .presentationDragIndicator(.visible)
                 .presentationContentInteraction(.scrolls)

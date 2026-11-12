@@ -52,6 +52,8 @@ pub struct HydratedAssistantMessageData {
     pub agent_nickname: Option<String>,
     pub agent_role: Option<String>,
     pub phase: Option<AppMessagePhase>,
+    #[uniffi(default = None)]
+    pub async_questions: Option<Vec<crate::types::PendingUserInputQuestion>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]

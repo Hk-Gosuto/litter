@@ -128,6 +128,7 @@ final class HomeSessionsScrollUIView: UIView {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let pinchVignette = PinchVignetteView()
+    private let catFooterContainer = UIView()
     private let catFooterHostingController = UIHostingController(rootView: AnyView(EmptyView()))
     private var containers: [ThreadKey: HomeRowContainer] = [:]
     private var order: [ThreadKey] = []
@@ -215,8 +216,11 @@ final class HomeSessionsScrollUIView: UIView {
         scrollView.delegate = self
         scrollView.addGestureRecognizer(pinchRecognizer)
         catFooterHostingController.view.backgroundColor = .clear
-        catFooterHostingController.view.isHidden = true
-        contentView.addSubview(catFooterHostingController.view)
+        catFooterContainer.accessibilityIdentifier = "home-cat-footer"
+        catFooterContainer.clipsToBounds = true
+        catFooterContainer.isHidden = true
+        catFooterContainer.addSubview(catFooterHostingController.view)
+        contentView.addSubview(catFooterContainer)
         // Let pinch and scroll pan arbitrate naturally. Pinch requires 2
         // touches to begin; `numberOfTouchesRequired = 2` on pinch + our
         // pinchActive check (which disables `scrollView.isScrollEnabled`
@@ -412,7 +416,10 @@ final class HomeSessionsScrollUIView: UIView {
 
     private func relayout(animated: Bool) {
         let width = bounds.width
-        guard width > 0 else { return }
+        guard width > 0 else {
+            layoutCatFooter(in: .zero)
+            return
+        }
 
         let z = continuousZoom
         var y: CGFloat = 0
@@ -436,7 +443,7 @@ final class HomeSessionsScrollUIView: UIView {
         if animated {
             UIView.animate(withDuration: zoomSnapDuration, delay: 0, options: [.curveEaseOut]) {
                 for (container, frame) in frames { container.frame = frame }
-                self.catFooterHostingController.view.frame = footerFrame
+                self.layoutCatFooter(in: footerFrame)
                 self.contentView.frame = CGRect(origin: .zero, size: newContentSize)
                 self.scrollView.contentSize = newContentSize
                 self.updatePageBackgroundVisibility()
@@ -445,7 +452,7 @@ final class HomeSessionsScrollUIView: UIView {
             }
         } else {
             for (container, frame) in frames { container.frame = frame }
-            catFooterHostingController.view.frame = footerFrame
+            layoutCatFooter(in: footerFrame)
             contentView.frame = CGRect(origin: .zero, size: newContentSize)
             scrollView.contentSize = newContentSize
             updatePageBackgroundVisibility()
@@ -488,6 +495,25 @@ final class HomeSessionsScrollUIView: UIView {
         return videoWidth * 9.0 / 16.0 + 32
     }
 
+    private func layoutCatFooter(in frame: CGRect) {
+        let layout = {
+            self.catFooterContainer.frame = frame
+            self.catFooterHostingController.view.frame = self.catFooterContainer.bounds
+        }
+        if catFooterContainer.isHidden && !frame.isEmpty {
+            // A restored scan layout can animate before its first bounds pass.
+            // Place new content at its final footer position before revealing it.
+            UIView.performWithoutAnimation {
+                self.catFooterContainer.layer.removeAllAnimations()
+                layout()
+                self.catFooterContainer.layoutIfNeeded()
+            }
+        } else {
+            layout()
+        }
+        catFooterContainer.isHidden = frame.isEmpty
+    }
+
     private func refreshCatFooterVisibility() {
         let visible = shouldShowCatFooter
         guard catFooterHostVisible != visible else { return }
@@ -499,7 +525,8 @@ final class HomeSessionsScrollUIView: UIView {
         } else {
             catFooterHostingController.rootView = AnyView(EmptyView())
         }
-        catFooterHostingController.view.isHidden = !visible
+        // Relayout reveals the host only after assigning a valid footer frame.
+        catFooterContainer.isHidden = true
     }
 
     private func rowHeight(
@@ -1014,7 +1041,7 @@ struct AlphaAnimatedImageView: UIViewRepresentable {
         imageView.backgroundColor = .clear
         imageView.isOpaque = false
         imageView.contentMode = .scaleAspectFit
-        imageView.clipsToBounds = false
+        imageView.clipsToBounds = true
         context.coordinator.configure(
             imageView,
             fileURL: fileURL,
@@ -1031,6 +1058,13 @@ struct AlphaAnimatedImageView: UIViewRepresentable {
             repeatCount: repeatCount,
             onFinished: onFinished
         )
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
+        // Async decoding changes UIImageView's intrinsic pixel size. The
+        // illustration must keep the SwiftUI frame chosen before decoding.
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: max(0, width), height: max(0, height))
     }
 
     static func dismantleUIView(_ imageView: UIImageView, coordinator: Coordinator) {

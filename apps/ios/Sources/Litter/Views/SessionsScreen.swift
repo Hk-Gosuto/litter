@@ -1303,9 +1303,12 @@ struct SessionsScreen: View {
                 serverId: serverId,
                 params: launchConfig().threadStartRequest(
                     cwd: cwd,
-                    dynamicTools: appModel.localGenerativeUiToolSpecs(for: serverId)
+                    dynamicTools: nil
                 )
             )
+            if appState.pendingCollaborationMode == .plan {
+                try await appModel.store.setThreadCollaborationMode(key: startedKey, mode: .plan)
+            }
             RecentDirectoryStore.shared.record(path: cwd, for: serverId)
             SavedThreadsStore.add(.init(threadKey: startedKey))
             appModel.store.setActiveThread(key: startedKey)

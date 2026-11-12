@@ -202,7 +202,7 @@ private struct RuntimeSettingEditor: View {
                         }
                         .accessibilityIdentifier("harness.setting.choices")
                     } else {
-                        TextField(setting.valueKind == .json ? "JSON value" : "Value", text: $value, axis: .vertical)
+                        TextField(LocalizedStringKey(setting.valueKind == .json ? "JSON value" : "Value"), text: $value, axis: .vertical)
                             .lineLimit(3...20).autocorrectionDisabled().textInputAutocapitalization(.never)
                             .accessibilityIdentifier("harness.setting.input")
                     }
@@ -224,7 +224,7 @@ private struct RuntimeSettingEditor: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(saving ? "Saving…" : "Save") {
+                    Button {
                         saving = true
                         Task {
                             defer { saving = false }
@@ -235,7 +235,10 @@ private struct RuntimeSettingEditor: View {
                                 dismiss()
                             } catch { self.error = error.localizedDescription }
                         }
-                    }.disabled(!setting.writable || saving || !edited || value == setting.valueJson && setting.valueKind != .string)
+                    } label: {
+                        Text(LocalizedStringKey(saving ? "Saving…" : "Save"))
+                    }
+                    .disabled(!setting.writable || saving || !edited || value == setting.valueJson && setting.valueKind != .string)
                 }
             }
             .interactiveDismissDisabled(saving)

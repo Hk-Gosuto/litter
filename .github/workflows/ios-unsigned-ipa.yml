@@ -59,7 +59,7 @@ jobs:
           (
             set -euo pipefail
             ./apps/ios/scripts/build-rust.sh --preserve-current --device-only
-            make alpine-fs xcgen
+            make xcgen
           ) 2>&1 | tee "$LOG_PATH"
           status=${PIPESTATUS[0]}
           set -e

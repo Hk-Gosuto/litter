@@ -302,14 +302,18 @@ enum LitterFont {
     }
 
     static func uiFont(size: CGFloat, bold: Bool = false) -> UIFont {
-        uiFont(family: storedFamily, size: size, bold: bold)
+        uiFont(size: size, weight: bold ? .bold : .regular)
     }
 
-    private static func uiFont(family: FontFamilyOption, size: CGFloat, bold: Bool = false) -> UIFont {
-        let weight: UIFont.Weight = bold ? .bold : .regular
+    static func uiFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
+        uiFont(family: storedFamily, size: size, weight: weight)
+    }
+
+    private static func uiFont(family: FontFamilyOption, size: CGFloat, weight: UIFont.Weight) -> UIFont {
         switch family {
         case .mono:
-            let name = bold
+            let useBold = weight.rawValue >= UIFont.Weight.semibold.rawValue
+            let name = useBold
                 ? preferredMonoFontName(weight: .bold) ?? "SFMono-Bold"
                 : preferredMonoFontName(weight: .regular) ?? "SFMono-Regular"
             return UIFont(name: name, size: size) ?? UIFont.monospacedSystemFont(ofSize: size, weight: weight)

@@ -743,7 +743,7 @@ final class WatchCompanionBridge: NSObject {
                     persistExtendedHistory: true
                 ).threadStartRequest(
                     cwd: cwd,
-                    dynamicTools: AppModel.shared.localGenerativeUiToolSpecs(for: serverId)
+                    dynamicTools: nil
                 )
                 let key = try await AppModel.shared.client.startThread(
                     serverId: serverId,

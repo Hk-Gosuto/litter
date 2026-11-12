@@ -1,6 +1,10 @@
 # Performance profile — 2026-09-24 (release 2.1.5)
 
-Where Litter spends time, ranked by what users feel. Sources:
+Historical profile of release 2.1.5. The remote-only branch no longer boots a
+local server; finding 1 is obsolete. Other findings require revalidation against
+current code before implementation.
+
+Where Litter spent time, ranked by what users felt. Sources:
 
 - **Measured, Rust:** ignored benchmarks in
   `shared/rust-bridge/codex-mobile-client/src/perf_profile.rs` (Apple Silicon,

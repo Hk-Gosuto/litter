@@ -35,9 +35,10 @@ use crate::types::{
 };
 use codex_app_server_protocol as upstream;
 
+#[cfg(test)]
+mod async_question_tests;
 mod dynamic_tools;
 mod event_loop;
-pub(crate) mod minigame;
 mod model_catalog;
 mod store_listener;
 #[cfg(test)]
@@ -65,10 +66,6 @@ pub struct MobileClient {
     oauth_callback_tunnels: Arc<Mutex<HashMap<String, OAuthCallbackTunnel>>>,
     slingshot_apis: Arc<StdMutex<HashMap<String, codex_slingshot::SlingshotApi>>>,
     pub(crate) recorder: Arc<crate::recorder::MessageRecorder>,
-    /// One-shot hooks that fulfill when the next `show_widget` dynamic tool
-    /// call finalizes on a specific thread. Keyed by `thread_id`.
-    /// Used by `AppClient::update_saved_app`.
-    pub(crate) widget_waiters: Arc<StdMutex<HashMap<String, WidgetWaiter>>>,
     /// Directory where `saved_apps.rs` persists the app index + per-app
     /// HTML/state files. Set once at process start by the platform
     /// (iOS/Android) via `AppClient::set_saved_apps_directory`. When
@@ -133,21 +130,6 @@ pub struct ManagedSshBootstrapFlow {}
 #[derive(Debug, Clone)]
 struct AlleycatRestartTarget {
     params: crate::alleycat::ParsedPairPayload,
-}
-
-/// A waiter registered by `update_saved_app` to receive the next
-/// finalized `show_widget` on a specific thread. See
-/// `MobileClient::widget_waiters` and `dynamic_tools::try_fulfill_widget_waiter`.
-pub struct WidgetWaiter {
-    pub sender: tokio::sync::oneshot::Sender<WidgetFinalizedPayload>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WidgetFinalizedPayload {
-    pub widget_html: String,
-    pub width: f64,
-    pub height: f64,
-    pub title: String,
 }
 
 #[derive(Debug, Clone)]
@@ -817,7 +799,6 @@ impl MobileClient {
             oauth_callback_tunnels: Arc::new(Mutex::new(HashMap::new())),
             slingshot_apis: Arc::new(StdMutex::new(HashMap::new())),
             recorder: Arc::new(crate::recorder::MessageRecorder::new()),
-            widget_waiters: Arc::new(StdMutex::new(HashMap::new())),
             saved_apps_directory: Arc::new(StdMutex::new(None)),
             mobile_preferences_directory,
             slingshot_credentials_directory: Arc::new(StdMutex::new(None)),
@@ -1512,6 +1493,7 @@ impl MobileClient {
     async fn replace_existing_session(&self, server_id: &str) {
         self.clear_oauth_callback_tunnel(server_id).await;
         let existing = self.sessions_write().remove(server_id);
+        self.app_store.invalidate_connection_requests(server_id);
         self.clear_direct_resume_markers_for_server(server_id);
         if let Some(session) = existing {
             info!("MobileClient: replacing existing server session {server_id}");
@@ -1549,32 +1531,15 @@ impl MobileClient {
 
     // ── Server Management ─────────────────────────────────────────────
 
-    /// Connect to a local (in-process) Codex server.
-    ///
-    /// Returns the `server_id` from the config on success.
+    /// Compatibility entry point. Reject before touching existing remote sessions.
     pub async fn connect_local(
         &self,
-        config: ServerConfig,
-        in_process: InProcessConfig,
+        _config: ServerConfig,
+        _in_process: InProcessConfig,
     ) -> Result<String, TransportError> {
-        let server_id = config.server_id.clone();
-        if self.existing_active_session(server_id.as_str()).is_some() {
-            info!("MobileClient: reusing existing local server session {server_id}");
-            return Ok(server_id);
-        }
-        self.replace_existing_session(server_id.as_str()).await;
-        let session = Arc::new(ServerSession::connect_local(config, in_process).await?);
-        self.app_store
-            .upsert_server(session.config(), ServerHealthSnapshot::Connected);
-
-        self.sessions_write()
-            .insert(server_id.clone(), Arc::clone(&session));
-        self.spawn_event_reader(server_id.clone(), Arc::clone(&session));
-        self.spawn_health_reader(server_id.clone(), Arc::clone(&session));
-        self.spawn_post_connect_warmup(server_id.clone(), session);
-
-        info!("MobileClient: connected local server {server_id}");
-        Ok(server_id)
+        Err(TransportError::ConnectionFailed(
+            "Local Codex is unavailable. Connect a remote computer.".into(),
+        ))
     }
 
     /// Connect to a remote Codex server via WebSocket.
@@ -3423,7 +3388,9 @@ impl MobileClient {
                         TurnPaginationSupport::Confirmed,
                     );
                 }
-                let confirmed = self.app_store.runtime_turn_pagination(server_id, &runtime_kind)
+                let confirmed = self
+                    .app_store
+                    .runtime_turn_pagination(server_id, &runtime_kind)
                     == Some(TurnPaginationSupport::Confirmed);
                 let maybe_truncated = is_first_page
                     && !confirmed
@@ -3697,6 +3664,8 @@ impl MobileClient {
         // When a draft was queued, the user can Steer it or it will auto-send
         // when the turn finishes.  Don't also auto-steer here.
         if queued_draft.is_some() {
+            self.app_store
+                .clear_async_questions_for_prompt(&thread_key, &direct_params.input);
             return Ok(());
         }
 
@@ -3726,6 +3695,8 @@ impl MobileClient {
                 Ok(_) => {
                     // Draft cleanup happens via TurnStarted / item upsert;
                     // don't remove here so the user sees the queued preview.
+                    self.app_store
+                        .clear_async_questions_for_prompt(&thread_key, &direct_params.input);
                     return Ok(());
                 }
                 Err(_) => {
@@ -3755,12 +3726,22 @@ impl MobileClient {
         let response = match response_result {
             Ok(response) => response,
             Err(error) => {
+                if optimistic_overlay_id.as_ref().is_some_and(|overlay_id| {
+                    self.app_store
+                        .rollback_unconfirmed_local_user_message_overlay(&thread_key, overlay_id)
+                }) {
+                    // TurnStarted or a user-item echo already acknowledged
+                    // this send. Treat it as accepted even if the RPC reply
+                    // was lost, so native composers do not restore the draft
+                    // and offer a duplicate retry while the AI is answering.
+                    self.app_store
+                        .finish_server_mutating_command_success(server_id, &direct_command_id);
+                    self.app_store
+                        .clear_async_questions_for_prompt(&thread_key, &params.input);
+                    return Ok(());
+                }
                 self.app_store
                     .finish_server_mutating_command_failure(server_id, &direct_command_id);
-                if let Some(overlay_id) = optimistic_overlay_id.as_ref() {
-                    self.app_store
-                        .remove_local_overlay_item(&thread_key, overlay_id);
-                }
                 if let Some(draft) = queued_draft.as_ref() {
                     self.app_store
                         .remove_thread_follow_up_draft(&thread_key, &draft.preview.id);
@@ -3777,6 +3758,8 @@ impl MobileClient {
                 &response.turn.id,
             );
         }
+        self.app_store
+            .clear_async_questions_for_prompt(&thread_key, &params.input);
         Ok(())
     }
 
@@ -3895,13 +3878,8 @@ impl MobileClient {
         self.apply_thread_revert_response(&key.server_id, &key.thread_id, &response)
             .map_err(RpcError::Deserialization)?;
         if let Some(cursor) = turns_cursor {
-            self.load_thread_turns_page(
-                &key.server_id,
-                &key.thread_id,
-                Some(cursor),
-                Some(100),
-            )
-            .await?;
+            self.load_thread_turns_page(&key.server_id, &key.thread_id, Some(cursor), Some(100))
+                .await?;
         }
 
         self.set_active_thread(Some(key.clone()));
@@ -3923,8 +3901,7 @@ impl MobileClient {
         self.get_session(&key.server_id)?;
         let source = self.snapshot_thread(key)?;
         ensure_thread_is_editable(&source)?;
-        let before_turn_id =
-            revert_before_turn_id_for_turn(&source, selected_turn_index as usize)?;
+        let before_turn_id = revert_before_turn_id_for_turn(&source, selected_turn_index as usize)?;
 
         let developer_instructions =
             crate::local_runtime_instructions::splice_local_runtime_developer_instructions(
@@ -3980,12 +3957,8 @@ impl MobileClient {
             .await
             .map_err(|e| RpcError::Deserialization(e.to_string()))?;
         let turns_cursor = revert_response.turns_backwards_cursor.clone();
-        self.apply_thread_revert_response(
-            &key.server_id,
-            &next_key.thread_id,
-            &revert_response,
-        )
-        .map_err(RpcError::Deserialization)?;
+        self.apply_thread_revert_response(&key.server_id, &next_key.thread_id, &revert_response)
+            .map_err(RpcError::Deserialization)?;
         if let Some(cursor) = turns_cursor {
             self.load_thread_turns_page(
                 &key.server_id,
@@ -4052,6 +4025,56 @@ impl MobileClient {
         answers: Vec<PendingUserInputAnswer>,
     ) -> Result<(), RpcError> {
         let request = self.pending_user_input(request_id)?;
+        if request.is_async {
+            // Empty submissions explicitly skip, matching the desktop's local skip.
+            if answers.is_empty() {
+                self.app_store.resolve_async_question(&request);
+                return Ok(());
+            }
+            let text = crate::async_questions::reply_text(&request, &answers)
+                .map_err(RpcError::Deserialization)?;
+            let key = ThreadKey {
+                server_id: request.server_id.clone(),
+                thread_id: request.thread_id.clone(),
+            };
+            let input = vec![upstream::UserInput::Text {
+                text,
+                text_elements: Vec::new(),
+            }];
+            if let Some(active_turn_id) = self
+                .snapshot_thread(&key)
+                .ok()
+                .and_then(|t| t.active_turn_id)
+            {
+                self.request_typed_for_server::<upstream::TurnSteerResponse>(
+                    &request.server_id,
+                    upstream::ClientRequest::TurnSteer {
+                        request_id: upstream::RequestId::Integer(crate::next_request_id()),
+                        params: upstream::TurnSteerParams {
+                            thread_id: request.thread_id.clone(),
+                            input,
+                            expected_turn_id: active_turn_id,
+                            ..Default::default()
+                        },
+                    },
+                )
+                .await
+                .map_err(RpcError::Deserialization)?;
+            } else {
+                self.start_turn(
+                    &request.server_id,
+                    upstream::TurnStartParams {
+                        thread_id: request.thread_id.clone(),
+                        input,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            }
+            // Failed sends leave the question and its native draft available for retry.
+            self.app_store.resolve_async_question(&request);
+            return Ok(());
+        }
         let seed = self
             .app_store
             .pending_user_input_seed(&request.server_id, &request.id);

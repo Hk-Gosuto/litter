@@ -1,5 +1,4 @@
 use super::*;
-use super::{WidgetFinalizedPayload, WidgetWaiter};
 
 #[derive(Clone)]
 pub(super) struct DynamicToolSessionTarget {
@@ -37,21 +36,14 @@ pub(super) async fn handle_dynamic_tool_call_request(
     session: Arc<ServerSession>,
     sessions: Arc<RwLock<HashMap<String, Arc<ServerSession>>>>,
     app_store: Arc<AppStoreReducer>,
-    widget_waiters: Arc<StdMutex<HashMap<String, WidgetWaiter>>>,
     saved_apps_directory: Arc<StdMutex<Option<String>>>,
     request_id: upstream::RequestId,
     params: upstream::DynamicToolCallParams,
     runtime_kind: AgentRuntimeKind,
 ) -> Result<(), RpcError> {
-    // `show_widget` routing: if a `widget_waiter` is registered for the
-    // thread (the Update-overlay path), fulfill it and skip auto-save —
-    // the waiter owns this call. Otherwise, run the auto-save upsert so
-    // every finalized generative widget persists as a saved app.
+    // Finalized generative widgets with an app ID persist as saved apps.
     if params.tool.eq_ignore_ascii_case("show_widget") {
-        let fulfilled = try_fulfill_widget_waiter(&widget_waiters, &params);
-        if !fulfilled {
-            auto_upsert_saved_app(&saved_apps_directory, &params);
-        }
+        auto_upsert_saved_app(&saved_apps_directory, &session.config().server_id, &params);
     }
     let response = match execute_dynamic_tool_call(sessions, Arc::clone(&app_store), &params).await
     {
@@ -292,11 +284,11 @@ pub(super) async fn list_sessions_tool_output(
                 cwd: None,
                 search_term: None,
                 use_state_db_only: false,
-            originators: None,
-            section_id: None,
-            project_id: None,
-            parent_thread_id: None,
-            ancestor_thread_id: None,
+                originators: None,
+                section_id: None,
+                project_id: None,
+                parent_thread_id: None,
+                ancestor_thread_id: None,
             },
         )
         .await;
@@ -490,72 +482,13 @@ mod local_studio_tests {
     }
 }
 
-/// If a waiter is registered for the thread that emitted this
-/// `show_widget` call, extract its HTML/title/dimensions and send them
-/// over the oneshot. Used by `AppClient::update_saved_app` to block until
-/// the model emits a new widget. Returns `true` when a waiter was
-/// actually fulfilled — callers use this to skip the auto-save upsert
-/// on the overlay update path.
-fn try_fulfill_widget_waiter(
-    widget_waiters: &Arc<StdMutex<HashMap<String, WidgetWaiter>>>,
-    params: &upstream::DynamicToolCallParams,
-) -> bool {
-    let thread_id = params.thread_id.clone();
-    let arguments = &params.arguments;
-    let Some(object) = arguments.as_object() else {
-        return false;
-    };
-    let widget_html = object
-        .get("widget_code")
-        .or_else(|| object.get("widgetCode"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
-    let Some(widget_html) = widget_html else {
-        return false;
-    };
-    if widget_html.is_empty() {
-        return false;
-    }
-    let title = object
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Saved App")
-        .to_string();
-    let width = object
-        .get("width")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(800.0);
-    let height = object
-        .get("height")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(600.0);
-
-    let waiter = {
-        let mut guard = widget_waiters
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.remove(&thread_id)
-    };
-    if let Some(waiter) = waiter {
-        let _ = waiter.sender.send(WidgetFinalizedPayload {
-            widget_html,
-            width,
-            height,
-            title,
-        });
-        true
-    } else {
-        false
-    }
-}
-
-/// Auto-save path: when a `show_widget` call lands on a thread with no
-/// active update-overlay waiter, upsert the app under
+/// Auto-save path: when a `show_widget` call lands, upsert the app under
 /// `(thread_id, app_id)`. Requires the platform to have set the saved
 /// apps directory via `AppClient::set_saved_apps_directory`; if unset,
 /// this is a no-op (pre-R2 environments, tests).
 fn auto_upsert_saved_app(
     saved_apps_directory: &Arc<StdMutex<Option<String>>>,
+    server_id: &str,
     params: &upstream::DynamicToolCallParams,
 ) {
     let directory = {
@@ -610,8 +543,9 @@ fn auto_upsert_saved_app(
     // persistence path.
     let schema_version: u32 = 1;
 
-    match crate::saved_apps::saved_app_upsert(
+    match crate::saved_apps::saved_app_upsert_for_server(
         directory,
+        Some(server_id.to_string()),
         params.thread_id.clone(),
         app_id.to_string(),
         title,

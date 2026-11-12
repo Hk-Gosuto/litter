@@ -202,8 +202,8 @@ struct ModelPickerCatalog {
     func subtitle(for model: ModelInfo) -> String {
         let harness = model.agentRuntimeKind.titleDisplayLabel
         switch model.entryKind {
-        case .mode: return "\(harness) · mode"
-        case .pluginMode: return "\(harness) · plugin mode"
+        case .mode: return AppLanguage.localizedString("%@ · mode", harness)
+        case .pluginMode: return AppLanguage.localizedString("%@ · plugin mode", harness)
         case .model:
             if let provider = model.providerLabel ?? model.providerId, !provider.isEmpty {
                 return "\(harness) · \(provider)"
@@ -490,8 +490,10 @@ struct ModelPickerView: View {
             }
             .accessibilityIdentifier("modelPicker.fastMode")
 
-            if let session {
-                ModelPickerSessionToggles(session: session, current: current, selectedRuntime: selectedAgentRuntimeKind)
+            // Plan mode is a pre-thread choice. An existing thread uses this
+            // same picker and omits the toggle.
+            if let session, session.threadKey == nil {
+                ModelPickerSessionToggles(session: session)
             }
         } header: {
             ModelPickerSectionHeader(title: "Options")
@@ -542,8 +544,8 @@ struct ModelPickerView: View {
 
     private func catalogNotice(hasModels: Bool) -> String? {
         if let catalogError { return catalogError }
-        if !catalogLoaded { return "Loading models…" }
-        return hasModels ? nil : "No models available"
+        if !catalogLoaded { return AppLanguage.localizedString("Loading models...") }
+        return hasModels ? nil : AppLanguage.localizedString("No models available")
     }
 }
 
@@ -649,8 +651,8 @@ private struct ModelPickerHarnessPage: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("modelPicker.provider.\(group.id)")
-                .accessibilityLabel("\(group.title ?? "Other"), \(group.models.count) models")
-                .accessibilityHint(isOpen ? "Collapse" : "Expand")
+                .accessibilityLabel(Text("\(group.title ?? AppLanguage.localizedString("Other")), \(group.models.count) models"))
+                .accessibilityHint(Text(LocalizedStringKey(isOpen ? "Collapse" : "Expand")))
             } else if let title = group.title {
                 ModelPickerSectionHeader(title: title)
             } else if harness.providers.count > 1 || !harness.modes.isEmpty || !harness.pluginModes.isEmpty {
@@ -717,7 +719,7 @@ private struct ModelPickerSearchSections: View {
                 HStack(spacing: 6) {
                     AgentIconView(kind: section.kind, size: 14)
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    ModelPickerSectionHeader(title: section.title)
+                    ModelPickerSectionHeader(title: localizedModelSectionTitle(section.title))
                 }
             }
             .modelPickerRowBackground()
@@ -768,7 +770,7 @@ private struct ModelPickerModelRow: View {
                         }
                     }
                     if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
+                        Text(AppLanguage.localizedString(subtitle))
                             .litterFont(.footnote)
                             .foregroundStyle(LitterTheme.textSecondary)
                             .lineLimit(1)
@@ -801,7 +803,7 @@ private struct ModelPickerHarnessRow: View {
                     .litterFont(.body)
                     .foregroundStyle(LitterTheme.textPrimary)
                     .lineLimit(1)
-                Text(harness.summary)
+                Text(localizedHarnessSummary(harness))
                     .litterFont(.footnote)
                     .foregroundStyle(LitterTheme.textSecondary)
                     .lineLimit(1)
@@ -834,15 +836,62 @@ private struct ModelPickerHarnessIcon: View {
     }
 }
 
+private func localizedModelSectionTitle(_ title: String) -> String {
+    let pluginSuffix = " · Plugin modes"
+    let modesSuffix = " · Modes"
+    if title.hasSuffix(pluginSuffix) {
+        let name = String(title.dropLast(pluginSuffix.count))
+        return AppLanguage.localizedString("%@ · Plugin modes", name)
+    }
+    if title.hasSuffix(modesSuffix) {
+        let name = String(title.dropLast(modesSuffix.count))
+        return AppLanguage.localizedString("%@ · Modes", name)
+    }
+    return title
+}
+
+private func localizedHarnessSummary(_ harness: ModelPickerCatalog.Harness) -> String {
+    var parts: [String] = []
+    if harness.modelCount > 0 {
+        let modelKey = harness.modelCount == 1 ? "%lld model" : "%lld models"
+        parts.append(AppLanguage.localizedString(modelKey, Int64(harness.modelCount)))
+        let named = harness.providers.filter { $0.title != nil }.count
+        if named > 1 {
+            parts.append(AppLanguage.localizedString("%lld providers", Int64(named)))
+        }
+    }
+    if !harness.modes.isEmpty {
+        let modeKey = harness.modes.count == 1 ? "%lld mode" : "%lld modes"
+        parts.append(AppLanguage.localizedString(modeKey, Int64(harness.modes.count)))
+    }
+    if !harness.pluginModes.isEmpty {
+        let pluginKey = harness.pluginModes.count == 1 ? "%lld plugin mode" : "%lld plugin modes"
+        parts.append(AppLanguage.localizedString(pluginKey, Int64(harness.pluginModes.count)))
+    }
+    return parts.joined(separator: " · ")
+}
+
 private struct ModelPickerSectionHeader: View {
     let title: String
 
+    private static let localizedTitles: Set<String> = [
+        "Current", "Recent", "Harnesses", "Options", "Modes", "Plugin modes", "Models", "Other",
+    ]
+
     var body: some View {
-        Text(title)
-            .litterFont(.footnote, weight: .medium)
-            .foregroundStyle(LitterTheme.textSecondary)
-            .textCase(nil)
-            .lineLimit(1)
+        if Self.localizedTitles.contains(title) {
+            Text(LocalizedStringKey(title))
+                .litterFont(.footnote, weight: .medium)
+                .foregroundStyle(LitterTheme.textSecondary)
+                .textCase(nil)
+                .lineLimit(1)
+        } else {
+            Text(verbatim: title)
+                .litterFont(.footnote, weight: .medium)
+                .foregroundStyle(LitterTheme.textSecondary)
+                .textCase(nil)
+                .lineLimit(1)
+        }
     }
 }
 
@@ -852,7 +901,7 @@ private struct ModelPickerOptionLabel: View {
 
     var body: some View {
         Label {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .litterFont(.body)
                 .foregroundStyle(LitterTheme.textPrimary)
         } icon: {
@@ -862,29 +911,16 @@ private struct ModelPickerOptionLabel: View {
     }
 }
 
-/// Plan mode and permission toggles for pickers opened with a session
-/// context. Mirrors the previous chip behaviour: a thread writes through
-/// the store, the home composer writes pending app-state preferences.
+/// Plan mode on the new-session picker. The choice is pending until the
+/// home composer creates the thread.
 private struct ModelPickerSessionToggles: View {
     let session: ModelPickerSessionControls
-    let current: ModelInfo?
-    let selectedRuntime: AgentRuntimeKind?
 
     @Environment(AppModel.self) private var appModel
     @Environment(AppState.self) private var appState
 
     private var collaborationMode: AppModeKind {
         session.threadKey == nil ? appState.pendingCollaborationMode : session.collaborationMode
-    }
-
-    private var isFullAccess: Bool {
-        let approval = appState.launchApprovalPolicy(for: session.threadKey) ?? session.effectiveApprovalPolicy
-        let sandbox = appState.turnSandboxPolicy(for: session.threadKey) ?? session.effectiveSandboxPolicy
-        return threadPermissionPreset(approvalPolicy: approval, sandboxPolicy: sandbox) == .fullAccess
-    }
-
-    private var supportsPermissionOverrides: Bool {
-        (selectedRuntime ?? current?.agentRuntimeKind)?.supportsThreadPermissionOverrides ?? true
     }
 
     var body: some View {
@@ -895,20 +931,6 @@ private struct ModelPickerSessionToggles: View {
             ModelPickerOptionLabel(title: "Plan mode", systemImage: "doc.text")
         }
         .accessibilityIdentifier("modelPicker.planMode")
-
-        if supportsPermissionOverrides {
-            Toggle(isOn: Binding(
-                get: { isFullAccess },
-                set: { setFullAccess($0) }
-            )) {
-                ModelPickerOptionLabel(
-                    title: "Full access",
-                    systemImage: isFullAccess ? "lock.open" : "lock"
-                )
-            }
-            .tint(LitterTheme.danger)
-            .accessibilityIdentifier("modelPicker.fullAccess")
-        }
     }
 
     private func setPlan(_ enabled: Bool) {
@@ -919,14 +941,6 @@ private struct ModelPickerSessionToggles: View {
             }
         } else {
             appState.pendingCollaborationMode = next
-        }
-    }
-
-    private func setFullAccess(_ enabled: Bool) {
-        if enabled {
-            appState.setPermissions(approvalPolicy: "never", sandboxMode: "danger-full-access", for: session.threadKey)
-        } else {
-            appState.setPermissions(approvalPolicy: "on-request", sandboxMode: "workspace-write", for: session.threadKey)
         }
     }
 }

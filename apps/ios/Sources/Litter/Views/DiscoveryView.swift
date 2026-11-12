@@ -154,7 +154,7 @@ struct DiscoveryView: View {
             }
             Button("Cancel", role: .cancel) { appModel.clearSshHostKeyChange() }
         } message: {
-            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(appModel.sshHostKeyChangeChallenge?.fingerprint ?? "unknown")")
+            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(appModel.sshHostKeyChangeChallenge?.fingerprint ?? AppLanguage.localizedString("Unknown"))")
         }
     }
 
@@ -268,11 +268,11 @@ struct DiscoveryView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Text(title)
+                            Text(LocalizedStringKey(title))
                                 .litterFont(.subheadline, weight: .semibold)
                                 .foregroundColor(LitterTheme.textPrimary)
                             if let badge {
-                                Text(badge)
+                                Text(LocalizedStringKey(badge))
                                     .litterFont(.caption2, weight: .semibold)
                                     .foregroundColor(LitterTheme.accentStrong)
                                     .tracking(0.5)
@@ -288,7 +288,7 @@ struct DiscoveryView: View {
                                     )
                             }
                         }
-                        Text(subtitle)
+                        Text(LocalizedStringKey(subtitle))
                             .litterFont(.caption)
                             .foregroundColor(LitterTheme.textSecondary)
                             .multilineTextAlignment(.leading)

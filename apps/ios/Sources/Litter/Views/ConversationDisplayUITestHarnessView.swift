@@ -231,7 +231,6 @@ private struct ConversationMultiTurnUITestHarnessView: View {
                 sendScrollToken: revision,
                 activeThreadKey: ThreadKey(serverId: "ui-test", threadId: "multi-turn"),
                 agentDirectoryVersion: 0,
-                hasMinigameLaunchButton: false,
                 olderTurnsCursor: nil,
                 initialTurnsLoaded: true,
                 textSizeStep: $textSize,

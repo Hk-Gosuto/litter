@@ -53,9 +53,16 @@ pub fn hydrate_turns(turns: &[Turn], opts: &HydrationOptions) -> Vec<HydratedCon
     let mut items = Vec::with_capacity(turns.len() * 3);
     for (turn_index, turn) in turns.iter().enumerate() {
         for thread_item in &turn.items {
-            if let Some(conv) =
+            if let Some(mut conv) =
                 hydrate_thread_item(thread_item, Some(&turn.id), Some(turn_index), opts)
             {
+                // Historical questions remain readable, but only a running
+                // turn can restore an actionable question after reconnect.
+                if turn.status != codex_app_server_protocol::TurnStatus::InProgress {
+                    if let HydratedConversationItemContent::Assistant(data) = &mut conv.content {
+                        data.async_questions = None;
+                    }
+                }
                 items.push(conv);
             }
         }
@@ -238,6 +245,28 @@ fn convert_thread_item(
 ) -> Option<HydratedConversationItem> {
     let (content, is_boundary) = match item {
         ThreadItem::UserMessage { content, .. } => {
+            if let Some(replies) = crate::async_questions::parse_input(content) {
+                let questions = replies
+                    .into_iter()
+                    .map(|reply| HydratedUserInputResponseQuestionData {
+                        id: reply.question_item_id,
+                        header: None,
+                        question: reply.question,
+                        answer: reply.answer,
+                        options: Vec::new(),
+                    })
+                    .collect();
+                return Some(HydratedConversationItem {
+                    id: item_id.to_string(),
+                    content: HydratedConversationItemContent::UserInputResponse(
+                        HydratedUserInputResponseData { questions },
+                    ),
+                    source_turn_id: source_turn_id.map(str::to_string),
+                    source_turn_index: source_turn_index.map(|index| index as u32),
+                    timestamp: None,
+                    is_from_user_turn_boundary: true,
+                });
+            }
             let (text, images) = render_user_input(content);
             if text.is_empty() && images.is_empty() {
                 return None;
@@ -250,7 +279,12 @@ fn convert_thread_item(
                 true,
             )
         }
-        ThreadItem::AgentMessage { text, phase, .. } => {
+        ThreadItem::AgentMessage {
+            text,
+            phase,
+            questions,
+            ..
+        } => {
             let trimmed = text.trim();
             if trimmed.is_empty() {
                 return None;
@@ -259,6 +293,9 @@ fn convert_thread_item(
                 HydratedConversationItemContent::CodeReview(hydrate_code_review_payload(&review))
             } else {
                 HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                    async_questions: questions
+                        .as_ref()
+                        .map(|questions| crate::async_questions::questions(item_id, questions)),
                     text: trimmed.to_string(),
                     agent_nickname: opts.default_agent_nickname.clone(),
                     agent_role: opts.default_agent_role.clone(),
@@ -1289,7 +1326,7 @@ pub(crate) fn render_user_input(inputs: &[UserInput]) -> (String, Vec<String>) {
                 ImageReference::File { file_id } => {
                     text_parts.push(format!("[Image attachment] {file_id}"));
                 }
-            }
+            },
             UserInput::LocalImage { path, .. } => {
                 images.push(format!("file://{}", path.display()));
             }
@@ -1321,6 +1358,13 @@ pub(crate) fn render_user_input(inputs: &[UserInput]) -> (String, Vec<String>) {
 }
 
 fn visible_user_text(text: &str) -> String {
+    if let Some(replies) = crate::async_questions::parse(text) {
+        return replies
+            .iter()
+            .map(|reply| format!("> {}\n\n{}", reply.question, reply.answer))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
     let trimmed = text.trim();
     if !trimmed.starts_with(DESKTOP_FILE_CONTEXT_HEADER) {
         return trimmed.to_string();

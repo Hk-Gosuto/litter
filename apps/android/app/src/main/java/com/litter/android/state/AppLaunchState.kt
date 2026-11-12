@@ -13,7 +13,6 @@ import uniffi.codex_mobile_client.AppSandboxMode
 import uniffi.codex_mobile_client.AppSandboxPolicy
 import com.litter.android.ui.common.AgentRuntimeKind
 import uniffi.codex_mobile_client.ThreadKey
-import uniffi.codex_mobile_client.generativeUiDynamicToolSpecs
 
 data class ThreadPermissionOverride(
     val approvalPolicy: String,
@@ -167,22 +166,22 @@ class AppLaunchState(context: Context) {
 
         val rawApprovalPolicy = thread.effectiveApprovalPolicy
         val rawSandboxPolicy = thread.effectiveSandboxPolicy
+        if (rawApprovalPolicy == null && rawSandboxPolicy == null) {
+            // A metadata read omits permissions. Keep the last concrete
+            // selection instead of snapping the picker back to inherit.
+            return
+        }
 
         _snapshot.update { state ->
-            val nextOverrides = when {
-                rawApprovalPolicy == null && rawSandboxPolicy == null ->
-                    state.threadPermissionOverrides - permissionKey
-                else ->
-                    state.threadPermissionOverrides + (
-                        permissionKey to ThreadPermissionOverride(
-                            approvalPolicy = rawApprovalPolicy.toSelectionValue(),
-                            sandboxMode = rawSandboxPolicy.toSelectionValue(),
-                            isUserOverride = false,
-                            rawApprovalPolicy = rawApprovalPolicy,
-                            rawSandboxPolicy = rawSandboxPolicy,
-                        )
-                    )
-            }
+            val nextOverrides = state.threadPermissionOverrides + (
+                permissionKey to ThreadPermissionOverride(
+                    approvalPolicy = rawApprovalPolicy.toSelectionValue(),
+                    sandboxMode = rawSandboxPolicy.toSelectionValue(),
+                    isUserOverride = false,
+                    rawApprovalPolicy = rawApprovalPolicy,
+                    rawSandboxPolicy = rawSandboxPolicy,
+                )
+            )
             if (nextOverrides == state.threadPermissionOverrides) {
                 state
             } else {
@@ -241,7 +240,7 @@ class AppLaunchState(context: Context) {
             cwd = cwd.normalizedOrFallback(
                 if (serverIsLocal) HomeAnchor.path(appContext) else "/",
             ),
-            dynamicTools = if (serverIsLocal) generativeUiDynamicToolSpecs() else null,
+            dynamicTools = null,
         ).also { updateCurrentCwd(it.cwd) }
 
     fun threadResumeRequest(

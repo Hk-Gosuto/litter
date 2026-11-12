@@ -169,7 +169,8 @@ struct HomeDashboardView: View {
             (SavedThreadsStore.PinnedKey(threadKey: $0.key), $0)
         })
         let pinnedFirst = pinnedThreadKeys.compactMap { byPinnedKey[$0] }
-        for session in pinnedFirst where !session.isResumed {
+        let launchable = Set(connectedServers.filter(\.canLaunchSessions).map(\.id))
+        for session in pinnedFirst where !session.isResumed && launchable.contains(session.serverId) {
             let id = hydrationId(session.key)
             guard !hydratingKeys.contains(id) else { continue }
             hydratingKeys.insert(id)
@@ -184,7 +185,7 @@ struct HomeDashboardView: View {
 
     private var visibleSessions: [HomeDashboardRecentSession] {
         let serverId = selectedMachineServerId
-        guard let serverId, !serverId.isEmpty else { return recentSessions }
+        guard let serverId, !serverId.isEmpty else { return [] }
         return recentSessions.filter { $0.serverId == serverId }
     }
 
@@ -478,7 +479,7 @@ struct HomeDashboardView: View {
         guard chrome == .full,
               inputMode == .collapsed,
               !isSearchExpanded else { return false }
-        return visibleSessions.isEmpty
+        return selectedMachineServerId == nil
     }
 
     // Search results are rendered directly in `canvas` as an inline
@@ -648,7 +649,9 @@ struct HomeDashboardView: View {
         GeometryReader { proxy in
             let h = proxy.size.height
             let w = proxy.size.width
-            let catWidth = min(max(180, w * 0.55), 260)
+            // Preserve the original 360-point illustration size explicitly.
+            // The old image view escaped the smaller proposed frame after decoding.
+            let catWidth = min(max(0, w - 32), 360)
             let catHeight = catWidth * 202.0 / 360.0
             EmptyHomeFatCatView()
                 .frame(width: catWidth, height: catHeight)

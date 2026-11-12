@@ -515,19 +515,9 @@ final class AppModel {
         return false
     }
 
-    /// True if the given `serverId` resolves to a local-server snapshot
-    /// entry. Used at every `startThread` call site to gate the generative-UI
-    /// dynamic tools (show_widget / visualize_read_me) so remote servers
-    /// never see them.
+    /// UI projection of a legacy local-server snapshot.
     func isLocalServer(serverId: String) -> Bool {
         snapshot?.servers.first(where: { $0.serverId == serverId })?.isLocal == true
-    }
-
-    /// `generativeUiDynamicToolSpecs()` when `serverId` is a local server,
-    /// otherwise `nil`. Use this to construct the `dynamicTools` field on
-    /// any thread-start request.
-    func localGenerativeUiToolSpecs(for serverId: String) -> [AppDynamicToolSpec]? {
-        isLocalServer(serverId: serverId) ? generativeUiDynamicToolSpecs() : nil
     }
 
     func loginLocalChatGPTAccount(serverId: String) async throws {

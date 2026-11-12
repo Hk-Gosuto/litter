@@ -31,7 +31,9 @@ import com.litter.android.state.SavedThreadsStore
 import com.litter.android.state.VoiceRuntimeController
 import com.litter.android.state.connectionModeLabel
 import kotlinx.coroutines.launch
+import uniffi.codex_mobile_client.AppModeKind
 import com.litter.android.ui.conversation.ApprovalOverlay
+import com.litter.android.ui.conversation.HeaderOverrides
 import com.litter.android.ui.conversation.ConversationInfoScreen
 import com.litter.android.ui.conversation.ConversationScreen
 import com.litter.android.ui.discovery.DiscoveryScreen
@@ -253,6 +255,9 @@ fun LitterApp(
                 serverId,
                 appModel.launchState.threadStartRequest(cwd, serverIsLocal = serverIsLocal),
             )
+            if (HeaderOverrides.pendingPlanMode) {
+                appModel.store.setThreadCollaborationMode(startedKey, AppModeKind.PLAN)
+            }
             RecentDirectoryStore(context).record(serverId, cwd)
             SavedThreadsStore.add(
                 context,

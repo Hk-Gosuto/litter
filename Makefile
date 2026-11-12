@@ -195,15 +195,6 @@ if [ ! -f "$(STAMP_BINDINGS_S)" ] || [ "$$current_hash" != "$$recorded_hash" ] |
 fi
 endef
 
-# Pinned release tag of the prebuilt Alpine rootfs tarball (still hosted
-# on the dnakov/litter-ish releases page). The iSH kernel itself is built
-# from the `ish` Rust crate. Bump and re-run `make alpine-fs` to upgrade.
-ALPINE_FS_VERSION := v0.1.2
-STAMP_ALPINE_FS := $(STAMPS)/alpine-fs-$(ALPINE_FS_VERSION)
-STAMP_ANDROID_ALPINE_FS := $(STAMPS)/android-alpine-fs-$(ALPINE_FS_VERSION)
-PROOT_COMMIT := ee10b279a38d34b6704345bc448d18f019ca1b49
-TALLOC_VERSION := 2.4.3
-STAMP_PROOT_ANDROID = $(STAMPS)/proot-android-$(PROOT_COMMIT)-talloc-$(TALLOC_VERSION)-$(ANDROID_ABIS_SAFE)
 GHOSTTY_DIR := $(ROOT)/shared/third_party/ghostty
 GHOSTTY_COMMIT := $(shell git -C $(GHOSTTY_DIR) rev-parse --short=12 HEAD 2>/dev/null || echo missing)
 GHOSTTY_PATCH_FILES := $(wildcard $(ROOT)/patches/ghostty/*.patch)
@@ -228,11 +219,10 @@ $(shell mkdir -p $(STAMPS))
 	android android-fast android-emulator-fast android-emulator-run android-device-run android-release android-debug android-install android-emulator-install \
 	rust-ios rust-ios-package rust-ios-device-release rust-mac-release rust-ios-device-fast rust-ios-sim-fast rust-ios-macabi-fast rust-android rust-check rust-test rust-host-dev \
 	ios-xcode-sim ios-xcode-sim-fast ios-xcode-device ios-xcode-device-fast \
-	android-alpine-fs proot-android \
 	ghostty-ios ghostty-android \
 	alleycat-main \
 	bindings bindings-swift bindings-kotlin material-schemes \
-	sync ensure-codex-patched patch unpatch sync-ghostty unpatch-ghostty xcgen alpine-fs \
+	sync ensure-codex-patched patch unpatch sync-ghostty unpatch-ghostty xcgen \
 	ios-build ios-build-sim ios-build-sim-fast ios-build-device ios-build-device-fast \
 	watch watch-sim watch-sim-run watch-device watch-typecheck watch-register \
 	test test-rust test-ios test-android \
@@ -243,10 +233,9 @@ $(shell mkdir -p $(STAMPS))
 
 all: ios android
 
-# Rust and the Alpine download may run in parallel. Xcode project generation
-# is deliberately sequenced after Rust: build-rust.sh already emits the Swift
-# bindings, so running `xcgen` in parallel used to launch a second full host
-# Cargo build that sat behind the cross-compile target lock.
+# Rust and Xcode project generation are deliberately sequenced: build-rust.sh
+# emits the Swift bindings, so running `xcgen` in parallel used to launch a
+# second full host Cargo build that sat behind the cross-compile target lock.
 ios-build-sim: rust-ios-package
 ios-build-device: rust-ios-package
 
@@ -532,18 +521,6 @@ $(STAMP_GHOSTTY_ANDROID): $(STAMP_SYNC_GHOSTTY) shared/third_party/ghostty/build
 	@cd $(ROOT) && ANDROID_ABIS="$(ANDROID_ABIS)" ./tools/scripts/build-ghostty-android.sh
 	@touch $@
 
-android-alpine-fs: $(STAMP_ANDROID_ALPINE_FS)
-$(STAMP_ANDROID_ALPINE_FS): apps/android/scripts/download-alpine-fs.sh
-	@echo "==> Fetching Android alpine-fs $(ALPINE_FS_VERSION)..."
-	@ALPINE_FS_VERSION=$(ALPINE_FS_VERSION) $(ANDROID_DIR)/scripts/download-alpine-fs.sh
-	@touch $@
-
-proot-android: $(STAMP_PROOT_ANDROID)
-$(STAMP_PROOT_ANDROID): tools/scripts/build-proot-android.sh
-	@echo "==> Building Android proot $(PROOT_COMMIT)..."
-	@cd $(ROOT) && $(ANDROID_ENV) ANDROID_ABIS="$(ANDROID_ABIS)" PROOT_COMMIT="$(PROOT_COMMIT)" TALLOC_VERSION="$(TALLOC_VERSION)" ./tools/scripts/build-proot-android.sh
-	@touch $@
-
 help:
 	@printf '%s\n' \
 		'make ios                full iOS package lane + simulator build' \
@@ -557,8 +534,6 @@ help:
 		'make rust-ios-sim-fast  fast Rust iOS simulator lane (raw staticlib only)' \
 		'make rust-ios-device-fast fast Rust iOS device lane (raw staticlib only)' \
 		'make rust-ios-macabi-fast fast Rust Mac Catalyst lane (host-arch macabi staticlib only)' \
-		'make android-alpine-fs  download Android proot Alpine rootfs asset' \
-		'make proot-android     build Android proot executable artifacts' \
 		'make ghostty-ios        build pinned Ghostty iOS renderer artifacts' \
 		'make ghostty-android    build pinned Ghostty Android renderer artifacts (requires Android platform patch)' \
 		'make alleycat-main      refresh unpinned Alleycat git deps to latest dnakov/alleycat main' \
@@ -651,16 +626,6 @@ xcgen: $(STAMP_XCGEN)
 $(STAMP_XCGEN): $(IOS_DIR)/project.yml $(IOS_SCRIPTS)/regenerate-project.sh $(IOS_PROJECT_INPUTS)
 	@echo "==> Regenerating Xcode project..."
 	@$(IOS_SCRIPTS)/regenerate-project.sh
-	@touch $@
-
-# Download the pinned Alpine rootfs tarball and extract into
-# apps/ios/Resources/fs. The stamp is version-keyed so bumping
-# ALPINE_FS_VERSION re-runs the download. The iSH kernel itself is
-# compiled from the `ish` Rust crate via cargo.
-alpine-fs: $(STAMP_ALPINE_FS)
-$(STAMP_ALPINE_FS):
-	@echo "==> Fetching alpine-fs $(ALPINE_FS_VERSION)..."
-	@ALPINE_FS_VERSION=$(ALPINE_FS_VERSION) $(IOS_SCRIPTS)/download-alpine-fs.sh
 	@touch $@
 
 verify-ios-project:

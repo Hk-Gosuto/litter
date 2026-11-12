@@ -432,7 +432,7 @@ pub fn seed_metadata() -> Vec<AppAgentMetadata> {
 /// Fold a probe response into what litter already knows before it is
 /// cached.
 ///
-/// Two corrections:
+/// Three corrections:
 ///
 /// * **`supports_ssh_bridge` is re-stated from the catalog.** Every
 ///   consumer of that flag — the iOS SSH picker, the iOS SSH probe
@@ -443,6 +443,13 @@ pub fn seed_metadata() -> Vec<AppAgentMetadata> {
 ///   and taking it verbatim would enable picker rows that fail on
 ///   connect (the alleycat manifest marks devin and grok
 ///   SSH-bridgeable; litter links no bridge for either).
+/// * **Thread-permission capabilities are re-stated from the catalog.**
+///   The full-access control and `start_turn` both trust
+///   `supports_thread_permission_overrides`. A host probe that reports
+///   `false` for Codex hides the control and drops the override on the
+///   wire, so a reconnect makes an enabled full-access session look
+///   stuck. `reports_effective_thread_permissions` has the same source:
+///   litter already knows which agents echo effective policy.
 /// * **Missing blocks fall back to the seeded entry** instead of
 ///   erasing what litter already had. Older hosts omit `presentation`
 ///   / `capabilities` entirely; a probe from one should not downgrade a
@@ -461,6 +468,10 @@ pub fn reconcile_probe_metadata(mut metadata: AppAgentMetadata) -> AppAgentMetad
     match metadata.capabilities.as_mut() {
         Some(capabilities) => {
             capabilities.supports_ssh_bridge = entry.reach.supports_ssh_bridge();
+            capabilities.supports_thread_permission_overrides =
+                entry.supports_thread_permission_overrides;
+            capabilities.reports_effective_thread_permissions =
+                entry.reports_effective_thread_permissions;
         }
         None => metadata.capabilities = builtin.capabilities,
     }
@@ -734,6 +745,26 @@ mod tests {
                 .expect("seeded capabilities")
                 .supports_ssh_bridge
         );
+    }
+
+    #[test]
+    fn probe_cannot_clear_codex_thread_permission_capabilities() {
+        let mut capabilities = host_capabilities(true);
+        capabilities.supports_thread_permission_overrides = false;
+        capabilities.reports_effective_thread_permissions = false;
+        let reconciled = reconcile_probe_metadata(probed("codex", Some(capabilities)));
+        let capabilities = reconciled.capabilities.expect("capabilities");
+        assert!(capabilities.supports_thread_permission_overrides);
+        assert!(capabilities.reports_effective_thread_permissions);
+    }
+
+    #[test]
+    fn probe_cannot_grant_thread_permission_overrides_the_catalog_does_not() {
+        let reconciled = reconcile_probe_metadata(probed("claude", Some(host_capabilities(true))));
+        let capabilities = reconciled.capabilities.expect("capabilities");
+        assert!(!capabilities.supports_thread_permission_overrides);
+        assert!(!capabilities.reports_effective_thread_permissions);
+        assert!(capabilities.supports_ssh_bridge);
     }
 
     #[test]

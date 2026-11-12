@@ -30,7 +30,11 @@ use crate::session::remote_transport::{
 };
 use crate::ssh::{RemoteShell, SshBootstrapResult, SshBootstrapTransport, SshClient};
 use crate::transport::{RpcError, TransportError};
+
+#[path = "server_replies.rs"]
+mod server_replies;
 use crate::types::AgentRuntimeKind;
+use server_replies::ServerReplies;
 
 const REMOTE_RECONNECT_MAX_ATTEMPTS: u32 = 5;
 const REMOTE_RECONNECT_DELAY: Duration = Duration::from_secs(1);
@@ -1155,6 +1159,7 @@ async fn remote_runtime_worker(
     let mut keepalive: Option<Arc<dyn SessionKeepalive>> = initial_keepalive;
     let mut requests = FuturesUnordered::new();
     let mut generation = 0;
+    let mut server_replies = ServerReplies::default();
     let mut retry_pause = Duration::from_secs(5);
     loop {
         tokio::select! {
@@ -1166,7 +1171,10 @@ async fn remote_runtime_worker(
                     // A disconnect event or another failed request may have
                     // already replaced this connection. Reconnect only once.
                     if pending.generation == generation
-                        && reconnect_remote_client(
+                    {
+                        invalidate_server_replies(&mut server_replies, &event_tx, &runtime_kind);
+                    }
+                    if pending.generation == generation && reconnect_remote_client(
                             &mut client, &mut keepalive, &reconnect_args,
                             &reconnect_url, &health_tx, reconnect_transport.as_ref(),
                         ).await
@@ -1174,7 +1182,7 @@ async fn remote_runtime_worker(
                         generation += 1;
                         retry_pause = Duration::from_secs(5);
                     }
-                    if pending.generation != generation {
+                    if pending.generation != generation && remote_request_can_retry(pending.request.method_name()) {
                         pending.generation = generation;
                         pending.retried = true;
                         requests.push(dispatch_remote_request(client.request_handle(), pending));
@@ -1200,25 +1208,31 @@ async fn remote_runtime_worker(
                         let _ = response_tx.send(result);
                     }
                     SessionCommand::Resolve { request_id, result, response_tx } => {
-                        let result = client
-                            .resolve_server_request(request_id, result)
+                        let result = match server_replies.take(&request_id) {
+                            Ok(reply) => reply.resolve(result)
                             .await
                             .map_err(|error| {
                                 RpcError::Transport(TransportError::SendFailed(
                                     error.to_string(),
                                 ))
-                            });
+                            }),
+                            Err(error) => Err(error),
+                        };
+                        if result.is_ok() { server_replies.complete(&request_id); }
                         let _ = response_tx.send(result);
                     }
                     SessionCommand::Reject { request_id, error, response_tx } => {
-                        let result = client
-                            .reject_server_request(request_id, error)
+                        let result = match server_replies.take(&request_id) {
+                            Ok(reply) => reply.reject(error)
                             .await
                             .map_err(|error| {
                                 RpcError::Transport(TransportError::SendFailed(
                                     error.to_string(),
                                 ))
-                            });
+                            }),
+                            Err(error) => Err(error),
+                        };
+                        if result.is_ok() { server_replies.complete(&request_id); }
                         let _ = response_tx.send(result);
                     }
                     SessionCommand::Shutdown => {
@@ -1229,6 +1243,7 @@ async fn remote_runtime_worker(
             }
             event = client.next_event() => {
                 if matches!(event, None | Some(AppServerEvent::Disconnected { .. })) {
+                    invalidate_server_replies(&mut server_replies, &event_tx, &runtime_kind);
                     if reconnect_remote_client(
                         &mut client,
                         &mut keepalive,
@@ -1256,11 +1271,15 @@ async fn remote_runtime_worker(
                     continue;
                 }
                 if let Some(event) = event {
-                    route_app_server_event(&event_tx, &health_tx, runtime_kind.clone(), &event);
+                    match server_replies.bind(event, &client) {
+                        Ok(event) => route_app_server_event(&event_tx, &health_tx, runtime_kind.clone(), &event),
+                        Err(error) => warn!("could not bind remote server request: {error}"),
+                    }
                 }
             }
         }
     }
+    invalidate_server_replies(&mut server_replies, &event_tx, &runtime_kind);
     // Send a graceful close to the peer (e.g. iroh `Connection::close`)
     // before dropping the keepalive Arc. Idempotent on already-errored
     // connections, and avoids "Aborting ungracefully" log spam from
@@ -1306,6 +1325,36 @@ struct PendingRemoteRequest {
     retried: bool,
 }
 
+fn invalidate_server_replies(
+    replies: &mut ServerReplies,
+    events: &broadcast::Sender<ServerEvent>,
+    runtime: &AgentRuntimeKind,
+) {
+    for notification in replies.clear() {
+        let _ = events.send(ServerEvent::Notification {
+            runtime_kind: runtime.clone(),
+            notification,
+        });
+    }
+}
+
+/// Only queries with no admission/mutation side effects may be replayed after a lost reply.
+fn remote_request_can_retry(method: &str) -> bool {
+    matches!(
+        method,
+        "model/list"
+            | "modelProvider/list"
+            | "thread/list"
+            | "thread/read"
+            | "thread/turns/list"
+            | "thread/items/list"
+            | "account/read"
+            | "account/rateLimits/read"
+            | "config/read"
+            | "configRequirements/read"
+    )
+}
+
 async fn dispatch_remote_request(
     handle: AppServerRequestHandle,
     pending: PendingRemoteRequest,
@@ -1340,9 +1389,16 @@ async fn send_remote_request(
     };
     response
         .map_err(|error| RpcError::Transport(TransportError::SendFailed(error.to_string())))?
-        .map_err(|error| RpcError::Server {
-            code: error.code,
-            message: error.message,
+        .map_err(|error| match error.data {
+            Some(data) => RpcError::ServerWithData {
+                code: error.code,
+                message: error.message,
+                data,
+            },
+            None => RpcError::Server {
+                code: error.code,
+                message: error.message,
+            },
         })
 }
 
@@ -1900,6 +1956,73 @@ mod tests {
             .await
             .expect("worker should accept shutdown");
         worker.await.expect("worker should shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn lost_mutation_replies_are_not_replayed_on_the_new_connection() {
+        for method in ["turn/start", "turn/steer"] {
+            let client = app_server_client_for_json_line_server(
+                TestJsonLineServer::DropOnFirstRequest,
+                method,
+            )
+            .await;
+            let reconnects = Arc::new(AtomicUsize::new(0));
+            let (commands, rx) = mpsc::channel(4);
+            let (events, _) = broadcast::channel(4);
+            let (health, _) = watch::channel(ConnectionHealth::Connected);
+            let worker = tokio::spawn(remote_runtime_worker(
+                "codex".into(),
+                client,
+                None,
+                rx,
+                events,
+                health,
+                test_remote_args(method),
+                method.into(),
+                Some(Arc::new(TestReconnectTransport {
+                    reconnects: reconnects.clone(),
+                })),
+            ));
+            let request = serde_json::from_value(json!({"id":1,"method":method,"params":{"threadId":"t","expectedTurnId":"turn","input":[{"type":"text","text":"Answer"}]}})).unwrap();
+            let (tx, response) = oneshot::channel();
+            commands
+                .send(SessionCommand::Request {
+                    request,
+                    response_tx: tx,
+                })
+                .await
+                .unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(3), response)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                result.is_err(),
+                "{method} must not be replayed after admission becomes uncertain"
+            );
+            assert_eq!(reconnects.load(Ordering::SeqCst), 1);
+            let (tx, response) = oneshot::channel();
+            commands
+                .send(SessionCommand::Request {
+                    request: serde_json::from_value(
+                        json!({"id":2,"method":"model/list","params":{}}),
+                    )
+                    .unwrap(),
+                    response_tx: tx,
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(3), response)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap(),
+                json!({"source":"reconnected"})
+            );
+            commands.send(SessionCommand::Shutdown).await.unwrap();
+            worker.await.unwrap();
+        }
     }
 
     #[tokio::test]

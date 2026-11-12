@@ -245,10 +245,84 @@ extension AppThreadPermissionPreset {
             return AppLanguage.localizedString("Supervised")
         case .fullAccess:
             return AppLanguage.localizedString("Full Access")
+        case .readOnly:
+            return AppLanguage.localizedString("Read only")
         case .custom:
             return AppLanguage.localizedString("Custom")
         case .unknown:
             return AppLanguage.localizedString("Unknown")
+        }
+    }
+}
+
+/// The three session permission presets from the upstream permission menu.
+/// `auto` is on-request approval with workspace write. A missing thread key
+/// stores the choice as the pre-thread launch default; an existing thread
+/// stores a user override for that session.
+enum SessionPermissionChoice: String, CaseIterable, Identifiable {
+    case readOnly
+    case auto
+    case fullAccess
+
+    /// Tag used when the current policies do not match a preset.
+    static let customTag = "custom"
+
+    var id: String { rawValue }
+
+    var approvalPolicy: String {
+        switch self {
+        case .readOnly, .auto:
+            return "on-request"
+        case .fullAccess:
+            return "never"
+        }
+    }
+
+    var sandboxMode: String {
+        switch self {
+        case .readOnly:
+            return "read-only"
+        case .auto:
+            return "workspace-write"
+        case .fullAccess:
+            return "danger-full-access"
+        }
+    }
+
+    static func matching(_ preset: AppThreadPermissionPreset) -> SessionPermissionChoice? {
+        switch preset {
+        case .readOnly:
+            return .readOnly
+        case .supervised:
+            return .auto
+        case .fullAccess:
+            return .fullAccess
+        case .custom, .unknown:
+            return nil
+        }
+    }
+
+    /// English catalog key for the composer menu title. Localize at display.
+    var menuTitleKey: String {
+        switch self {
+        case .readOnly:
+            return "Read only"
+        case .auto:
+            return "Auto"
+        case .fullAccess:
+            return "Full access"
+        }
+    }
+
+    /// English catalog key for the one-line description under the title.
+    var menuDetailKey: String {
+        switch self {
+        case .readOnly:
+            return "Can read files, asks to edit"
+        case .auto:
+            return "Edits in this workspace"
+        case .fullAccess:
+            return "No sandbox, no prompts"
         }
     }
 }

@@ -20,7 +20,7 @@ const APP: &str = include_str!("widget_guidelines/app.md");
 /// Available module names for the `visualize_read_me` tool schema.
 pub const AVAILABLE_MODULES: &[&str] = &["art", "mockup", "interactive", "chart", "diagram", "app"];
 
-/// Developer-instructions preamble prepended to local-server thread
+/// Developer-instructions preamble prepended to Codex thread
 /// starts when the generative-UI dynamic tools are registered. Tells the
 /// model when to use `show_widget` / `visualize_read_me` — without it,
 /// coding-agent defaults steer the model toward file operations.
@@ -124,8 +124,7 @@ pub fn handle_show_widget(arguments: &serde_json::Value) -> Result<String, Strin
 // ── Tool spec generation ────────────────────────────────────────────────
 
 /// Returns the generative UI dynamic tool specs for registration on
-/// thread/start. Called from both iOS and Android when the experimental
-/// feature is enabled.
+/// thread/start. Registered by the shared client for interactive Codex threads.
 #[uniffi::export]
 pub fn generative_ui_dynamic_tool_specs() -> Vec<AppDynamicToolSpec> {
     vec![read_me_tool_spec(), show_widget_tool_spec()]
@@ -238,5 +237,23 @@ pub(crate) fn show_widget_tool_spec() -> AppDynamicToolSpec {
         .to_string(),
         input_schema_json: serde_json::to_string(&schema).unwrap_or_default(),
         defer_loading: false,
+    }
+}
+
+/// Client tools are supported by the Codex app-server across all remote
+/// transports. Bridge runtimes may ignore unknown thread/start fields, so do
+/// not advertise tools there until they implement client tool registration.
+pub(crate) fn register_thread_tools(
+    runtime: &str,
+    params: &mut crate::types::AppStartThreadRequest,
+) {
+    if runtime != "codex" || params.ephemeral == Some(true) {
+        return;
+    }
+    let tools = params.dynamic_tools.get_or_insert_with(Vec::new);
+    for spec in generative_ui_dynamic_tool_specs() {
+        if !tools.iter().any(|tool| tool.name == spec.name) {
+            tools.push(spec);
+        }
     }
 }

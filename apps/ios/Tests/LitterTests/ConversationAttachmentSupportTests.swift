@@ -1,8 +1,46 @@
 import UIKit
+import UniformTypeIdentifiers
 import XCTest
 @testable import Litter
 
 final class ConversationAttachmentSupportTests: XCTestCase {
+    @MainActor
+    func testScreenshotPNGProviderBecomesComposerAttachment() async throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 6), format: format).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 6))
+        }
+        let data = try XCTUnwrap(image.pngData())
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+            completion(data, nil)
+            return nil
+        }
+        let textView = PasteAwareComposerUITextView()
+        textView.text = "Describe this screenshot"
+        let received = expectation(description: "Image delivered to composer")
+        var attachments: [UIImage] = []
+        textView.onPasteImage = { image in
+            XCTAssertTrue(Thread.isMainThread)
+            attachments.append(image)
+            received.fulfill()
+        }
+
+        textView.receiveDroppedImage(from: provider)
+        await fulfillment(of: [received], timeout: 5)
+
+        XCTAssertEqual(attachments.count, 1)
+        XCTAssertEqual(attachments.first?.size, CGSize(width: 8, height: 6))
+        XCTAssertEqual(textView.text, "Describe this screenshot")
+        let attachment = try XCTUnwrap(ConversationAttachmentSupport.prepareImage(attachments[0]))
+        guard case .image(let url) = attachment.userInput else {
+            return XCTFail("Expected image input")
+        }
+        XCTAssertTrue(url.hasPrefix("data:image/"))
+    }
+
     func testBuildTurnInputsOmitsWhitespaceOnlyTextAndKeepsAttachmentInput() {
         let attachment = AppUserInput.image(url: "data:image/png;base64,abc")
 

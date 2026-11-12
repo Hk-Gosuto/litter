@@ -164,16 +164,16 @@ fun HomeDashboardScreen(
     if (!discoveryVisible) appModel.sshHostKeyChangeChallenge?.let { challenge ->
         AlertDialog(
             onDismissRequest = appModel::clearSshHostKeyChange,
-            title = { Text("SSH Host Identity Changed") },
+            title = { Text(stringResource(R.string.ssh_identity_changed)) },
             text = {
-                Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: ${challenge.fingerprint}")
+                Text(stringResource(R.string.ssh_identity_changed_message, challenge.fingerprint))
             },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
                         lifecycleController.replaceSshHostKey(appModel, challenge.serverId, challenge.fingerprint)
                     }
-                }) { Text("Replace Stored Identity") }
+                }) { Text(stringResource(R.string.ssh_replace_identity)) }
             },
             dismissButton = {
                 TextButton(onClick = appModel::clearSshHostKeyChange) { Text("Cancel") }

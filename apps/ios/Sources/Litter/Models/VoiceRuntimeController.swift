@@ -212,7 +212,7 @@ final class VoiceRuntimeController: VoiceActions {
                 persistExtendedHistory: true
             ).threadStartRequest(
                 cwd: preferredVoiceThreadCwd(for: nil, fallback: cwd),
-                dynamicTools: appModel.localGenerativeUiToolSpecs(for: serverId)
+                dynamicTools: nil
             )
         )
         do {
@@ -629,7 +629,7 @@ final class VoiceRuntimeController: VoiceActions {
                     persistExtendedHistory: true
                 ).threadStartRequest(
                     cwd: cwd,
-                    dynamicTools: appModel.localGenerativeUiToolSpecs(for: serverId)
+                    dynamicTools: nil
                 )
             )
             SavedThreadsStore.add(.init(threadKey: key))

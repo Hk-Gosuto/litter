@@ -3,6 +3,81 @@ import XCTest
 
 @MainActor
 final class HomeDashboardSupportTests: XCTestCase {
+    func testColdLaunchIgnoresLastConnectionAndCachedActiveThreadUntilUserSelectsServer() async {
+        let appModel = AppModel()
+        let key = ThreadKey(serverId: "server-a", threadId: "last-chat")
+        let model = HomeDashboardModel(persistence: persistence(pinned: [], selectedServerId: "server-a"), observedRefreshDelayNanoseconds: 0)
+        XCTAssertNil(model.selectedServerId)
+        model.bind(appModel: appModel)
+        model.activate()
+        let live = makeSnapshot(servers: [makeServerSnapshot(id: "server-a", name: "Server A")],
+                                threads: [makeThreadSnapshot(serverId: "server-a", threadId: key.threadId, updatedAt: 20)], activeThread: key)
+        var cached = live
+        cached.threads = []
+        appModel.applySnapshot(cached)
+        await waitUntil("cached history becomes available") { model.allSessions.count == 1 }
+        XCTAssertTrue(model.displayedSessions.isEmpty)
+        XCTAssertTrue(model.visibleHydrationSignature.isEmpty)
+        appModel.applySnapshot(live)
+        await flushMainQueue()
+        XCTAssertNil(model.selectedServerId)
+        XCTAssertTrue(model.displayedSessions.isEmpty)
+
+        model.selectedServerId = "server-a"
+        XCTAssertEqual(model.displayedSessions.map(\.key), [key])
+        XCTAssertFalse(model.visibleHydrationSignature.isEmpty)
+        model.clearScope()
+        XCTAssertTrue(model.displayedSessions.isEmpty)
+        appModel.applySnapshot(live)
+        await flushMainQueue()
+        XCTAssertNil(model.selectedServerId)
+        XCTAssertTrue(model.displayedSessions.isEmpty)
+    }
+
+    func testExplicitConnectionScopeSurvivesReconnectAndForegroundReturn() async throws {
+        let appModel = AppModel()
+        let saved = try JSONDecoder().decode(SavedServer.self, from: Data("""
+        {"id":"server-a","name":"Server A","hostname":"server-a.local","port":8390,"source":"manual","hasCodexServer":true}
+        """.utf8))
+        let model = HomeDashboardModel(persistence: persistence(pinned: [], rememberedServers: [saved]), observedRefreshDelayNanoseconds: 0)
+        model.bind(appModel: appModel)
+        model.activate()
+        let live = makeSnapshot(servers: [makeServerSnapshot(id: "server-a", name: "Server A")],
+                                threads: [makeThreadSnapshot(serverId: "server-a", threadId: "chat", updatedAt: 20)], activeThread: nil)
+        appModel.applySnapshot(live)
+        await waitUntil("history ready") { model.allSessions.count == 1 }
+        model.selectedServerId = "server-a"
+        var reconnecting = live
+        reconnecting.servers = []
+        appModel.applySnapshot(reconnecting)
+        await waitUntil("saved computer is reconnecting") { model.serverSnapshotsById.isEmpty }
+        XCTAssertEqual(model.selectedServerId, "server-a")
+        XCTAssertEqual(model.displayedSessions.map(\.key.threadId), ["chat"])
+        model.deactivate()
+        appModel.applySnapshot(live)
+        model.activate()
+        XCTAssertEqual(model.selectedServerId, "server-a")
+        XCTAssertEqual(model.displayedSessions.map(\.key.threadId), ["chat"])
+    }
+
+    func testSelectingAnotherComputerDoesNotHideItsHistoryBehindPinsFromTheFirstComputer() async {
+        let appModel = AppModel()
+        let pin = SavedThreadsStore.PinnedKey(threadKey: ThreadKey(serverId: "server-a", threadId: "pinned"))
+        let model = HomeDashboardModel(persistence: persistence(pinned: [pin]), observedRefreshDelayNanoseconds: 0)
+        model.bind(appModel: appModel)
+        model.activate()
+        appModel.applySnapshot(makeSnapshot(
+            servers: [makeServerSnapshot(id: "server-a", name: "A"), makeServerSnapshot(id: "server-b", name: "B")],
+            threads: [makeThreadSnapshot(serverId: "server-a", threadId: "pinned", updatedAt: 20),
+                      makeThreadSnapshot(serverId: "server-b", threadId: "other", updatedAt: 30)], activeThread: nil))
+        await waitUntil("both computers loaded") { model.allSessions.count == 2 }
+        XCTAssertTrue(model.displayedSessions.isEmpty)
+        model.selectedServerId = "server-a"
+        XCTAssertEqual(model.displayedSessions.map(\.key.threadId), ["pinned"])
+        model.selectedServerId = "server-b"
+        XCTAssertEqual(model.displayedSessions.map(\.key.threadId), ["other"])
+    }
+
     func testLocalStudioOnlyCatalogsDeferToServerConfiguredDefault() {
         XCTAssertTrue(usesServerConfiguredModelDefault([.localStudio]))
         XCTAssertTrue(
@@ -575,11 +650,13 @@ final class HomeDashboardSupportTests: XCTestCase {
     }
 
     private func persistence(
-        pinned: [SavedThreadsStore.PinnedKey]
+        pinned: [SavedThreadsStore.PinnedKey],
+        selectedServerId: String? = nil,
+        rememberedServers: [SavedServer] = []
     ) -> HomeDashboardPersistence {
         var pinnedKeys = pinned
         return HomeDashboardPersistence(
-            rememberedServers: { [] },
+            rememberedServers: { rememberedServers },
             pinnedKeys: { pinnedKeys },
             hiddenKeys: { [] },
             addPinned: { key in
@@ -590,7 +667,7 @@ final class HomeDashboardSupportTests: XCTestCase {
             removePinned: { key in pinnedKeys.removeAll { $0 == key } },
             hide: { _ in },
             unhide: { _ in },
-            selectedServerId: { nil },
+            selectedServerId: { selectedServerId },
             setSelectedServerId: { _ in },
             selectedProjectId: { nil },
             setSelectedProjectId: { _ in }

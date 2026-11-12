@@ -16,7 +16,7 @@
 - UniFFI Kotlin sources are generated into `shared/rust-bridge/generated/kotlin/` and consumed directly from there; do not maintain copied binding files under Android source roots.
 - `shared/third_party/codex/` is the upstream Codex submodule.
 - `apps/ios/GeneratedRust/` contains local generated Rust artifacts for iOS builds: UniFFI headers/modulemap plus raw device/simulator staticlibs. These artifacts are not committed.
-- `apps/ios/Frameworks/` contains downloaded/package-lane iOS XCFrameworks (`codex_mobile_client.xcframework` in package builds and `litter_ish.xcframework`). These artifacts are not committed.
+- `apps/ios/Frameworks/` contains downloaded/package-lane iOS XCFrameworks (`codex_mobile_client.xcframework`). These artifacts are not committed.
 - `apps/ios/project.yml` is the source of truth for project generation; regenerate `apps/ios/Litter.xcodeproj` instead of hand-editing project files.
 
 ## Architecture
@@ -113,7 +113,7 @@
 Before building on a new machine, verify:
 1. `xcode-select -p` must print `/Applications/Xcode.app/Contents/Developer`, not `/Library/Developer/CommandLineTools`. Fix with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`. The Command Line Tools do not include iOS simulator SDKs.
 2. `cargo` and `rustc` must come from **rustup**, not Homebrew's `rust` formula. If `which cargo` points to `/opt/homebrew/bin/cargo` (a Homebrew standalone binary, not a rustup proxy), cross-compilation targets like `aarch64-apple-ios-sim` will fail even if `rustup target list` shows them installed. The Makefile prepends the rustup toolchain bin to PATH automatically, but standalone script runs and CI environments must also ensure the correct resolution. Either `brew uninstall rust` or put `~/.cargo/bin` (or the rustup toolchain bin from `rustup which cargo`) before `/opt/homebrew/bin` in PATH.
-3. Build toolchain dependencies must be installed via Homebrew: `brew install xcodegen meson ninja llvm lld` and `brew install zig@0.15`. `xcodegen` is required for Xcode project generation; `meson`/`ninja` are required by the embedded iSH build; and `llvm`/`lld` (not Apple's `/usr/bin/clang`, which lacks `lld`) are required to cross-compile the iSH ARM64 vdso. If `llvm`/`lld` are missing, `tools/scripts/check-ish-vdso.sh` fails the Rust build because litter-ish silently degrades the vdso to an empty stub that makes the app SIGABRT at launch.
+3. Build toolchain dependencies must be installed via Homebrew: `brew install xcodegen` and `brew install zig@0.15`. `xcodegen` is required for Xcode project generation.
 4. *(Optional)* `pymobiledevice3` enables `make ios-device-run` over Tailscale when the device is not on the local network. Install with `pipx install pymobiledevice3` (or `uv tool install pymobiledevice3`). Also requires Tailscale on both the Mac and the iOS device.
 
 ## Build System
@@ -131,8 +131,7 @@ Incremental policy:
 ### Common targets
 | Target | Description |
 |---|---|
-| `make ios` | Full iOS package lane: sync → patch → bindings → Rust/Ghostty (device+sim) → xcframework → Alpine fs → xcgen → simulator build |
-| `make alpine-fs` | Download the pinned Alpine fakefs used by the embedded iSH runtime. Bump `ALPINE_FS_VERSION` in `Makefile` to upgrade. |
+| `make ios` | Full iOS package lane: sync → patch → bindings → Rust/Ghostty (device+sim) → xcframework → xcgen → simulator build |
 | `make ios-sim` | Full iOS package lane + simulator build |
 | `make ios-sim-fast` | Fast iOS simulator lane using raw simulator staticlib outputs in `GeneratedRust/ios-sim` |
 | `make ios-device` | Full iOS package lane + device build |
@@ -170,7 +169,6 @@ Incremental policy:
 
 ### Individual scripts (called by Make, can also be run standalone)
 - `./apps/ios/scripts/build-rust.sh` — cross-compile Rust for iOS; in fast mode it emits raw staticlibs + headers to `apps/ios/GeneratedRust/`, and in package mode it also creates `codex_mobile_client.xcframework`
-- `./apps/ios/scripts/download-alpine-fs.sh` — fetch the pinned Alpine fakefs into `apps/ios/Resources/alpine-fakefs/`. Reads `ALPINE_FS_VERSION` from env (set by `make alpine-fs`).
 - `./apps/ios/scripts/sync-codex.sh` — sync codex submodule + apply patches
 - `./apps/ios/scripts/regenerate-project.sh` — regenerate Xcode project via xcodegen; this is the safe path because it removes any accidental nested `apps/ios/Litter.xcodeproj/Litter.xcodeproj` before regenerating
 - `./apps/ios/scripts/testflight-upload.sh` — archive, export IPA, upload to TestFlight
@@ -191,7 +189,7 @@ Incremental policy:
 
 ## Local Build Pitfalls (2026-08-02)
 - Ghostty is pinned to Zig 0.15.2. Homebrew's unversioned `/opt/homebrew/bin/zig` may resolve to 0.16.x and fail the Ghostty build. Check `zig version` before an iOS or Android package build; on this Mac use `PATH="/opt/homebrew/opt/zig@0.15/bin:$PATH"` so it reports `0.15.2`, matching CI.
-- A Codex sync stamp is valid only while the mobile compatibility patch is actually applied. The standalone iOS Rust script may apply the patch temporarily and restore the clean submodule on exit, so its cleanup must also invalidate `.build-stamps/sync-codex-*`. Use `make rust-check`, `make rust-test`, or `make bindings`; these targets re-check the patch state even when a stamp exists. If Cargo reports `ml-kem`/`kem` trait-version conflicts, run `make sync` and retry instead of editing `Cargo.lock` as a workaround.
+- A Codex sync stamp is valid only while the mobile compatibility patch is actually applied. Both standalone mobile build scripts use `sync-codex.sh` and retain its active remote compatibility patches. Use `make rust-check`, `make rust-test`, or `make bindings`; these targets re-check the patch state even when a stamp exists. If Cargo reports `ml-kem`/`kem` trait-version conflicts, run `make sync` and retry instead of editing `Cargo.lock` as a workaround.
 - Host Rust artifacts can consume tens of gigabytes and leave Xcode failing with `No space left on device` while compiling module caches. Check both `df -h /System/Volumes/Data` and `du -sh shared/rust-bridge/target`. The targeted recovery for disposable host debug output is `cargo clean --manifest-path shared/rust-bridge/Cargo.toml --profile dev`; preserve `apps/ios/GeneratedRust/` when the simulator/device static libraries are still needed.
 - UI tests that assert English labels must set `LITTER_APP_LANGUAGE=en` on every `XCUIApplication` they launch. Setting it only on the Xcode test action is insufficient unless the SwiftUI root locale also resolves the environment override.
 - Build unsigned IPAs from the archive and remove signatures recursively from every Mach-O plus all nested `_CodeSignature` directories and provisioning profiles. The package includes the Watch companion at `Payload/Litter.app/Watch/LitterWatch.app`; verify it with `unzip -l <ipa> | rg 'Payload/Litter.app/Watch/'`. Keep local IPAs under ignored `artifacts/` paths and never stage them.

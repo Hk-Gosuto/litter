@@ -235,6 +235,8 @@ struct HomeComposerView: View {
                 contextPercent: nil,
                 isTurnActive: isSubmitting,
                 showModeChip: false,
+                showsPermissionMenu: true,
+                showsCollaborationMode: false,
                 voiceManager: voiceManager,
                 allowsVoiceInput: project != nil,
                 showAttachMenu: $attach.showAttachMenu,
@@ -284,6 +286,14 @@ struct HomeComposerView: View {
         }
         .dropDestination(for: Data.self) { items, _ in
             let images = items.compactMap { UIImage(data: $0) }
+            guard !images.isEmpty else { return false }
+            for image in images {
+                attach.appendImage(image)
+            }
+            return true
+        }
+        .dropDestination(for: ComposerDroppedImage.self) { items, _ in
+            let images = items.map(\.image)
             guard !images.isEmpty else { return false }
             for image in images {
                 attach.appendImage(image)
@@ -356,10 +366,13 @@ struct HomeComposerView: View {
                     serverId: project.serverId,
                     params: launchConfig.threadStartRequest(
                         cwd: project.cwd,
-                        dynamicTools: appModel.localGenerativeUiToolSpecs(for: project.serverId)
+                        dynamicTools: nil
                     )
                 )
                 createdThreadKey = threadKey
+                if appState.pendingCollaborationMode == .plan {
+                    try await appModel.store.setThreadCollaborationMode(key: threadKey, mode: .plan)
+                }
                 onThreadCreated(threadKey)
                 RecentDirectoryStore.shared.record(path: project.cwd, for: project.serverId)
                 let preparedAttachments = await ConversationAttachmentSupport.prepareImages(images)

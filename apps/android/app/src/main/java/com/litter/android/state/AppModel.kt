@@ -20,8 +20,6 @@ import androidx.compose.runtime.setValue
 import java.util.concurrent.atomic.AtomicLong
 import uniffi.codex_mobile_client.decodeSshHostKeyChallenge
 import uniffi.codex_mobile_client.AppClient
-import uniffi.codex_mobile_client.AppMinigameRequest
-import uniffi.codex_mobile_client.AppMinigameResult
 import com.litter.android.ui.common.AgentRuntimeKind
 import uniffi.codex_mobile_client.AppSessionSummary
 import uniffi.codex_mobile_client.AppServerSnapshot
@@ -229,6 +227,19 @@ class AppModel private constructor(context: android.content.Context) {
 
     // --- Live composer drafts (per-thread typed-but-unsent text + attachment)
 
+    private val _userInputDrafts = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    val userInputDrafts = _userInputDrafts.asStateFlow()
+
+    fun setUserInputAnswer(requestId: String, questionId: String, answer: String) {
+        _userInputDrafts.update { drafts ->
+            drafts + (requestId to (drafts[requestId].orEmpty() + (questionId to answer)))
+        }
+    }
+
+    fun clearUserInputDraft(requestId: String) {
+        _userInputDrafts.update { it - requestId }
+    }
+
     private val _composerDrafts = MutableStateFlow<Map<ThreadKey, ComposerDraft>>(emptyMap())
     val composerDrafts: StateFlow<Map<ThreadKey, ComposerDraft>> = _composerDrafts.asStateFlow()
 
@@ -243,54 +254,6 @@ class AppModel private constructor(context: android.content.Context) {
                 current + (threadKey to draft)
             }
         }
-    }
-
-    // --- Thinking-indicator minigame -----------------------------------------
-
-    private val _minigameOverlay = MutableStateFlow<MinigameOverlayState>(MinigameOverlayState.Idle)
-    val minigameOverlay: StateFlow<MinigameOverlayState> = _minigameOverlay.asStateFlow()
-    private var minigameJob: Job? = null
-
-    fun requestMinigame(
-        parentThreadId: String,
-        serverId: String,
-        lastUserMessage: String?,
-        lastAssistantMessage: String?,
-    ) {
-        if (!com.litter.android.ui.ExperimentalFeatures.isEnabled(
-                com.litter.android.ui.LitterFeature.THINKING_MINIGAME
-            )) return
-        if (_minigameOverlay.value !is MinigameOverlayState.Idle) return
-        _minigameOverlay.value = MinigameOverlayState.Loading
-        minigameJob?.cancel()
-        minigameJob = scope.launch {
-            try {
-                val result: AppMinigameResult = client.startMinigame(
-                    AppMinigameRequest(
-                        serverId = serverId,
-                        parentThreadId = parentThreadId,
-                        lastUserMessage = lastUserMessage,
-                        lastAssistantMessage = lastAssistantMessage,
-                    )
-                )
-                _minigameOverlay.value = MinigameOverlayState.Shown(
-                    MinigameContent(
-                        html = result.widgetHtml,
-                        title = result.title,
-                        width = result.width.toFloat(),
-                        height = result.height.toFloat(),
-                    )
-                )
-            } catch (t: Throwable) {
-                _minigameOverlay.value = MinigameOverlayState.Failed(t.message ?: t.toString())
-            }
-        }
-    }
-
-    fun dismissMinigame() {
-        minigameJob?.cancel()
-        minigameJob = null
-        _minigameOverlay.value = MinigameOverlayState.Idle
     }
 
     // --- Subscription lifecycle ----------------------------------------------

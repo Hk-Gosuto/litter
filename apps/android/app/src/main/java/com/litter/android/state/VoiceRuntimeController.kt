@@ -25,7 +25,6 @@ import uniffi.codex_mobile_client.AppFinalizeRealtimeHandoffRequest
 import uniffi.codex_mobile_client.AppResolveRealtimeHandoffRequest
 import uniffi.codex_mobile_client.AppStartRealtimeSessionRequest
 import uniffi.codex_mobile_client.AppStopRealtimeSessionRequest
-import uniffi.codex_mobile_client.generativeUiDynamicToolSpecs
 import java.util.UUID
 
 /**
@@ -403,10 +402,6 @@ class VoiceRuntimeController {
         when (action) {
             is uniffi.codex_mobile_client.HandoffAction.StartThread -> {
                 try {
-                    val serverIsLocal = appModel.snapshot.value
-                        ?.servers
-                        ?.firstOrNull { it.serverId == action.targetServerId }
-                        ?.isLocal == true
                     val key = appModel.startThread(
                         action.targetServerId,
                         AppThreadLaunchConfig(
@@ -417,7 +412,7 @@ class VoiceRuntimeController {
                             persistHistory = true,
                         ).toAppStartThreadRequest(
                             cwd = action.cwd,
-                            dynamicTools = if (serverIsLocal) generativeUiDynamicToolSpecs() else null,
+                            dynamicTools = null,
                         ),
                     )
                     SavedThreadsStore.add(

@@ -69,14 +69,12 @@ jobs:
         run: |
           set -euo pipefail
           ./apps/ios/scripts/build-rust.sh --preserve-current --macabi-only
-          make alpine-fs
           ./apps/ios/scripts/regenerate-project.sh
 
       - name: Package Mac release prep artifact
         run: |
           mkdir -p .ci-prep/mac
           tar -czf .ci-prep/mac/mac-release-prep.tgz -C . \
-            apps/ios/Resources/fs \
             apps/ios/GeneratedRust \
             apps/ios/Sources/Litter/Bridge/UniFFICodexClient.generated.swift
 

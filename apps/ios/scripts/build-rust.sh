@@ -19,13 +19,7 @@ BINDINGS_HASH_FILE="$GENERATED_RUST_DIR/.swift-bindings.hash"
 BINDINGS_HASH_SCRIPT="$REPO_DIR/tools/scripts/uniffi-bindings-input-hash.sh"
 IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-18.0}"
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
-SUBMODULE_DIR="$REPO_DIR/shared/third_party/codex"
 IOS_CLANGXX_WRAPPER="$SCRIPT_DIR/ios-clangxx-wrapper.sh"
-PATCH_FILES=(
-  "$REPO_DIR/patches/codex/ios-exec-hook.patch"
-  "$REPO_DIR/patches/codex/thread-read-permissions.patch"
-)
-
 SYNC_MODE="--preserve-current"
 DEVICE_ONLY=0
 FAST_DEVICE=0
@@ -109,31 +103,6 @@ for arg in "$@"; do
   esac
 done
 
-PATCHES_WERE_APPLIED=()
-for PATCH_FILE in "${PATCH_FILES[@]}"; do
-  if git -C "$SUBMODULE_DIR" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
-    PATCHES_WERE_APPLIED+=("$PATCH_FILE")
-  fi
-done
-
-cleanup_patch() {
-  for PATCH_FILE in "${PATCH_FILES[@]}"; do
-    local was_pre_applied=0
-    for pre in "${PATCHES_WERE_APPLIED[@]+"${PATCHES_WERE_APPLIED[@]}"}"; do
-      if [ "$pre" = "$PATCH_FILE" ]; then
-        was_pre_applied=1
-        break
-      fi
-    done
-    if [ "$was_pre_applied" -eq 0 ] && git -C "$SUBMODULE_DIR" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
-      echo "==> Reverting $(basename "$PATCH_FILE")..."
-      git -C "$SUBMODULE_DIR" apply --reverse "$PATCH_FILE"
-    fi
-  done
-}
-
-trap cleanup_patch EXIT
-
 mkdir -p "$FRAMEWORKS_DIR" "$GENERATED_HEADERS_DIR" "$GENERATED_DEVICE_DIR" "$GENERATED_SIM_DIR" "$GENERATED_MACABI_DIR"
 
 if [ -z "${RUSTC_WRAPPER:-}" ] && [ "${CARGO_INCREMENTAL:-}" != "1" ] && command -v sccache >/dev/null 2>&1; then
@@ -213,7 +182,7 @@ export MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
 # bindgen 0.70 maps `aarch64-apple-ios-sim` -> `arm64-apple-ios-sim`, which
 # clang rejects ("version 'sim' in target triple ... is invalid"). The correct
 # clang triple uses the `-simulator` environment suffix. Override per-target so
-# bindgen-driven build scripts (e.g. ish-embed-host) point at the iPhoneSimulator
+# bindgen-driven build scripts point at the iPhoneSimulator
 # SDK when cross-compiling for the simulator.
 IPHONESIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null || true)"
 if [ -n "$IPHONESIM_SDK" ]; then

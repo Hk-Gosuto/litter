@@ -11,6 +11,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
+#[cfg(test)]
+#[path = "provider_model_tests.rs"]
+mod provider_model_tests;
+
 async fn rpc<T: serde::de::DeserializeOwned>(
     client: &MobileClient,
     server_id: &str,
@@ -368,8 +372,13 @@ impl AppClient {
                 params.agent_runtime_kind.clone(),
                 params.model.as_deref(),
             );
-            params.developer_instructions =
-                splice_saved_apps_context(c.as_ref(), None, params.developer_instructions);
+            crate::widget_guidelines::register_thread_tools(&runtime_kind, &mut params);
+            params.developer_instructions = splice_saved_apps_context(
+                c.as_ref(),
+                &server_id,
+                None,
+                params.developer_instructions,
+            );
             params.developer_instructions =
                 splice_generative_ui_preamble(&params.dynamic_tools, params.developer_instructions);
             params.developer_instructions = splice_local_runtime_developer_instructions(
@@ -406,6 +415,7 @@ impl AppClient {
             let thread_id = params.thread_id.clone();
             params.developer_instructions = splice_saved_apps_context(
                 c.as_ref(),
+                &server_id,
                 Some(thread_id.as_str()),
                 params.developer_instructions,
             );
@@ -938,6 +948,120 @@ impl AppClient {
     }
 
     // ── Models & features ────────────────────────────────────────────────
+
+    /// Read a provider-specific catalog without replacing the default model cache.
+    /// Older servers can reject the selector; do not silently return another provider.
+    pub async fn list_models_for_provider(
+        &self,
+        server_id: String,
+        provider_id: String,
+    ) -> Result<Vec<types::ModelInfo>, ClientError> {
+        blocking_async!(self.rt, self.inner, |c| {
+            let provider_id = provider_id.trim();
+            if provider_id.is_empty() {
+                return Err(ClientError::Rpc(
+                    "Choose a configured model provider".into(),
+                ));
+            }
+            let session = c
+                .get_session(&server_id)
+                .map_err(|e| ClientError::Rpc(e.to_string()))?;
+            // Older servers may silently ignore unknown model/list fields. Probe
+            // provider discovery before trusting the provider-specific response.
+            let mut health = session.health();
+            health.borrow_and_update();
+            let check_connection = || -> Result<(), ClientError> {
+                ensure_settings_session(c, &server_id, &session)?;
+                if health.has_changed().unwrap_or(true) {
+                    return Err(ClientError::Rpc("Connection changed while querying provider models; retry the catalog".into()));
+                }
+                Ok(())
+            };
+            let providers: upstream::ModelProviderListResponse = tokio::time::timeout(
+                MODEL_LIST_RUNTIME_TIMEOUT,
+                rpc_runtime(
+                    c,
+                    &server_id,
+                    "codex".into(),
+                    req!(
+                        server_id,
+                        ModelProviderList,
+                        upstream::ModelProviderListParams {}
+                    ),
+                ),
+            )
+            .await
+            .map_err(|_| ClientError::Rpc("Provider discovery timed out".into()))??;
+            check_connection()?;
+            if !providers
+                .data
+                .iter()
+                .any(|provider| provider.id == provider_id)
+            {
+                return Err(ClientError::Rpc(
+                    "Model provider is not configured on this server".into(),
+                ));
+            }
+            // Discovery predates the model/list selector. A read against a
+            // guaranteed-unknown provider must be rejected with its typed error;
+            // an old peer silently accepting this probe cannot select providers.
+            let probe = loop {
+                let id = format!("litter-provider-capability-probe-{}", next_request_id());
+                if !providers.data.iter().any(|provider| provider.id == id) { break id; }
+            };
+            let probe_request = req!(server_id, ModelList, upstream::ModelListParams {
+                model_provider: Some(probe.clone()), cursor: None, limit: Some(1), include_hidden: None,
+            });
+            let probe_result = tokio::time::timeout(MODEL_LIST_RUNTIME_TIMEOUT,
+                session.request_client_for_runtime("codex".into(), probe_request)).await
+                .map_err(|_| ClientError::Rpc("Provider capability check timed out".into()))?;
+            let supported = matches!(&probe_result, Err(crate::transport::RpcError::ServerWithData {data, ..})
+                if matches!(data.get("type").and_then(|v| v.as_str()), Some("modelProviderNotConfigured" | "modelProviderPolicyConflict"))
+                    && data.get("modelProvider").and_then(|v| v.as_str()) == Some(probe.as_str()));
+            check_connection()?;
+            if !supported {
+                return Err(ClientError::Rpc("This server cannot verify provider-specific model queries; update Codex on the connected computer".into()));
+            }
+            let mut params = upstream::ModelListParams {
+                model_provider: Some(provider_id.to_string()),
+                cursor: None,
+                limit: Some(100),
+                include_hidden: Some(true),
+            };
+            let mut models = Vec::new();
+            let mut cursors = HashSet::new();
+            loop {
+                let page: upstream::ModelListResponse = tokio::time::timeout(
+                    MODEL_LIST_RUNTIME_TIMEOUT,
+                    rpc_runtime(
+                        c,
+                        &server_id,
+                        "codex".into(),
+                        req!(server_id, ModelList, params.clone()),
+                    ),
+                )
+                .await
+                .map_err(|_| ClientError::Rpc("Provider model catalog timed out".into()))??;
+                check_connection()?;
+                models.extend(page.data.into_iter().map(|value| {
+                    let mut model = types::ModelInfo::from(value);
+                    model.provider_id = Some(provider_id.to_string());
+                    model.apply_picker_presentation(None);
+                    model
+                }));
+                let Some(cursor) = page.next_cursor else {
+                    break;
+                };
+                if !cursors.insert(cursor.clone()) {
+                    return Err(ClientError::Rpc(
+                        "Provider model catalog repeated a cursor".into(),
+                    ));
+                }
+                params.cursor = Some(cursor);
+            }
+            Ok(models)
+        })
+    }
 
     pub fn models_need_refresh(&self, server_id: String) -> bool {
         self.inner.models_need_refresh(&server_id)
@@ -1595,13 +1719,14 @@ impl AppClient {
 
     // ── Saved apps update ────────────────────────────────────────────────
 
-    /// Spin a short-lived hidden thread on `server_id`, seed it with the
-    /// saved app's current HTML + abbreviated state shape, send
-    /// `user_prompt`, and wait for the first finalized `show_widget`
-    /// call. On success, replace the saved app's HTML on disk. On
-    /// failure or cancellation, the saved app is left untouched. The
-    /// hidden thread is cleaned up either way (archived on the server;
-    /// also removed from the local hidden-threads list).
+    /// Choose a connected Codex host for a saved app, preferring its origin.
+    pub fn saved_app_server_id(&self, directory: String, app_id: String) -> Option<String> {
+        let app = crate::saved_apps::saved_app_get(directory, app_id)?.app;
+        choose_saved_app_server_id(&self.inner, &app)
+    }
+
+    /// Generate replacement HTML on a remote host and persist it on the phone.
+    /// Invalid responses leave the existing HTML and saved state untouched.
     pub async fn update_saved_app(
         &self,
         server_id: String,
@@ -1625,35 +1750,6 @@ impl AppClient {
                 message: format!("update_saved_app task join failed: {error}"),
             },
         }
-    }
-
-    // ── Minigame ─────────────────────────────────────────────────────────
-
-    /// Spin an ephemeral thread, generate a minigame via `show_widget`,
-    /// persist it under `parent_thread_id`, and return the result.
-    /// Times out after 30 seconds. Errors are returned as
-    /// `ClientError::MinigameGenerationFailed`.
-    pub async fn start_minigame(
-        &self,
-        request: AppMinigameRequest,
-    ) -> Result<AppMinigameResult, crate::ffi::ClientError> {
-        let inner = Arc::clone(&self.inner);
-        let mg_request = crate::mobile_client::minigame::MinigameRequest {
-            server_id: request.server_id,
-            parent_thread_id: request.parent_thread_id,
-            last_user_message: request.last_user_message,
-            last_assistant_message: request.last_assistant_message,
-        };
-        crate::mobile_client::minigame::run_minigame(inner.as_ref(), mg_request)
-            .await
-            .map(|result| AppMinigameResult {
-                ephemeral_thread_id: result.ephemeral_thread_id,
-                widget_html: result.widget_html,
-                title: result.title,
-                width: result.width,
-                height: result.height,
-            })
-            .map_err(crate::ffi::ClientError::MinigameGenerationFailed)
     }
 
     // ── Structured response (for app-mode `window.structuredResponse`) ───
@@ -2231,7 +2327,11 @@ fn inline_image_data(raw: &str) -> Option<Vec<u8>> {
 /// - `thread_id` is `None` (no thread yet, nothing to reference),
 /// - the saved-apps directory hasn't been registered by the platform,
 /// - the directory has no apps for this thread.
-fn saved_apps_context_line(client: &MobileClient, thread_id: Option<&str>) -> Option<String> {
+fn saved_apps_context_line(
+    client: &MobileClient,
+    server_id: &str,
+    thread_id: Option<&str>,
+) -> Option<String> {
     let thread_id = thread_id?;
     let directory = {
         let guard = client
@@ -2240,7 +2340,10 @@ fn saved_apps_context_line(client: &MobileClient, thread_id: Option<&str>) -> Op
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.clone()?
     };
-    let apps = crate::saved_apps::saved_apps_for_thread(directory, thread_id.to_string());
+    let apps = crate::saved_apps::saved_apps_for_thread(directory, thread_id.to_string())
+        .into_iter()
+        .filter(|app| app.origin_server_id.as_deref() == Some(server_id))
+        .collect::<Vec<_>>();
     if apps.is_empty() {
         return None;
     }
@@ -2258,10 +2361,11 @@ fn saved_apps_context_line(client: &MobileClient, thread_id: Option<&str>) -> Op
 /// request params.
 fn splice_saved_apps_context(
     client: &MobileClient,
+    server_id: &str,
     thread_id: Option<&str>,
     existing: Option<String>,
 ) -> Option<String> {
-    let Some(line) = saved_apps_context_line(client, thread_id) else {
+    let Some(line) = saved_apps_context_line(client, server_id, thread_id) else {
         return existing;
     };
     Some(match existing {
@@ -2271,10 +2375,8 @@ fn splice_saved_apps_context(
 }
 
 /// Prepend the generative-UI preamble when this thread is registering the
-/// `show_widget` / `visualize_read_me` dynamic tools (i.e., a local-server
-/// thread per the I3/A3 gating rule). Platforms decide whether to pass
-/// these tools in; Rust just checks the request and conditionally injects
-/// the nudge.
+/// `show_widget` / `visualize_read_me` dynamic tools. Rust registers the
+/// tools for supported interactive runtimes before injecting this nudge.
 fn splice_generative_ui_preamble(
     dynamic_tools: &Option<Vec<crate::types::models::AppDynamicToolSpec>>,
     existing: Option<String>,
@@ -2320,27 +2422,6 @@ pub enum StructuredResponseResult {
     },
 }
 
-// ── Minigame types ───────────────────────────────────────────────────────
-
-/// Request to `AppClient::start_minigame`.
-#[derive(uniffi::Record)]
-pub struct AppMinigameRequest {
-    pub server_id: String,
-    pub parent_thread_id: String,
-    pub last_user_message: Option<String>,
-    pub last_assistant_message: Option<String>,
-}
-
-/// Successful result of `AppClient::start_minigame`.
-#[derive(uniffi::Record)]
-pub struct AppMinigameResult {
-    pub ephemeral_thread_id: String,
-    pub widget_html: String,
-    pub title: String,
-    pub width: f64,
-    pub height: f64,
-}
-
 const STRUCTURED_RESPONSE_TIMEOUT_SECS: u64 = 60;
 
 const SAVED_APP_UPDATE_TIMEOUT_SECS: u64 = 120;
@@ -2382,8 +2463,9 @@ async fn start_ephemeral_thread_for_structured(
         ..Default::default()
     };
     let response: upstream::ThreadStartResponse = client
-        .request_typed_for_server(
+        .request_typed_for_server_runtime(
             server_id,
+            "codex".into(),
             upstream::ClientRequest::ThreadStart {
                 request_id: upstream::RequestId::Integer(next_request_id()),
                 params: start_params,
@@ -2391,6 +2473,11 @@ async fn start_ephemeral_thread_for_structured(
         )
         .await
         .map_err(|e| format!("thread/start failed: {e}"))?;
+    let key = types::ThreadKey {
+        server_id: server_id.into(),
+        thread_id: response.thread.id.clone(),
+    };
+    client.note_thread_runtime(key, "codex".into());
     Ok(response.thread.id)
 }
 
@@ -2400,6 +2487,7 @@ async fn run_structured_turn(
     thread_id: &str,
     prompt: &str,
     output_schema: serde_json::Value,
+    effort: Option<crate::types::ReasoningEffort>,
 ) -> Result<String, StructuredTurnError> {
     // Subscribe BEFORE sending the turn so we don't miss a very fast
     // completion. `UiEvent` is the typed, thread-scoped event stream the
@@ -2422,7 +2510,7 @@ async fn run_structured_turn(
         permissions: None,
         model: None,
         service_tier: None,
-        effort: None,
+        effort: effort.map(crate::types::server_requests::reasoning_effort_into_upstream),
         summary: None,
         personality: None,
         output_schema: Some(output_schema),
@@ -2438,14 +2526,15 @@ async fn run_structured_turn(
             },
         )
         .await;
-    if let Err(e) = turn_outcome {
-        if is_stale_thread_error(&e) {
-            return Err(StructuredTurnError::StaleThread);
+    let turn_id = match turn_outcome {
+        Ok(response) => response.turn.id,
+        Err(e) if is_stale_thread_error(&e) => return Err(StructuredTurnError::StaleThread),
+        Err(e) => {
+            return Err(StructuredTurnError::Fatal(format!(
+                "turn/start failed: {e}"
+            )));
         }
-        return Err(StructuredTurnError::Fatal(format!(
-            "turn/start failed: {e}"
-        )));
-    }
+    };
 
     let wait_outcome = tokio::time::timeout(
         std::time::Duration::from_secs(STRUCTURED_RESPONSE_TIMEOUT_SECS),
@@ -2453,16 +2542,23 @@ async fn run_structured_turn(
             let mut last_agent_text: Option<String> = None;
             loop {
                 match events_rx.recv().await {
-                    Ok(crate::session::events::UiEvent::ItemCompleted { notification, .. })
-                        if notification.thread_id == thread_id =>
+                    Ok(crate::session::events::UiEvent::ItemCompleted { key, notification })
+                        if key.server_id == server_id
+                            && key.thread_id == thread_id
+                            && notification.turn_id == turn_id =>
                     {
                         if let upstream::ThreadItem::AgentMessage { text, .. } = &notification.item
                         {
                             last_agent_text = Some(text.clone());
                         }
                     }
-                    Ok(crate::session::events::UiEvent::TurnCompleted { key, error, .. })
-                        if key.thread_id == thread_id && key.server_id == server_id =>
+                    Ok(crate::session::events::UiEvent::TurnCompleted {
+                        key,
+                        turn_id: completed_id,
+                        error,
+                    }) if key.thread_id == thread_id
+                        && key.server_id == server_id
+                        && completed_id == turn_id =>
                     {
                         return Ok((last_agent_text, error));
                     }
@@ -2525,7 +2621,16 @@ async fn perform_structured_response(
         },
     };
 
-    match run_structured_turn(client, &server_id, &thread_id, &prompt, schema.clone()).await {
+    match run_structured_turn(
+        client,
+        &server_id,
+        &thread_id,
+        &prompt,
+        schema.clone(),
+        None,
+    )
+    .await
+    {
         Ok(text) => StructuredResponseResult::Success {
             thread_id,
             response_json: text,
@@ -2540,7 +2645,7 @@ async fn perform_structured_response(
                     };
                 }
             };
-            match run_structured_turn(client, &server_id, &thread_id, &prompt, schema).await {
+            match run_structured_turn(client, &server_id, &thread_id, &prompt, schema, None).await {
                 Ok(text) => StructuredResponseResult::Success {
                     thread_id,
                     response_json: text,
@@ -2557,6 +2662,45 @@ async fn perform_structured_response(
     }
 }
 
+/// Resolve a connected Codex host in one place for both native apps.
+fn choose_saved_app_server_id(
+    client: &MobileClient,
+    app: &crate::saved_apps::SavedApp,
+) -> Option<String> {
+    let snapshot = client.app_store.snapshot();
+    let mut connected = snapshot
+        .servers
+        .values()
+        .filter(|server| {
+            !server.is_local
+                && matches!(server.health, crate::store::ServerHealthSnapshot::Connected)
+        })
+        .filter(|server| {
+            client
+                .get_session(&server.server_id)
+                .is_ok_and(|s| s.runtime_kinds().iter().any(|r| r == "codex"))
+        })
+        .map(|server| server.server_id.clone())
+        .collect::<Vec<_>>();
+    connected.sort();
+    let origin = app.origin_server_id.clone().or_else(|| {
+        let id = app.origin_thread_id.as_deref()?;
+        let mut matches = snapshot.threads.keys().filter(|key| key.thread_id == id);
+        let first = matches.next()?;
+        matches.next().is_none().then(|| first.server_id.clone())
+    });
+    origin
+        .filter(|id| connected.contains(id))
+        .or_else(|| {
+            snapshot
+                .active_thread
+                .as_ref()
+                .map(|key| key.server_id.clone())
+                .filter(|id| connected.contains(id))
+        })
+        .or_else(|| connected.into_iter().next())
+}
+
 async fn perform_update_saved_app(
     client: &crate::MobileClient,
     server_id: String,
@@ -2564,355 +2708,135 @@ async fn perform_update_saved_app(
     app_id: String,
     user_prompt: String,
 ) -> SavedAppUpdateResult {
-    // 1. Load the current saved-app payload so we can seed the thread.
-    let current = match crate::saved_apps::saved_app_get(directory.clone(), app_id.clone()) {
-        Some(payload) => payload,
-        None => {
-            return SavedAppUpdateResult::Error {
-                message: format!("saved app '{app_id}' not found"),
-            };
-        }
-    };
-    let shape_summary = crate::saved_apps::abbreviated_state_shape(&directory, &app_id)
-        .unwrap_or_else(|| "  (no saved state yet)".to_string());
-
-    let requested_server_id = server_id;
-    let snapshot = client.app_store.snapshot();
-    let server_id = match choose_saved_app_update_server_id(&requested_server_id, &snapshot) {
-        Some(server_id) => server_id,
-        None => {
-            return SavedAppUpdateResult::Error {
-                message: "saved-app updates require a connected local server because app files live on this device".to_string(),
-            };
-        }
-    };
-    if server_id != requested_server_id {
-        tracing::info!(
-            "update_saved_app: routing edit thread to local server {} instead of requested server {}",
-            server_id,
-            requested_server_id
-        );
+    match update_saved_app_remotely(client, &server_id, &directory, &app_id, &user_prompt).await {
+        Ok(app) => SavedAppUpdateResult::Success { app },
+        Err(message) => SavedAppUpdateResult::Error { message },
     }
+}
 
-    // Inherit the origin thread's model / reasoning settings when the
-    // thread is still known to the store. If the app has no recoverable
-    // origin settings, let the native harness choose its current defaults.
-    let inherited = inherited_settings_for_origin(
-        client,
-        &requested_server_id,
-        current.app.origin_thread_id.as_deref(),
-    );
-    let inherited = if inherited_settings_empty(&inherited) && requested_server_id != server_id {
-        inherited_settings_for_origin(client, &server_id, current.app.origin_thread_id.as_deref())
-    } else {
-        inherited
-    };
-    let (model, reasoning_effort) = inherited;
-
-    // Resolve the on-disk HTML path. saved_apps.rs writes at
-    // `<directory>/html/<id>.html` directly (no extra `apps/` segment),
-    // so we read from there too. The Rust live-sync poller uses this
-    // iOS-sandbox path verbatim.
-    let html_dir = std::path::Path::new(&directory).join("html");
-    let html_filename = format!("{app_id}.html");
-    let html_path = html_dir.join(&html_filename);
-    let initial_html = current.widget_html.clone();
-
-    // Path the model gets as its working directory. On iOS we mount the
-    // canonical `Documents/Apps/` at `/mnt/apps/` inside the iSH fakefs at
-    // boot (see IshBridge.m:codex_ish_mount_apps_dir), so `apply_patch`
-    // against `./<file>.html` lands on the same physical bytes the Rust
-    // poller reads from `html_path`. Other platforms hand the iOS-sandbox
-    // path through directly (whatever local-shell they have can see it).
-    #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
-    let thread_cwd = "/mnt/apps/html".to_string();
-    #[cfg(not(all(target_os = "ios", not(target_abi = "macabi"))))]
-    let thread_cwd = html_dir.to_string_lossy().into_owned();
-
-    let developer_instructions = build_saved_app_update_seed(
-        &current.app.title,
-        current.app.schema_version,
-        &html_filename,
-        &shape_summary,
-    );
-
-    // 2. Start a visible thread on the server rooted at the
-    //    saved-apps HTML directory. The model uses its regular file-
-    //    editing tools (apply_patch, shell) to modify the HTML file on
-    //    disk — no dynamic_tools, no show_widget round-trip.
-    let start_params = upstream::ThreadStartParams {
-        model: model.clone(),
-        model_provider: None,
-        service_tier: None,
-        cwd: Some(thread_cwd.clone()),
-        runtime_workspace_roots: None,
-        approval_policy: Some(upstream::AskForApproval::Never),
-        approvals_reviewer: None,
-        sandbox: Some(upstream::SandboxMode::DangerFullAccess),
-        permissions: None,
-        config: None,
-        service_name: None,
-        base_instructions: None,
-        developer_instructions: Some(developer_instructions),
-        personality: None,
-        ephemeral: Some(false),
-        session_start_source: None,
-        thread_source: None,
-        environments: None,
-        dynamic_tools: None,
-        mock_experimental_field: None,
-        experimental_raw_events: false,
-        ..Default::default()
-    };
-    let thread_response: upstream::ThreadStartResponse = match client
-        .request_typed_for_server(
-            &server_id,
-            upstream::ClientRequest::ThreadStart {
-                request_id: upstream::RequestId::Integer(crate::next_request_id()),
-                params: start_params,
-            },
-        )
-        .await
+async fn update_saved_app_remotely(
+    client: &MobileClient,
+    server_id: &str,
+    directory: &str,
+    app_id: &str,
+    user_prompt: &str,
+) -> Result<crate::saved_apps::SavedApp, String> {
+    if user_prompt.trim().is_empty() {
+        return Err("Update prompt is empty".into());
+    }
+    let current = crate::saved_apps::saved_app_get(directory.into(), app_id.into())
+        .ok_or_else(|| format!("saved app '{app_id}' not found"))?;
+    let session = client.get_session(server_id).map_err(|e| e.to_string())?;
+    if !session
+        .runtime_kinds()
+        .iter()
+        .any(|runtime| runtime == "codex")
     {
-        Ok(r) => r,
-        Err(e) => {
-            return SavedAppUpdateResult::Error {
-                message: format!("thread/start failed: {e}"),
-            };
-        }
-    };
-    let thread_id = thread_response.thread.id.clone();
-
-    // 3. Subscribe to store updates BEFORE sending the turn so we don't
-    //    miss an extremely fast completion. We wait for ThreadMetadataChanged
-    //    on our thread with `active_turn_id = None` AND `status = Idle`
-    //    AFTER we've seen the turn become active at least once.
-    let mut updates_rx = client.app_store.subscribe();
-
-    // 4. Send the user's update prompt on this thread.
-    let turn_params = upstream::TurnStartParams {
-        thread_id: thread_id.clone(),
-        input: vec![upstream::UserInput::Text {
-            text: user_prompt.clone(),
-            text_elements: Vec::new(),
-        }],
-        responsesapi_client_metadata: None,
-        cwd: None,
-        runtime_workspace_roots: None,
-        approval_policy: Some(upstream::AskForApproval::Never),
-        approvals_reviewer: None,
-        sandbox_policy: Some(upstream::SandboxPolicy::DangerFullAccess),
-        environments: None,
-        permissions: None,
-        model,
-        service_tier: None,
-        effort: reasoning_effort.map(crate::types::server_requests::reasoning_effort_into_upstream),
-        summary: None,
-        personality: None,
-        output_schema: None,
-        collaboration_mode: None,
-        ..Default::default()
-    };
-    let turn_start_outcome: Result<upstream::TurnStartResponse, _> = client
-        .request_typed_for_server(
-            &server_id,
-            upstream::ClientRequest::TurnStart {
-                request_id: upstream::RequestId::Integer(crate::next_request_id()),
-                params: turn_params,
-            },
-        )
-        .await;
-    if let Err(e) = turn_start_outcome {
-        return SavedAppUpdateResult::Error {
-            message: format!("turn/start failed: {e}"),
-        };
+        return Err("Saved app updates require a connected Codex host".into());
     }
-
-    // 5. Wait for the turn to complete, or time out. While the turn is
-    //    still running, sync each distinct HTML file change back through
-    //    saved_app_replace_html so preview/detail views can refresh live.
-    let wait_outcome = tokio::time::timeout(
-        std::time::Duration::from_secs(SAVED_APP_UPDATE_TIMEOUT_SECS),
-        wait_for_saved_app_update_turn_and_sync(
-            &mut updates_rx,
-            &server_id,
-            &thread_id,
-            &directory,
-            &app_id,
-            &html_path,
-            current.app.width,
-            current.app.height,
-            initial_html,
+    // Never send device paths to the host. Only HTML and a state-shape summary
+    // cross RPC; the state file remains owned by the phone.
+    let shape = crate::saved_apps::abbreviated_state_shape(directory, app_id).unwrap_or_default();
+    let instructions =
+        build_saved_app_update_seed(&current.app.title, current.app.schema_version, &shape);
+    let same_origin = current
+        .app
+        .origin_server_id
+        .as_deref()
+        .is_none_or(|id| id == server_id);
+    let (model, effort) = if same_origin {
+        inherited_settings_for_origin(client, server_id, current.app.origin_thread_id.as_deref())
+    } else {
+        (None, None)
+    };
+    let response: upstream::ThreadStartResponse = tokio::time::timeout(
+        Duration::from_secs(30),
+        rpc_runtime(
+            client,
+            server_id,
+            "codex".into(),
+            upstream::ClientRequest::ThreadStart {
+                request_id: upstream::RequestId::Integer(next_request_id()),
+                params: upstream::ThreadStartParams {
+                    model,
+                    developer_instructions: Some(instructions),
+                    ephemeral: Some(true),
+                    sandbox: Some(upstream::SandboxMode::ReadOnly),
+                    approval_policy: Some(upstream::AskForApproval::OnRequest),
+                    ..Default::default()
+                },
+            },
+        ),
+    )
+    .await
+    .map_err(|_| "Saved app thread/start timed out".to_string())?
+    .map_err(|e| e.to_string())?;
+    let thread_id = response.thread.id;
+    client.note_thread_runtime(
+        crate::types::ThreadKey {
+            server_id: server_id.into(),
+            thread_id: thread_id.clone(),
+        },
+        "codex".into(),
+    );
+    let prompt =
+        serde_json::json!({"requested_change": user_prompt, "current_html": current.widget_html})
+            .to_string();
+    let schema = serde_json::json!({
+        "type": "object", "properties": {"widget_html": {"type": "string"}},
+        "required": ["widget_html"], "additionalProperties": false
+    });
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(SAVED_APP_UPDATE_TIMEOUT_SECS),
+        run_structured_turn(client, server_id, &thread_id, &prompt, schema, effort),
+    )
+    .await;
+    // Best-effort archive on success and failure; disconnected hosts may not
+    // accept cleanup. Keep it bounded so it cannot hold the update UI open.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(5),
+        rpc_runtime::<upstream::ThreadArchiveResponse>(
+            client,
+            server_id,
+            "codex".into(),
+            upstream::ClientRequest::ThreadArchive {
+                request_id: upstream::RequestId::Integer(next_request_id()),
+                params: upstream::ThreadArchiveParams { thread_id },
+            },
         ),
     )
     .await;
-
-    let final_app = match wait_outcome {
-        Ok(Ok(Some(app))) => app,
-        Ok(Ok(None)) => {
-            return SavedAppUpdateResult::Error {
-                message: "no changes were made to the app".to_string(),
-            };
-        }
-        Ok(Err(e)) => {
-            return SavedAppUpdateResult::Error { message: e };
-        }
-        Err(_) => {
-            return SavedAppUpdateResult::Error {
-                message: format!(
-                    "update timed out after {SAVED_APP_UPDATE_TIMEOUT_SECS}s waiting for turn to complete"
-                ),
-            };
-        }
-    };
-
-    SavedAppUpdateResult::Success { app: final_app }
-}
-
-async fn wait_for_saved_app_update_turn_and_sync(
-    updates_rx: &mut tokio::sync::broadcast::Receiver<crate::store::updates::AppStoreUpdateRecord>,
-    server_id: &str,
-    thread_id: &str,
-    directory: &str,
-    app_id: &str,
-    html_path: &std::path::Path,
-    width: f64,
-    height: f64,
-    initial_html: String,
-) -> Result<Option<crate::saved_apps::SavedApp>, String> {
-    let mut saw_active = false;
-    let mut last_synced_html = initial_html;
-    let mut latest_app: Option<crate::saved_apps::SavedApp> = None;
-    let mut poll = tokio::time::interval(std::time::Duration::from_millis(750));
-    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    loop {
-        tokio::select! {
-            _ = poll.tick() => {
-                match sync_saved_app_html_change(
-                    directory,
-                    app_id,
-                    html_path,
-                    width,
-                    height,
-                    &mut last_synced_html,
-                    false,
-                ) {
-                    Ok(Some(app)) => latest_app = Some(app),
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!("update_saved_app: live HTML sync skipped: {e}"),
-                }
+    let json = outcome
+        .map_err(|_| "Saved app update timed out".to_string())?
+        .map_err(|error| match error {
+            StructuredTurnError::StaleThread => {
+                "Saved app update thread is no longer available".into()
             }
-            update = updates_rx.recv() => {
-                match update {
-                    Ok(crate::store::updates::AppStoreUpdateRecord::ThreadMetadataChanged {
-                        state,
-                        ..
-                    }) if state.key.thread_id == thread_id && state.key.server_id == server_id => {
-                        if state.active_turn_id.is_some() {
-                            saw_active = true;
-                        } else if saw_active {
-                            if let Some(app) = sync_saved_app_html_change(
-                                directory,
-                                app_id,
-                                html_path,
-                                width,
-                                height,
-                                &mut last_synced_html,
-                                true,
-                            )? {
-                                latest_app = Some(app);
-                            }
-                            return Ok(latest_app);
-                        }
-                    }
-                    Ok(_) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        return Err("update channel closed".to_string());
-                    }
-                }
-            }
-        }
+            StructuredTurnError::Fatal(message) => message,
+        })?;
+    #[derive(serde::Deserialize)]
+    struct UpdatedWidget {
+        widget_html: String,
     }
-}
-
-fn sync_saved_app_html_change(
-    directory: &str,
-    app_id: &str,
-    html_path: &std::path::Path,
-    width: f64,
-    height: f64,
-    last_synced_html: &mut String,
-    final_check: bool,
-) -> Result<Option<crate::saved_apps::SavedApp>, String> {
-    let html = match std::fs::read_to_string(html_path) {
-        Ok(html) => html,
-        Err(e) if !final_check => {
-            tracing::warn!("update_saved_app: could not read live HTML change: {e}");
-            return Ok(None);
-        }
-        Err(e) => {
-            return Err(format!("could not read updated HTML: {e}"));
-        }
-    };
-
-    if html == *last_synced_html {
-        return Ok(None);
+    let updated: UpdatedWidget =
+        serde_json::from_str(&json).map_err(|e| format!("Invalid saved app response: {e}"))?;
+    if updated.widget_html.trim().is_empty() {
+        return Err("The host returned empty app HTML".into());
     }
-
-    let app = crate::saved_apps::saved_app_replace_html(
-        directory.to_string(),
-        app_id.to_string(),
-        html.clone(),
-        width,
-        height,
+    crate::saved_apps::saved_app_replace_html(
+        directory.into(),
+        app_id.into(),
+        updated.widget_html,
+        current.app.width,
+        current.app.height,
     )
-    .map_err(|e| format!("replace_html failed: {e}"))?;
-    *last_synced_html = html;
-    Ok(Some(app))
-}
-
-fn choose_saved_app_update_server_id(
-    requested_server_id: &str,
-    snapshot: &crate::store::AppSnapshot,
-) -> Option<String> {
-    let mut local_server_ids = snapshot
-        .servers
-        .values()
-        .filter(|server| {
-            server.is_local
-                && matches!(server.health, crate::store::ServerHealthSnapshot::Connected)
-        })
-        .map(|server| server.server_id.clone())
-        .collect::<Vec<_>>();
-
-    if local_server_ids
-        .iter()
-        .any(|server_id| server_id == requested_server_id)
-    {
-        return Some(requested_server_id.to_string());
-    }
-    if local_server_ids
-        .iter()
-        .any(|server_id| server_id == "local")
-    {
-        return Some("local".to_string());
-    }
-
-    local_server_ids.sort();
-    local_server_ids.dedup();
-    local_server_ids.into_iter().next()
+    .map_err(|e| e.to_string())
 }
 
 type InheritedSettings = (
     Option<String>,
     Option<crate::types::models::ReasoningEffort>,
 );
-
-fn inherited_settings_empty(settings: &InheritedSettings) -> bool {
-    settings.0.is_none() && settings.1.is_none()
-}
 
 /// Look up an origin thread in the app store and extract its effective
 /// model / reasoning settings so the saved-app update thread can run with
@@ -2944,6 +2868,9 @@ fn inherited_settings_for_origin(
         return (None, None);
     };
 
+    if thread.agent_runtime_kind != "codex" {
+        return (None, None);
+    }
     let model = thread
         .model
         .as_ref()
@@ -2956,46 +2883,29 @@ fn inherited_settings_for_origin(
 fn build_saved_app_update_seed(
     title: &str,
     schema_version: u32,
-    html_filename: &str,
     state_shape_summary: &str,
 ) -> String {
-    let app_guidelines = crate::widget_guidelines::get_guidelines(&["app".to_string()]);
+    let guidelines = crate::widget_guidelines::get_guidelines(&["app".into()]);
     format!(
-        "You are updating an existing saved app called \"{title}\".\n\n\
-The app's HTML lives in the current working directory as `./{html_filename}`. \
-**Read it first, then edit it with `apply_patch`** (or rewrite it \
-wholesale if the change is extensive). Do NOT call `show_widget` — that \
-tool is not available on this thread. Your job is to modify the HTML \
-file on disk.\n\n\
-The app persists user data via `window.loadAppState()` / `window.saveAppState()`. \
-The current state schema_version is {schema_version}. You MUST:\n\n\
-- Preserve the `loadAppState`/`saveAppState` contract so the user's existing \
-data keeps working.\n\
-- If state-field shapes changed, migrate them defensively on load.\n\
-- Keep the widget self-contained (no cross-file deps; inline CSS/JS is fine).\n\n\
-Abbreviated shape of the current persisted state (top-level keys + sample values; \
-the raw user data is NOT included):\n\
-```\n{{\n{state_shape_summary}\n}}\n```\n\n\
----\n\n\
-Widget construction guidelines (for reference when making UI decisions):\n\n\
-{app_guidelines}"
+        "Update the saved app {title:?} using the current_html and requested_change in the user message. \
+Return the complete replacement HTML in the widget_html JSON field. Do not create or edit files. \
+The app lives on the phone, not on this host. Preserve window.loadAppState()/window.saveAppState() \
+and existing user data. Keep the current state schema version {schema_version}; handle old state \
+defensively on load. Keep HTML/CSS/JS self-contained. State shape: {state_shape_summary}\n\n{guidelines}"
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ImageViewSource, THREAD_LIST_HYDRATION_BUDGET, choose_saved_app_update_server_id,
-        image_read_command, is_mobile_hidden_skill, list_runtime_kinds,
-        normalize_model_info_for_runtime, normalized_image_path, runtime_exposes_model_choices,
-        splice_generative_ui_preamble, thread_list_can_prune, thread_list_hydration_budget,
+        ImageViewSource, THREAD_LIST_HYDRATION_BUDGET, image_read_command, is_mobile_hidden_skill,
+        list_runtime_kinds, normalize_model_info_for_runtime, normalized_image_path,
+        runtime_exposes_model_choices, splice_generative_ui_preamble, thread_list_can_prune,
+        thread_list_hydration_budget,
     };
-    use crate::store::snapshot::ServerTransportDiagnostics;
-    use crate::store::{AppSnapshot, ServerHealthSnapshot, ServerSnapshot};
     use crate::types::models::{AbsolutePath, AppDynamicToolSpec, SkillMetadata, SkillScope};
     use crate::types::{AgentRuntimeKind, ModelInfo, ReasoningEffort};
     use crate::widget_guidelines::GENERATIVE_UI_PREAMBLE;
-    use std::collections::HashMap;
 
     fn show_widget_spec() -> AppDynamicToolSpec {
         AppDynamicToolSpec {
@@ -3018,31 +2928,6 @@ mod tests {
             },
             scope: SkillScope::System,
             enabled: true,
-        }
-    }
-
-    fn server_snapshot(
-        server_id: &str,
-        is_local: bool,
-        health: ServerHealthSnapshot,
-    ) -> ServerSnapshot {
-        ServerSnapshot {
-            server_id: server_id.to_string(),
-            display_name: server_id.to_string(),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            wake_mac: None,
-            is_local,
-            health,
-            account: None,
-            requires_openai_auth: false,
-            rate_limits: None,
-            rate_limits_by_runtime: std::collections::HashMap::new(),
-            available_models: None,
-            agent_runtimes: Vec::new(),
-            connection_progress: None,
-            transport: ServerTransportDiagnostics::default(),
-            turn_pagination_by_runtime: std::collections::HashMap::new(),
         }
     }
 
@@ -3072,16 +2957,6 @@ mod tests {
         }
     }
 
-    fn app_snapshot_with_servers(servers: Vec<ServerSnapshot>) -> AppSnapshot {
-        AppSnapshot {
-            servers: servers
-                .into_iter()
-                .map(|server| (server.server_id.clone(), server))
-                .collect::<HashMap<_, _>>(),
-            ..AppSnapshot::default()
-        }
-    }
-
     #[test]
     fn model_picker_queries_every_chat_runtime() {
         assert!(runtime_exposes_model_choices("codex"));
@@ -3089,7 +2964,11 @@ mod tests {
         assert!(runtime_exposes_model_choices("local-studio"));
         assert!(!runtime_exposes_model_choices("shell"));
         let mut pi = test_model("openrouter/ai21/jamba", "pi".to_string());
-        assert!(normalize_model_info_for_runtime(&mut pi, "pi".to_string(), None));
+        assert!(normalize_model_info_for_runtime(
+            &mut pi,
+            "pi".to_string(),
+            None
+        ));
         assert_eq!(pi.provider_id.as_deref(), Some("ai21"));
         assert!(pi.supported_reasoning_efforts.is_empty());
         let mut codex = test_model("openai/gpt-6-codex", "codex".to_string());
@@ -3137,14 +3016,22 @@ mod tests {
 
         let mut pi = test_model("openrouter/x-ai/grok-5", "pi".to_string());
         pi.display_name = "x-ai/grok-5 (openrouter)".to_string();
-        assert!(normalize_model_info_for_runtime(&mut pi, "pi".to_string(), None));
+        assert!(normalize_model_info_for_runtime(
+            &mut pi,
+            "pi".to_string(),
+            None
+        ));
         assert_eq!(pi.entry_kind, crate::types::ModelEntryKind::Model);
         assert_eq!(pi.provider_id.as_deref(), Some("x-ai"));
         assert_eq!(pi.provider_label.as_deref(), Some("xAI"));
         assert_eq!(pi.picker_name, "grok-5");
 
         let mut custom = test_model("my-lab/qwen", "pi".to_string());
-        assert!(normalize_model_info_for_runtime(&mut custom, "pi".to_string(), None));
+        assert!(normalize_model_info_for_runtime(
+            &mut custom,
+            "pi".to_string(),
+            None
+        ));
         assert_eq!(custom.provider_label.as_deref(), Some("My Lab"));
         assert_eq!(custom.picker_name, "qwen");
     }
@@ -3336,39 +3223,6 @@ mod tests {
             "browser",
             "/Users/me/.codex/skills/.system/browser"
         )));
-    }
-
-    #[test]
-    fn saved_app_update_server_keeps_requested_local_server() {
-        let snapshot = app_snapshot_with_servers(vec![
-            server_snapshot("local", true, ServerHealthSnapshot::Connected),
-            server_snapshot("remote", false, ServerHealthSnapshot::Connected),
-        ]);
-
-        let chosen = choose_saved_app_update_server_id("local", &snapshot);
-        assert_eq!(chosen.as_deref(), Some("local"));
-    }
-
-    #[test]
-    fn saved_app_update_server_routes_remote_request_to_local_server() {
-        let snapshot = app_snapshot_with_servers(vec![
-            server_snapshot("remote", false, ServerHealthSnapshot::Connected),
-            server_snapshot("local", true, ServerHealthSnapshot::Connected),
-        ]);
-
-        let chosen = choose_saved_app_update_server_id("remote", &snapshot);
-        assert_eq!(chosen.as_deref(), Some("local"));
-    }
-
-    #[test]
-    fn saved_app_update_server_ignores_disconnected_local_server() {
-        let snapshot = app_snapshot_with_servers(vec![
-            server_snapshot("remote", false, ServerHealthSnapshot::Connected),
-            server_snapshot("local", true, ServerHealthSnapshot::Disconnected),
-        ]);
-
-        let chosen = choose_saved_app_update_server_id("remote", &snapshot);
-        assert_eq!(chosen, None);
     }
 
     #[test]
@@ -3653,3 +3507,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "saved_app_tests.rs"]
+mod saved_app_remote_tests;

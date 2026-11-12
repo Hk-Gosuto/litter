@@ -24,8 +24,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.litter.android.state.isConnected
+import com.sigkitten.litter.android.R
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.common.runtimeLabel
@@ -63,11 +66,11 @@ fun HarnessSettingsScreen(onBack: () -> Unit) {
     }.collectAsState(initial = emptyList())
     LazyColumn(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            TextButton(onClick = onBack) { Text("Back", color = LitterTheme.accent) }
-            Text("Harnesses", color = LitterTheme.textPrimary)
+            TextButton(onClick = onBack) { Text(stringResource(R.string.common_back), color = LitterTheme.accent) }
+            Text(stringResource(R.string.settings_harnesses), color = LitterTheme.textPrimary)
         }
         if (servers.isEmpty()) {
-            item { Text("Connect to a server to configure its harnesses.", color = LitterTheme.textSecondary) }
+            item { Text(stringResource(R.string.settings_harnesses_empty), color = LitterTheme.textSecondary) }
         }
         servers.forEach { server ->
             item(key = server.id) { Text(server.name, color = LitterTheme.textSecondary) }
@@ -83,6 +86,7 @@ fun HarnessSettingsScreen(onBack: () -> Unit) {
 @Composable
 private fun RuntimeSettingsScreen(target: HarnessTarget, onBack: () -> Unit) {
     val appModel = LocalAppModel.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var settings by remember(target) { mutableStateOf<List<RuntimeSettingDescriptor>>(emptyList()) }
     var loading by remember(target) { mutableStateOf(false) }
@@ -96,24 +100,24 @@ private fun RuntimeSettingsScreen(target: HarnessTarget, onBack: () -> Unit) {
             settings = appModel.client.runtimeSettings(target.serverId, target.runtime).settings
             error = null
         } catch (failure: CancellationException) { throw failure }
-        catch (failure: Exception) { error = failure.message ?: "Settings could not be loaded." }
+        catch (failure: Exception) { error = failure.message ?: context.getString(R.string.settings_load_failed) }
         finally { loading = false }
     }
     LaunchedEffect(target) { refresh() }
     LazyColumn(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row {
-                TextButton(onClick = onBack) { Text("Back", color = LitterTheme.accent) }
-                TextButton(onClick = { scope.launch { refresh() } }, enabled = !loading) { Text("Refresh", color = LitterTheme.accent) }
+                TextButton(onClick = onBack) { Text(stringResource(R.string.common_back), color = LitterTheme.accent) }
+                TextButton(onClick = { scope.launch { refresh() } }, enabled = !loading) { Text(stringResource(R.string.common_refresh), color = LitterTheme.accent) }
             }
             Text(target.runtime.runtimeLabel, color = LitterTheme.textPrimary)
-            Text("Native harness settings. Saved values take effect when the harness reloads its configuration or starts a new session.", color = LitterTheme.textSecondary)
-            OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text("Find a setting") }, modifier = Modifier.fillMaxWidth())
+            Text(stringResource(R.string.settings_harness_native_help), color = LitterTheme.textSecondary)
+            OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text(stringResource(R.string.settings_find_setting)) }, modifier = Modifier.fillMaxWidth())
         }
         if (loading) item { CircularProgressIndicator(color = LitterTheme.accent) }
         error?.let { item { Text(it, color = LitterTheme.danger) } }
         if (!loading && error == null && settings.isEmpty()) {
-            item { Text("This harness does not expose settings for this connection.", color = LitterTheme.textSecondary) }
+            item { Text(stringResource(R.string.settings_harness_no_settings), color = LitterTheme.textSecondary) }
         }
         items(settings.filter { search.isBlank() || it.key.contains(search, true) || it.label.contains(search, true) }, key = { it.key }) { setting ->
             Column(Modifier.fillMaxWidth().background(LitterTheme.surface).clickable(enabled = !loading) { editing = setting }.padding(12.dp)) {
@@ -152,22 +156,40 @@ internal fun RuntimeSettingEditor(setting: RuntimeSettingDescriptor, onDismiss: 
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item {
-                    if (setting.valueJson == "null" && !edited) Text("Unset")
+                    if (setting.valueJson == "null" && !edited) Text(stringResource(R.string.settings_unset))
                     if (setting.valueKind == RuntimeSettingValueKind.BOOLEAN && setting.valueJson == "null") {
-                        if (edited) Text(if (value == "true") "Selected: Enabled" else "Selected: Disabled")
+                        if (edited) {
+                            Text(
+                                stringResource(
+                                    if (value == "true") R.string.settings_selected_enabled else R.string.settings_selected_disabled,
+                                ),
+                            )
+                        }
                         Row {
-                            listOf("Enabled" to "true", "Disabled" to "false").forEach { (label, json) ->
-                                TextButton(onClick = { value = json; edited = true }, enabled = setting.writable && !saving) { Text(label) }
+                            listOf(R.string.settings_enabled to "true", R.string.settings_disabled to "false").forEach { (label, json) ->
+                                TextButton(onClick = { value = json; edited = true }, enabled = setting.writable && !saving) {
+                                    Text(stringResource(label))
+                                }
                             }
                         }
                     } else if (setting.valueKind == RuntimeSettingValueKind.BOOLEAN) {
                         Row {
-                            Text("Enabled", modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.settings_enabled), modifier = Modifier.weight(1f))
                             Switch(checked = value == "true", onCheckedChange = { value = it.toString(); edited = true }, enabled = setting.writable && !saving)
                         }
                     } else {
                         OutlinedTextField(value = value, onValueChange = { value = it; edited = true },
-                            label = { Text(if (setting.valueKind == RuntimeSettingValueKind.JSON) "JSON value" else "Value") },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        if (setting.valueKind == RuntimeSettingValueKind.JSON) {
+                                            R.string.settings_json_value
+                                        } else {
+                                            R.string.settings_value
+                                        },
+                                    ),
+                                )
+                            },
                             enabled = setting.writable && !saving, minLines = 3, maxLines = 12)
                     }
                 }
@@ -179,13 +201,13 @@ internal fun RuntimeSettingEditor(setting: RuntimeSettingDescriptor, onDismiss: 
                 }
                 item {
                     Text(setting.source)
-                    Text("Scope: ${setting.scope}")
+                    Text(stringResource(R.string.settings_scope, setting.scope))
                     setting.readOnlyReason?.let { Text(it) }
                     error?.let { Text(it, color = LitterTheme.danger) }
                 }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.common_cancel)) } },
         confirmButton = {
             TextButton(enabled = setting.writable && !saving && edited, onClick = {
                 saving = true
@@ -197,7 +219,7 @@ internal fun RuntimeSettingEditor(setting: RuntimeSettingDescriptor, onDismiss: 
                     catch (failure: Exception) { error = failure.message }
                     finally { saving = false }
                 }
-            }) { Text(if (saving) "Saving…" else "Save") }
+            }) { Text(stringResource(if (saving) R.string.settings_saving else R.string.common_save)) }
         },
     )
 }

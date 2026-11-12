@@ -15,12 +15,16 @@ Android runtime is now on the same Rust-first architecture as iOS:
 - SSH uses Rust `SshBridge`.
 - Voice runtime uses Rust store/RPC for realtime state and Android-only code for audio capture/playback, AEC, and services.
 
-## Local Runtime
+## Remote-only Runtime
 
-- Android local runtime uses the same in-process Rust app-server model as iOS.
-- `MainActivity` connects the default local server through `ServerBridge.connectLocalServer(...)`.
-- There is no separate bundled Android Codex process in the active app path.
-- `codex-mobile-client` is the single shared Rust runtime surface for both iOS and Android; it also owns the Android JNI bootstrap (`nativeBridgeInit` + `nativeMobileClientInit` in `android_context.rs`).
+- Android does not start an on-device Codex process. Every session runs on a
+  connected computer or remote host through WebSocket, SSH, Alleycat, or
+  Slingshot transport.
+- `codex-mobile-client` is the single shared Rust client surface for both iOS
+  and Android; it also owns the Android JNI bootstrap (`nativeBridgeInit` +
+  `nativeMobileClientInit` in `android_context.rs`).
+- Legacy local bootstrap symbols remain in the generated API for migration
+  compatibility and return `Unsupported` when called.
 
 Examples:
 

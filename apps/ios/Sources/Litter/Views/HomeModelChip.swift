@@ -24,15 +24,14 @@ struct HomeModelChip: View {
     @State private var selectedDetent: PresentationDetent = .large
     @State private var autoSelectedModelKey: String?
 
-    /// Whether the user has escalated the pre-thread launch permissions to
-    /// the equivalent of the header's "Full Access" preset.
-    private var isFullAccess: Bool {
+    /// Pre-thread launch preset. Nil until the user picks one, or when the
+    /// stored policies do not match read-only, auto, or full access.
+    private var permissionChoice: SessionPermissionChoice? {
         let approval = appState.launchApprovalPolicy(for: nil)
         let sandbox = appState.turnSandboxPolicy(for: nil)
-        return threadPermissionPreset(
-            approvalPolicy: approval,
-            sandboxPolicy: sandbox
-        ) == .fullAccess
+        return SessionPermissionChoice.matching(
+            threadPermissionPreset(approvalPolicy: approval, sandboxPolicy: sandbox)
+        )
     }
 
     private var isPlanMode: Bool {
@@ -172,10 +171,16 @@ struct HomeModelChip: View {
                         .padding(.vertical, 1)
                         .background(LitterTheme.accent, in: Capsule())
                 }
-                if isFullAccess {
+                if permissionChoice == .fullAccess {
                     Image(systemName: "lock.open.fill")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(LitterTheme.danger)
+                        .accessibilityLabel(Text("Full access"))
+                } else if permissionChoice == .readOnly {
+                    Image(systemName: "eye")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(LitterTheme.textSecondary)
+                        .accessibilityLabel(Text("Read only"))
                 }
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))

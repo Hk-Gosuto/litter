@@ -28,7 +28,6 @@ struct WidgetWebView: UIViewRepresentable {
     let widgetHTML: String
     let isFinalized: Bool
     var allowsScrollAndZoom: Bool = false
-    var isMinigame: Bool = false
     var onMessage: ((Any) -> Void)?
     /// Typed hook for `window.structuredResponse(...)` calls from app-mode
     /// widgets. The coordinator passes a `respond` closure that wraps
@@ -58,19 +57,6 @@ struct WidgetWebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.userContentController.add(context.coordinator, name: "widget")
 
-        if isMinigame {
-            // Stub out bridge globals so a minigame cannot inject text into the
-            // user's conversation or persist state, even if it tries to.
-            let stub = """
-            window.sendPrompt = function(){};
-            window.saveAppState = function(){};
-            window.loadAppState = function(){ return null; };
-            window.structuredResponse = function(){ return Promise.reject(new Error('disabled in minigame mode')); };
-            """
-            let script = WKUserScript(source: stub, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-            config.userContentController.addUserScript(script)
-        }
-
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .clear
@@ -79,23 +65,6 @@ struct WidgetWebView: UIViewRepresentable {
         webView.scrollView.bounces = allowsScrollAndZoom
         if !allowsScrollAndZoom {
             webView.scrollView.pinchGestureRecognizer?.isEnabled = false
-        }
-        if isMinigame {
-            // Disable double-tap-to-zoom in addition to pinch. Setting min/max
-            // zoom scales pegs the underlying UIScrollView, and a no-op
-            // double-tap recogniser (configured to require failure of any
-            // existing double-tap) absorbs the gesture before WebKit's own
-            // zoom heuristic kicks in.
-            webView.scrollView.minimumZoomScale = 1
-            webView.scrollView.maximumZoomScale = 1
-            webView.scrollView.bouncesZoom = false
-            let absorber = UITapGestureRecognizer(target: context.coordinator,
-                                                  action: #selector(Coordinator.absorbDoubleTap(_:)))
-            absorber.numberOfTapsRequired = 2
-            absorber.cancelsTouchesInView = true
-            absorber.delaysTouchesBegan = false
-            absorber.delegate = context.coordinator
-            webView.addGestureRecognizer(absorber)
         }
         webView.navigationDelegate = context.coordinator
 
@@ -143,18 +112,7 @@ struct WidgetWebView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, UIGestureRecognizerDelegate {
-        @objc func absorbDoubleTap(_ recogniser: UITapGestureRecognizer) {
-            // No-op. Recogniser is attached only in minigame mode to swallow
-            // the double-tap-to-zoom gesture before WebKit reacts to it.
-        }
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            // Let our absorber sit alongside any of WebKit's own recognisers.
-            return true
-        }
-
+    class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var webView: WKWebView?
         var onMessage: ((Any) -> Void)?
         var onStructuredRequest: ((
@@ -619,6 +577,7 @@ extension Notification.Name {
 // MARK: - Container View
 
 struct WidgetContainerView: View {
+    @Environment(\.activeThreadKey) private var threadKey
     let widget: WidgetState
     var originThreadId: String?
     var onMessage: ((Any) -> Void)?
@@ -706,7 +665,7 @@ struct WidgetContainerView: View {
     /// Tap routes to the matching saved app's detail view.
     private func savedAsChip(slug: String) -> some View {
         Button {
-            if let saved = SavedAppsStore.shared.app(slug: slug, threadId: originThreadId) {
+            if let saved = SavedAppsStore.shared.app(slug: slug, threadId: originThreadId, serverId: threadKey?.serverId) {
                 SavedAppsNavigation.shared.requestOpen(appId: saved.id)
             }
         } label: {

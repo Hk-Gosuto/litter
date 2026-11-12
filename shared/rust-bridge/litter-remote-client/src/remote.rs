@@ -201,6 +201,43 @@ pub trait JsonRpcWire: Send + 'static {
 
 struct WebSocketWire<S> {
     stream: WebSocketStream<S>,
+    codec: Option<crate::websocket_compression::Codec>,
+    max_frame_bytes: usize,
+    write_failed: bool,
+}
+
+impl<S> WebSocketWire<S> {
+    fn from_handshake(
+        (stream, response): (
+            WebSocketStream<S>,
+            tokio_tungstenite::tungstenite::handshake::client::Response,
+        ),
+    ) -> IoResult<Self> {
+        let protocol = response
+            .headers()
+            .get(crate::websocket_compression::HEADER)
+            .map(HeaderValue::to_str)
+            .transpose()
+            .map_err(IoError::other)?;
+        let codec = crate::websocket_compression::Codec::negotiate(
+            protocol,
+            REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE,
+        )?;
+        let max_frame_bytes = response
+            .headers()
+            .get("x-codex-websocket-max-unfragmented-message-bytes")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(16 << 20)
+            .min(16 << 20);
+        Ok(Self {
+            stream,
+            codec,
+            max_frame_bytes,
+            write_failed: false,
+        })
+    }
 }
 
 impl<S> JsonRpcWire for WebSocketWire<S>
@@ -214,14 +251,47 @@ where
     ) -> impl Future<Output = IoResult<()>> + Send + 'a {
         async move {
             let payload = serde_json::to_string(&message).map_err(IoError::other)?;
-            self.stream
-                .send(Message::Text(payload.into()))
-                .await
-                .map_err(|err| {
-                    IoError::other(format!(
-                        "failed to write websocket message to `{label}`: {err}"
-                    ))
-                })
+            if self.write_failed {
+                return Err(IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "websocket write previously failed",
+                ));
+            }
+            let result = async {
+                if let Some(codec) = &mut self.codec {
+                    use tokio_tungstenite::tungstenite::protocol::frame::{
+                        Frame,
+                        coding::{Data, OpCode},
+                    };
+                    let bytes = codec.encode(&payload)?;
+                    let mut opcode = OpCode::Data(Data::Binary);
+                    let mut chunks = bytes.chunks(self.max_frame_bytes).peekable();
+                    while let Some(chunk) = chunks.next() {
+                        self.stream
+                            .feed(Message::Frame(Frame::message(
+                                chunk.to_vec(),
+                                opcode,
+                                chunks.peek().is_none(),
+                            )))
+                            .await
+                            .map_err(IoError::other)?;
+                        opcode = OpCode::Data(Data::Continue);
+                    }
+                    self.stream.flush().await.map_err(IoError::other)
+                } else {
+                    self.stream
+                        .send(Message::Text(payload.into()))
+                        .await
+                        .map_err(IoError::other)
+                }
+            }
+            .await;
+            self.write_failed = result.is_err();
+            result.map_err(|err| {
+                IoError::other(format!(
+                    "failed to write websocket message to `{label}`: {err}"
+                ))
+            })
         }
     }
 
@@ -231,7 +301,28 @@ where
     ) -> impl Future<Output = IoResult<Option<JSONRPCMessage>>> + Send + 'a {
         async move {
             loop {
-                match self.stream.next().await {
+                if self.write_failed {
+                    return Err(IoError::new(
+                        ErrorKind::BrokenPipe,
+                        "websocket write previously failed",
+                    ));
+                }
+                let message = match (self.stream.next().await, &mut self.codec) {
+                    (Some(Ok(Message::Binary(bytes))), Some(codec)) => Some(
+                        codec
+                            .decode(&bytes)
+                            .map(|text| Message::Text(text.into()))
+                            .map_err(tokio_tungstenite::tungstenite::Error::Io),
+                    ),
+                    (Some(Ok(Message::Text(_))), Some(_)) => {
+                        return Err(IoError::new(
+                            ErrorKind::InvalidData,
+                            "expected compressed binary app-server message",
+                        ));
+                    }
+                    (message, _) => message,
+                };
+                match message {
                     Some(Ok(Message::Text(text))) => {
                         return serde_json::from_str::<JSONRPCMessage>(&text)
                             .map(Some)
@@ -305,14 +396,24 @@ impl RemoteAppServerClient {
                 websocket_url,
                 auth_token,
             } => {
-                let (endpoint, stream) =
+                let (endpoint, stream, response) =
                     connect_websocket_endpoint(websocket_url, auth_token).await?;
-                Self::connect_with_wire(args, endpoint, WebSocketWire { stream }).await
+                Self::connect_with_wire(
+                    args,
+                    endpoint,
+                    WebSocketWire::from_handshake((stream, response))?,
+                )
+                .await
             }
             RemoteAppServerEndpoint::UnixSocket { socket_path } => {
-                let (endpoint, stream) =
+                let (endpoint, stream, response) =
                     connect_unix_socket_endpoint(socket_path, peer_policy).await?;
-                Self::connect_with_wire(args, endpoint, WebSocketWire { stream }).await
+                Self::connect_with_wire(
+                    args,
+                    endpoint,
+                    WebSocketWire::from_handshake((stream, response))?,
+                )
+                .await
             }
         }
     }
@@ -369,7 +470,11 @@ impl RemoteAppServerClient {
                 })?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
         }
-        let stream = timeout(
+        request.headers_mut().insert(
+            crate::websocket_compression::HEADER,
+            HeaderValue::from_static(crate::websocket_compression::PROTOCOL),
+        );
+        let (stream, response) = timeout(
             CONNECT_TIMEOUT,
             client_async_with_config(request, stream, Some(remote_websocket_config())),
         )
@@ -380,11 +485,15 @@ impl RemoteAppServerClient {
                 format!("timed out opening websocket over `{label}`"),
             )
         })?
-        .map(|(stream, _response)| stream)
         .map_err(|err| {
             IoError::other(format!("websocket handshake over `{label}` failed: {err}"))
         })?;
-        Self::connect_with_wire(args, label, WebSocketWire { stream }).await
+        Self::connect_with_wire(
+            args,
+            label,
+            WebSocketWire::from_handshake((stream, response))?,
+        )
+        .await
     }
 
     /// Litter extension: drive a remote app-server session over any caller-provided
@@ -748,7 +857,6 @@ impl RemoteAppServerClient {
             worker_handle,
         } = self;
         let mut worker_handle = worker_handle;
-        drop(event_rx);
         let (response_tx, response_rx) = oneshot::channel();
         if command_tx
             .send(RemoteClientCommand::Shutdown { response_tx })
@@ -763,11 +871,67 @@ impl RemoteAppServerClient {
             worker_handle.abort();
             let _ = worker_handle.await;
         }
+        // Keep the receiver alive until the worker has closed the WebSocket.
+        drop(event_rx);
         Ok(())
     }
 }
 
 impl RemoteAppServerRequestHandle {
+    pub async fn resolve_server_request(
+        &self,
+        request_id: RequestId,
+        result: JsonRpcResult,
+    ) -> IoResult<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::ResolveServerRequest {
+                request_id,
+                result,
+                response_tx,
+            })
+            .await
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "remote app-server worker channel is closed",
+                )
+            })?;
+        response_rx.await.map_err(|_| {
+            IoError::new(
+                ErrorKind::BrokenPipe,
+                "remote app-server resolve channel is closed",
+            )
+        })?
+    }
+
+    pub async fn reject_server_request(
+        &self,
+        request_id: RequestId,
+        error: JSONRPCErrorError,
+    ) -> IoResult<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::RejectServerRequest {
+                request_id,
+                error,
+                response_tx,
+            })
+            .await
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "remote app-server worker channel is closed",
+                )
+            })?;
+        response_rx.await.map_err(|_| {
+            IoError::new(
+                ErrorKind::BrokenPipe,
+                "remote app-server reject channel is closed",
+            )
+        })?
+    }
+
     pub async fn request(&self, request: ClientRequest) -> IoResult<RequestResult> {
         self.request_json_rpc(jsonrpc_request_from_client_request(request))
             .await
@@ -808,7 +972,11 @@ impl RemoteAppServerRequestHandle {
 async fn connect_websocket_endpoint(
     websocket_url: String,
     auth_token: Option<String>,
-) -> IoResult<(String, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
+) -> IoResult<(
+    String,
+    WebSocketStream<MaybeTlsStream<TcpStream>>,
+    tokio_tungstenite::tungstenite::handshake::client::Response,
+)> {
     let url = Url::parse(&websocket_url).map_err(|err| {
         IoError::new(
             ErrorKind::InvalidInput,
@@ -840,10 +1008,14 @@ async fn connect_websocket_endpoint(
             })?;
         request.headers_mut().insert(AUTHORIZATION, header_value);
     }
+    request.headers_mut().insert(
+        crate::websocket_compression::HEADER,
+        HeaderValue::from_static(crate::websocket_compression::PROTOCOL),
+    );
 
     ensure_rustls_crypto_provider();
     let websocket_config = remote_websocket_config();
-    let stream = timeout(
+    let (stream, response) = timeout(
         CONNECT_TIMEOUT,
         connect_async_with_config(
             request,
@@ -858,22 +1030,25 @@ async fn connect_websocket_endpoint(
             format!("timed out connecting to remote app server at `{websocket_url}`"),
         )
     })?
-    .map(|(stream, _response)| stream)
     .map_err(|err| {
         IoError::other(format!(
             "failed to connect to remote app server at `{websocket_url}`: {err}"
         ))
     })?;
 
-    Ok((websocket_url, stream))
+    Ok((websocket_url, stream, response))
 }
 
 async fn connect_unix_socket_endpoint(
     socket_path: AbsolutePathBuf,
     peer_policy: SocketPeerPolicy,
-) -> IoResult<(String, WebSocketStream<UnixStream>)> {
+) -> IoResult<(
+    String,
+    WebSocketStream<UnixStream>,
+    tokio_tungstenite::tungstenite::handshake::client::Response,
+)> {
     let endpoint = format!("unix://{}", socket_path.display());
-    let request = UDS_WEBSOCKET_HANDSHAKE_URL
+    let mut request = UDS_WEBSOCKET_HANDSHAKE_URL
         .into_client_request()
         .map_err(|err| {
             IoError::new(
@@ -881,6 +1056,10 @@ async fn connect_unix_socket_endpoint(
                 format!("invalid UDS websocket handshake URL: {err}"),
             )
         })?;
+    request.headers_mut().insert(
+        crate::websocket_compression::HEADER,
+        HeaderValue::from_static(crate::websocket_compression::PROTOCOL),
+    );
     let stream = timeout(CONNECT_TIMEOUT, UnixStream::connect(socket_path.as_path()))
         .await
         .map_err(|_| {
@@ -900,7 +1079,7 @@ async fn connect_unix_socket_endpoint(
         SocketPeerPolicy::NonElevatedCurrentUser => stream.ensure_non_elevated_peer()?,
     }
     let websocket_config = remote_websocket_config();
-    let stream = timeout(
+    let (stream, response) = timeout(
         CONNECT_TIMEOUT,
         client_async_with_config(request, stream, Some(websocket_config)),
     )
@@ -911,14 +1090,13 @@ async fn connect_unix_socket_endpoint(
             format!("timed out upgrading remote app server at `{endpoint}`"),
         )
     })?
-    .map(|(stream, _response)| stream)
     .map_err(|err| {
         IoError::other(format!(
             "failed to upgrade remote app server at `{endpoint}`: {err}"
         ))
     })?;
 
-    Ok((endpoint, stream))
+    Ok((endpoint, stream, response))
 }
 
 fn remote_websocket_config() -> WebSocketConfig {
@@ -1100,11 +1278,180 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn replies_are_connection_bound_single_use_and_fail_after_shutdown() {
+        let (first_tx, mut first_rx) = mpsc::channel(4);
+        let (second_tx, mut second_rx) = mpsc::channel(4);
+        let first = crate::AppServerRequestHandle::Remote(RemoteAppServerRequestHandle {
+            command_tx: first_tx,
+        });
+        let second = crate::AppServerRequestHandle::Remote(RemoteAppServerRequestHandle {
+            command_tx: second_tx,
+        });
+        let reply = first.server_request_reply_handle(RequestId::Integer(1));
+        let duplicate = reply.clone();
+        let other = second.server_request_reply_handle(RequestId::Integer(1));
+        let worker = tokio::spawn(async move {
+            match first_rx.recv().await.unwrap() {
+                RemoteClientCommand::ResolveServerRequest {
+                    request_id,
+                    result,
+                    response_tx,
+                } => {
+                    assert_eq!(request_id, RequestId::Integer(1));
+                    assert_eq!(result, serde_json::json!({"first":true}));
+                    response_tx.send(Ok(())).unwrap();
+                }
+                _ => panic!("expected reply on the first connection"),
+            }
+            match second_rx.recv().await.unwrap() {
+                RemoteClientCommand::RejectServerRequest {
+                    request_id,
+                    response_tx,
+                    ..
+                } => {
+                    assert_eq!(request_id, RequestId::Integer(1));
+                    response_tx.send(Ok(())).unwrap();
+                }
+                _ => panic!("expected rejection on the second connection"),
+            }
+        });
+        reply
+            .resolve(serde_json::json!({"first":true}))
+            .await
+            .unwrap();
+        assert_eq!(
+            duplicate
+                .resolve(serde_json::json!({}))
+                .await
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidInput
+        );
+        other
+            .reject(JSONRPCErrorError {
+                code: -1,
+                message: "declined".into(),
+                data: None,
+            })
+            .await
+            .unwrap();
+        worker.await.unwrap();
+        let stale = second.server_request_reply_handle(RequestId::Integer(2));
+        assert_eq!(
+            stale
+                .resolve(serde_json::json!({}))
+                .await
+                .unwrap_err()
+                .kind(),
+            ErrorKind::BrokenPipe
+        );
+        assert_eq!(format!("{reply:?}"), "AppServerReplyHandle([redacted])");
+    }
+
+    #[tokio::test]
+    async fn websocket_negotiates_compression_fragments_and_keeps_codec_history() {
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+        use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_hdr_async_with_config(
+                stream,
+                |request: &Request, mut response: Response| {
+                    assert_eq!(
+                        request.headers()[crate::websocket_compression::HEADER],
+                        crate::websocket_compression::PROTOCOL
+                    );
+                    response.headers_mut().insert(
+                        crate::websocket_compression::HEADER,
+                        HeaderValue::from_static(crate::websocket_compression::PROTOCOL),
+                    );
+                    response.headers_mut().insert(
+                        "x-codex-websocket-max-unfragmented-message-bytes",
+                        HeaderValue::from_static("32"),
+                    );
+                    Ok(response)
+                },
+                Some(WebSocketConfig::default().max_frame_size(Some(32))),
+            )
+            .await
+            .unwrap();
+            let mut codec = crate::websocket_compression::Codec::negotiate(
+                Some(crate::websocket_compression::PROTOCOL),
+                128 << 20,
+            )
+            .unwrap()
+            .unwrap();
+            let Message::Binary(bytes) = socket.next().await.unwrap().unwrap() else {
+                panic!("expected compressed initialize")
+            };
+            let initialize: serde_json::Value =
+                serde_json::from_str(&codec.decode(&bytes).unwrap()).unwrap();
+            let text = serde_json::json!({"id":initialize["id"],"result":{}}).to_string();
+            socket
+                .send(Message::Binary(codec.encode(&text).unwrap().into()))
+                .await
+                .unwrap();
+            for expected in ["initialized", "model/list", "model/list"] {
+                let Message::Binary(bytes) = socket.next().await.unwrap().unwrap() else {
+                    panic!("expected compressed JSON")
+                };
+                let rpc: serde_json::Value =
+                    serde_json::from_str(&codec.decode(&bytes).unwrap()).unwrap();
+                assert_eq!(rpc["method"], expected);
+                if expected == "model/list" {
+                    let text =
+                        serde_json::json!({"id":rpc["id"],"result":{"data":[],"nextCursor":null}})
+                            .to_string();
+                    socket
+                        .send(Message::Binary(codec.encode(&text).unwrap().into()))
+                        .await
+                        .unwrap();
+                }
+            }
+            // Negotiated connections must reject accidental text payloads.
+            socket.send(Message::Text("{}".into())).await.unwrap();
+        });
+        let mut client = RemoteAppServerClient::connect(RemoteAppServerConnectArgs {
+            endpoint: RemoteAppServerEndpoint::WebSocket {
+                websocket_url: format!("ws://{address}/rpc"),
+                auth_token: None,
+            },
+            client_name: "litter-test".into(),
+            client_version: "1".into(),
+            experimental_api: true,
+            mcp_server_openai_form_elicitation: false,
+            opt_out_notification_methods: vec![],
+            channel_capacity: 16,
+        })
+        .await
+        .unwrap();
+        for id in [1, 2] {
+            let request = serde_json::from_value(
+                serde_json::json!({"id":id,"method":"model/list","params":{}}),
+            )
+            .unwrap();
+            assert!(client.request(request).await.unwrap().is_ok());
+        }
+        assert!(matches!(
+            client.next_event().await,
+            Some(AppServerEvent::Disconnected { .. })
+        ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn shutdown_tolerates_worker_exit_after_command_is_queued() {
         let (command_tx, mut command_rx) = mpsc::channel(1);
-        let (_event_tx, event_rx) = mpsc::unbounded_channel::<AppServerEvent>();
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerEvent>();
+        let (delivered_tx, delivered_rx) = oneshot::channel();
         let worker_handle = tokio::spawn(async move {
             let _ = command_rx.recv().await;
+            let _ = delivered_tx.send(deliver_event(
+                &event_tx,
+                AppServerEvent::Lagged { skipped: 1 },
+            ));
         });
         let client = RemoteAppServerClient {
             command_tx,
@@ -1118,5 +1465,9 @@ mod tests {
             .shutdown()
             .await
             .expect("shutdown should complete when worker exits first");
+        delivered_rx
+            .await
+            .unwrap()
+            .expect("in-flight event must remain deliverable during shutdown");
     }
 }

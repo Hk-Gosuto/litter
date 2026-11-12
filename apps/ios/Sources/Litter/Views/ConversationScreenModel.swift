@@ -28,6 +28,7 @@ struct ConversationComposerSnapshot: Equatable {
     var activePlanProgress: AppPlanProgressSnapshot?
     var pendingPlanImplementationPrompt: AppPlanImplementationPromptSnapshot?
     var pendingUserInputRequest: PendingUserInputRequest?
+    var pendingUserInputRequests: [PendingUserInputRequest] = []
     var activeTaskSummary: ConversationActiveTaskSummary?
     var queuedFollowUps: [AppQueuedFollowUpPreview]
     var composerPrefillRequest: AppModel.ComposerPrefillRequest?
@@ -48,6 +49,12 @@ struct ConversationComposerSnapshot: Equatable {
     var isConnected: Bool
     var supportsTurnPagination: Bool
     var hasFixedFullAccess: Bool
+    /// Effective policies from the thread snapshot. The composer menu prefers
+    /// a user override from `AppState` and falls back to these.
+    var effectiveApprovalPolicy: AppAskForApproval?
+    var effectiveSandboxPolicy: AppSandboxPolicy?
+    /// False for runtimes that do not accept client-side permission overrides.
+    var supportsPermissionMenu: Bool
 
     static let empty = ConversationComposerSnapshot(
         threadKey: ThreadKey(serverId: "", threadId: ""),
@@ -71,7 +78,10 @@ struct ConversationComposerSnapshot: Equatable {
         availableModels: [],
         isConnected: false,
         supportsTurnPagination: false,
-        hasFixedFullAccess: false
+        hasFixedFullAccess: false,
+        effectiveApprovalPolicy: nil,
+        effectiveSandboxPolicy: nil,
+        supportsPermissionMenu: false
     )
 }
 
@@ -81,27 +91,12 @@ struct ConversationActiveTaskSummary: Equatable {
     var detail: String
 }
 
-struct MinigameContent: Equatable {
-    let html: String
-    let title: String
-    let width: CGFloat
-    let height: CGFloat
-}
-
-enum MinigameOverlayState: Equatable {
-    case idle
-    case loading
-    case shown(MinigameContent)
-    case failed(String)
-}
-
 @MainActor
 @Observable
 final class ConversationScreenModel {
     private(set) var transcript: ConversationTranscriptSnapshot = .empty
     private(set) var pinnedContextItems: [ConversationItem] = []
     private(set) var composer: ConversationComposerSnapshot = .empty
-    private(set) var minigameOverlay: MinigameOverlayState = .idle
     /// Precomputed server snapshot for the current thread's server. Read by
     /// ConversationToolbarControls via param instead of
     /// `appModel.snapshot` in body (which would create a per-token edge).
@@ -142,7 +137,6 @@ final class ConversationScreenModel {
     @ObservationIgnored private var cachedProjectedConversationItems: [ConversationItem] = []
     @ObservationIgnored private var transcriptRevision: Int = 0
     @ObservationIgnored private var projectedRevision: UInt64?
-    @ObservationIgnored private var minigameTask: Task<Void, Never>?
 
     func bind(
         thread: AppThreadSnapshot,
@@ -163,9 +157,6 @@ final class ConversationScreenModel {
             cachedProjectedConversationItems = []
             transcriptRevision = 0
             projectedRevision = nil
-            minigameTask?.cancel()
-            minigameTask = nil
-            minigameOverlay = .idle
             composerDraft.text = ""
             composerDraft.attachedImages = []
         }
@@ -199,9 +190,9 @@ final class ConversationScreenModel {
             activeTurnId = nil
         }
         let hasTurnInFlight = activeTurnId != nil || thread.info.status == .active
-        let pendingUserInputRequest = appModel.snapshot?.pendingUserInputs.first {
+        let pendingUserInputRequests = appModel.snapshot?.pendingUserInputs.filter {
             $0.isRelevant(to: thread.key)
-        }
+        } ?? []
         let activeTaskSummary = items.latestActiveTaskSummary
         let composerPrefillRequest = appModel.composerPrefillRequest.flatMap { request in
             request.threadKey == thread.key ? request : nil
@@ -265,7 +256,8 @@ final class ConversationScreenModel {
             collaborationMode: thread.collaborationMode,
             activePlanProgress: thread.activePlanProgress,
             pendingPlanImplementationPrompt: thread.pendingPlanImplementationPrompt,
-            pendingUserInputRequest: pendingUserInputRequest,
+            pendingUserInputRequest: pendingUserInputRequests.first,
+            pendingUserInputRequests: pendingUserInputRequests,
             activeTaskSummary: activeTaskSummary,
             queuedFollowUps: thread.queuedFollowUps,
             composerPrefillRequest: composerPrefillRequest,
@@ -285,7 +277,10 @@ final class ConversationScreenModel {
             availableModels: appModel.availableModels(for: thread.key.serverId),
             isConnected: serverSnap?.isConnected ?? false,
             supportsTurnPagination: supportsTurnPagination,
-            hasFixedFullAccess: hasFixedFullAccess
+            hasFixedFullAccess: hasFixedFullAccess,
+            effectiveApprovalPolicy: thread.effectiveApprovalPolicy,
+            effectiveSandboxPolicy: thread.effectiveSandboxPolicy,
+            supportsPermissionMenu: thread.agentRuntimeKind.supportsThreadPermissionOverrides
         )
 
         let transcriptChanged =
@@ -316,63 +311,6 @@ final class ConversationScreenModel {
         if composer != composerSnapshot {
             composer = composerSnapshot
         }
-    }
-}
-
-extension ConversationScreenModel {
-    func requestMinigame() {
-        guard ExperimentalFeatures.shared.isEnabled(.thinkingMinigame) else { return }
-        guard minigameOverlay == .idle else { return }
-        guard let thread, let appModel else { return }
-
-        var lastUser: String?
-        var lastAssistant: String?
-        for item in transcript.items.reversed() {
-            switch item.content {
-            case .user(let data) where lastUser == nil:
-                lastUser = data.text
-            case .assistant(let data) where lastAssistant == nil:
-                lastAssistant = data.text
-            default:
-                break
-            }
-            if lastUser != nil && lastAssistant != nil { break }
-        }
-
-        minigameOverlay = .loading
-        minigameTask?.cancel()
-
-        let request = AppMinigameRequest(
-            serverId: thread.key.serverId,
-            parentThreadId: thread.key.threadId,
-            lastUserMessage: lastUser,
-            lastAssistantMessage: lastAssistant
-        )
-        let client = appModel.client
-
-        minigameTask = Task { @MainActor [weak self] in
-            do {
-                let result = try await client.startMinigame(request: request)
-                guard let self else { return }
-                if Task.isCancelled { return }
-                self.minigameOverlay = .shown(MinigameContent(
-                    html: result.widgetHtml,
-                    title: result.title,
-                    width: CGFloat(result.width),
-                    height: CGFloat(result.height)
-                ))
-            } catch {
-                guard let self else { return }
-                if Task.isCancelled { return }
-                self.minigameOverlay = .failed(String(describing: error))
-            }
-        }
-    }
-
-    func dismissMinigame() {
-        minigameTask?.cancel()
-        minigameTask = nil
-        minigameOverlay = .idle
     }
 }
 

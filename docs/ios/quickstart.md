@@ -26,7 +26,7 @@ make ios-run
 ```
 
 The Makefile handles Codex/Ghostty submodule preparation, patches, UniFFI
-bindings, Rust cross-compilation, Alpine local-runtime resources, project
+bindings, Rust cross-compilation, project
 generation, and Xcode builds. Stamp files make repeated runs incremental.
 
 ## Build manually (step by step)

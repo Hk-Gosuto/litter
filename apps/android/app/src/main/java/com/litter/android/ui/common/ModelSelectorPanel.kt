@@ -47,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.sigkitten.litter.android.R
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,13 +59,12 @@ import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.scaled
-import uniffi.codex_mobile_client.AppModeKind
 import uniffi.codex_mobile_client.AppThreadPermissionPreset
 import uniffi.codex_mobile_client.AppThreadSnapshot
 import uniffi.codex_mobile_client.ModelEntryKind
 import uniffi.codex_mobile_client.ModelInfo
 import uniffi.codex_mobile_client.ReasoningEffort
-import uniffi.codex_mobile_client.threadPermissionPreset
+
 import java.util.Locale
 
 /**
@@ -72,7 +73,7 @@ import java.util.Locale
  * Mirrors iOS `ModelPickerView.swift`:
  *
  *  - root: current selection, recents, one row per harness, then options
- *    (reasoning effort, fast mode, plan, access);
+ *    (reasoning effort, fast mode; plan mode only before a thread exists);
  *  - a harness page lists its modes, plugin modes, or models grouped by
  *    provider (large catalogs start folded);
  *  - search covers every harness and provider.
@@ -87,9 +88,11 @@ fun ModelSelectorPanel(
     catalogLoaded: Boolean = false,
     catalogError: String? = null,
     onRetryModels: () -> Unit = {},
-    onToggleMode: ((AppModeKind) -> Unit)? = null,
     fastMode: Boolean,
     onFastModeChange: (Boolean) -> Unit,
+    showPlanMode: Boolean = false,
+    planMode: Boolean = false,
+    onPlanModeChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
     showBackground: Boolean = true,
 ) {
@@ -102,8 +105,8 @@ fun ModelSelectorPanel(
     val catalog = remember(availableModels) { ModelPickerCatalog(availableModels) }
     val visibleModels = catalog.visible
     val catalogMessage = catalogError
-        ?: if (!catalogLoaded) "Loading models..."
-        else if (visibleModels.isEmpty()) "No models available"
+        ?: if (!catalogLoaded) stringResource(R.string.model_loading)
+        else if (visibleModels.isEmpty()) stringResource(R.string.model_none_available)
         else null
     val fallbackModel = visibleModels.firstOrNull { it.agentRuntimeKind == "codex" && it.isDefault }
         ?: visibleModels.firstOrNull { it.isDefault }
@@ -121,9 +124,6 @@ fun ModelSelectorPanel(
         .takeIf { pendingModelDefinition != null }
         ?: thread?.agentRuntimeKind
         ?: visibleModels.firstOrNull { it.id == selectedModel || it.model == selectedModel }?.agentRuntimeKind
-    val selectedRuntimeSupportsPermissionOverrides =
-        selectedRuntime?.supportsThreadPermissionOverrides ?: true
-
     LaunchedEffect(thread, pendingModel, pendingRuntime, fallbackModel) {
         if (thread == null && pendingModel != null && pendingModelDefinition == null && fallbackModel != null) {
             appModel.launchState.updateSelectedModel(
@@ -250,7 +250,7 @@ fun ModelSelectorPanel(
                 }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to harnesses",
+                        contentDescription = stringResource(R.string.model_back_harnesses),
                         tint = LitterTheme.textPrimary,
                     )
                 }
@@ -258,7 +258,7 @@ fun ModelSelectorPanel(
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                text = harness?.label ?: "Model",
+                text = harness?.label ?: stringResource(R.string.model_title),
                 color = LitterTheme.textPrimary,
                 fontSize = LitterTextStyle.body.scaled,
                 fontWeight = FontWeight.SemiBold,
@@ -279,7 +279,11 @@ fun ModelSelectorPanel(
             shape = RoundedCornerShape(12.dp),
             placeholder = {
                 Text(
-                    if (harness != null) "Search ${harness.label}" else "Search all models",
+                    if (harness != null) {
+                        stringResource(R.string.model_search_harness, harness.label)
+                    } else {
+                        stringResource(R.string.model_search_all)
+                    },
                     color = LitterTheme.textMuted,
                     fontSize = LitterTextStyle.body.scaled,
                 )
@@ -297,7 +301,7 @@ fun ModelSelectorPanel(
                     IconButton(onClick = { query = "" }) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Clear model search",
+                            contentDescription = stringResource(R.string.conversation_clear_model_search),
                             tint = LitterTheme.textSecondary,
                             modifier = Modifier.size(16.dp),
                         )
@@ -342,7 +346,7 @@ fun ModelSelectorPanel(
                             )
                             if (catalogError != null) {
                                 Text(
-                                    text = "Retry",
+                                    text = stringResource(R.string.common_retry),
                                     color = LitterTheme.accent,
                                     fontSize = LitterTextStyle.footnote.scaled,
                                     fontWeight = FontWeight.SemiBold,
@@ -360,7 +364,7 @@ fun ModelSelectorPanel(
                         PickerCard {
                             PickerModelRow(
                                 model = currentModel,
-                                subtitle = catalog.subtitle(currentModel),
+                                subtitle = localizedModelSubtitle(currentModel),
                                 showsIcon = true,
                                 selected = true,
                                 onClick = { openHarness = currentModel.agentRuntimeKind },
@@ -376,7 +380,7 @@ fun ModelSelectorPanel(
                                 if (index > 0) PickerDivider()
                                 PickerModelRow(
                                     model = model,
-                                    subtitle = catalog.subtitle(model),
+                                    subtitle = localizedModelSubtitle(model),
                                     showsIcon = true,
                                     selected = false,
                                     onClick = { onSelect(model) },
@@ -404,14 +408,18 @@ fun ModelSelectorPanel(
                 item(key = "options") {
                     PickerCard {
                         if (ampEffortLocked) {
-                            PickerValueRow(label = "Reasoning", value = "Locked after first message")
+                            PickerValueRow(
+                                label = stringResource(R.string.model_reasoning),
+                                value = stringResource(R.string.model_locked),
+                            )
                             PickerDivider()
                         } else if (supportedEfforts.isNotEmpty()) {
                             var menuOpen by remember { mutableStateOf(false) }
                             Box {
                                 PickerValueRow(
-                                    label = "Reasoning",
-                                    value = selectedEffort?.replaceFirstChar { it.titlecase(Locale.ROOT) } ?: "Default",
+                                    label = stringResource(R.string.model_reasoning),
+                                    value = selectedEffort?.replaceFirstChar { it.titlecase(Locale.ROOT) }
+                                        ?: stringResource(R.string.model_default),
                                     onClick = { menuOpen = true },
                                 )
                                 DropdownMenu(
@@ -443,52 +451,17 @@ fun ModelSelectorPanel(
                             }
                             PickerDivider()
                         }
-                        PickerSwitchRow(label = "Fast mode", checked = fastMode, onCheckedChange = onFastModeChange)
-                        val threadKey = thread?.key
-                        if (thread != null && onToggleMode != null) {
-                            val isPlan = thread.collaborationMode == AppModeKind.PLAN
+                        PickerSwitchRow(
+                            label = stringResource(R.string.model_fast_mode),
+                            checked = fastMode,
+                            onCheckedChange = onFastModeChange,
+                        )
+                        if (showPlanMode) {
                             PickerDivider()
                             PickerSwitchRow(
-                                label = "Plan mode",
-                                checked = isPlan,
-                                onCheckedChange = { enabled ->
-                                    onToggleMode(if (enabled) AppModeKind.PLAN else AppModeKind.DEFAULT)
-                                },
-                            )
-                        }
-                        if (selectedRuntimeSupportsPermissionOverrides) {
-                            val currentPreset = run {
-                                val approval = appModel.launchState.approvalPolicyValue(threadKey)
-                                    ?: thread?.effectiveApprovalPolicy
-                                val sandbox = appModel.launchState.turnSandboxPolicy(threadKey)
-                                    ?: thread?.effectiveSandboxPolicy
-                                if (approval != null && sandbox != null) {
-                                    threadPermissionPreset(approval, sandbox)
-                                } else {
-                                    null
-                                }
-                            }
-                            val isFullAccess = currentPreset == AppThreadPermissionPreset.FULL_ACCESS
-                            PickerDivider()
-                            PickerSwitchRow(
-                                label = "Full access",
-                                checked = isFullAccess,
-                                checkedTrackColor = LitterTheme.danger,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) {
-                                        appModel.launchState.updateThreadPermissions(
-                                            threadKey,
-                                            approvalPolicy = "never",
-                                            sandboxMode = "danger-full-access",
-                                        )
-                                    } else {
-                                        appModel.launchState.updateThreadPermissions(
-                                            threadKey,
-                                            approvalPolicy = "on-request",
-                                            sandboxMode = "workspace-write",
-                                        )
-                                    }
-                                },
+                                label = stringResource(R.string.model_plan_mode),
+                                checked = planMode,
+                                onCheckedChange = onPlanModeChange,
                             )
                         }
                     }
@@ -563,7 +536,7 @@ private fun LazyListScope.harnessItems(
                     )
                     Icon(
                         imageVector = if (open) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = if (open) "Collapse" else "Expand",
+                        contentDescription = stringResource(if (open) R.string.model_collapse else R.string.model_expand),
                         tint = LitterTheme.textMuted,
                         modifier = Modifier.size(18.dp),
                     )
@@ -596,7 +569,7 @@ private fun LazyListScope.searchResultItems(
     if (results.sections.isEmpty()) {
         item(key = "no-results") {
             Text(
-                text = "No models match “$query”",
+                text = stringResource(R.string.model_no_match, query),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.footnote.scaled,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
@@ -623,7 +596,7 @@ private fun LazyListScope.searchResultItems(
     if (results.total > results.shown) {
         item(key = "search-more") {
             Text(
-                text = "Showing ${results.shown} of ${results.total} matches. Keep typing to narrow.",
+                text = stringResource(R.string.model_showing_matches, results.shown, results.total),
                 color = LitterTheme.textMuted,
                 fontSize = LitterTextStyle.caption.scaled,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -722,18 +695,6 @@ private class ModelPickerCatalog(models: List<ModelInfo>) {
 
     fun model(scopedId: String): ModelInfo? = byScopedId[scopedId]
 
-    fun subtitle(model: ModelInfo): String {
-        val harness = model.agentRuntimeKind.titleDisplayLabel
-        return when (model.entryKind) {
-            ModelEntryKind.MODE -> "$harness · mode"
-            ModelEntryKind.PLUGIN_MODE -> "$harness · plugin mode"
-            ModelEntryKind.MODEL -> {
-                val provider = model.providerLabel ?: model.providerId
-                if (provider.isNullOrEmpty()) harness else "$harness · $provider"
-            }
-        }
-    }
-
     fun search(query: String, kind: AgentRuntimeKind?): PickerSearchResults {
         val tokens = query.lowercase(Locale.ROOT).split(Regex("\\s+")).filter { it.isNotEmpty() }
         if (tokens.isEmpty()) return PickerSearchResults(emptyList(), 0, 0)
@@ -828,9 +789,92 @@ private object ModelPickerRecents {
 private val PickerCardShape = RoundedCornerShape(14.dp)
 
 @Composable
+private fun localizedPickerTitle(title: String): String {
+    return when {
+        title == "Current" -> stringResource(R.string.model_current)
+        title == "Recent" -> stringResource(R.string.model_recent)
+        title == "Harnesses" -> stringResource(R.string.settings_harnesses)
+        title == "Options" -> stringResource(R.string.model_options)
+        title == "Modes" -> stringResource(R.string.model_modes)
+        title == "Plugin modes" -> stringResource(R.string.model_plugin_modes)
+        title == "Models" -> stringResource(R.string.model_models)
+        title == "Other" -> stringResource(R.string.model_other)
+        title.endsWith(" · Plugin modes") -> stringResource(
+            R.string.model_section_plugin_modes,
+            title.removeSuffix(" · Plugin modes"),
+        )
+        title.endsWith(" · Modes") -> stringResource(
+            R.string.model_section_modes,
+            title.removeSuffix(" · Modes"),
+        )
+        else -> title
+    }
+}
+
+@Composable
+private fun localizedHarnessSummary(harness: PickerHarness): String {
+    val parts = mutableListOf<String>()
+    if (harness.modelCount > 0) {
+        parts += stringResource(
+            if (harness.modelCount == 1) R.string.model_count_one else R.string.model_count_many,
+            harness.modelCount,
+        )
+        val named = harness.providers.count { it.title != null }
+        if (named > 1) parts += stringResource(R.string.model_provider_count, named)
+    }
+    if (harness.modes.isNotEmpty()) {
+        parts += stringResource(
+            if (harness.modes.size == 1) R.string.model_mode_count_one else R.string.model_mode_count_many,
+            harness.modes.size,
+        )
+    }
+    if (harness.pluginModes.isNotEmpty()) {
+        parts += stringResource(
+            if (harness.pluginModes.size == 1) R.string.model_plugin_count_one else R.string.model_plugin_count_many,
+            harness.pluginModes.size,
+        )
+    }
+    return parts.joinToString(" · ")
+}
+
+private val knownModelDescriptions = mapOf(
+    "Frontier intelligence for the most demanding work." to R.string.model_desc_frontier,
+    "Latest workhorse model for coding and everyday work." to R.string.model_desc_latest_workhorse,
+    "GPT-6.1 Terra Codex model." to R.string.model_desc_gpt_6_1_terra,
+    "Previous generation workhorse model." to R.string.model_desc_previous_workhorse,
+    "Fast and affordable model for easier tasks." to R.string.model_desc_fast_affordable,
+    "Older generation workhorse model." to R.string.model_desc_older_workhorse,
+    "Older balanced model for straightforward work." to R.string.model_desc_older_balanced,
+    "Older fast and efficient model." to R.string.model_desc_older_fast,
+    "Latest frontier agentic coding model for broad defensive cybersecurity work." to R.string.model_desc_frontier_cyber,
+    "Cyber-permissive variant of our latest frontier agentic coding model for advanced, authorized cybersecurity research." to R.string.model_desc_cyber_permissive,
+    "Legacy coding model." to R.string.model_desc_legacy,
+    "Automatic approval review model for Codex." to R.string.model_desc_approval_review,
+)
+
+@Composable
+private fun localizedModelDescription(description: String): String {
+    val resource = knownModelDescriptions[description] ?: return description
+    return stringResource(resource)
+}
+
+@Composable
+private fun localizedModelSubtitle(model: ModelInfo): String {
+    val harness = model.agentRuntimeKind.titleDisplayLabel
+    return when (model.entryKind) {
+        ModelEntryKind.MODE -> stringResource(R.string.model_harness_mode, harness)
+        ModelEntryKind.PLUGIN_MODE -> stringResource(R.string.model_harness_plugin_mode, harness)
+        else -> {
+            val provider = model.providerLabel ?: model.providerId
+            if (provider.isNullOrEmpty()) harness else "$harness · $provider"
+        }
+    }
+}
+
+@Composable
 private fun PickerSectionHeader(title: String) {
     Text(
-        text = title,
+        text = localizedPickerTitle(title),
         color = LitterTheme.textSecondary,
         fontSize = LitterTextStyle.footnote.scaled,
         fontWeight = FontWeight.Medium,
@@ -927,7 +971,7 @@ private fun PickerModelRow(
                 )
                 if (model.isDefault) {
                     Text(
-                        text = "Default",
+                        text = stringResource(R.string.model_default),
                         color = LitterTheme.textSecondary,
                         fontSize = LitterTextStyle.caption2.scaled,
                         fontWeight = FontWeight.Medium,
@@ -940,7 +984,7 @@ private fun PickerModelRow(
             }
             if (!subtitle.isNullOrBlank()) {
                 Text(
-                    text = subtitle,
+                    text = localizedModelDescription(subtitle),
                     color = LitterTheme.textSecondary,
                     fontSize = LitterTextStyle.footnote.scaled,
                     maxLines = 1,
@@ -951,7 +995,7 @@ private fun PickerModelRow(
         if (selected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(R.string.model_selected),
                 tint = LitterTheme.accent,
                 modifier = Modifier.size(18.dp),
             )
@@ -983,7 +1027,7 @@ private fun PickerHarnessRow(
                 maxLines = 1,
             )
             Text(
-                text = harness.summary,
+                text = localizedHarnessSummary(harness),
                 color = LitterTheme.textSecondary,
                 fontSize = LitterTextStyle.footnote.scaled,
                 maxLines = 1,
@@ -993,7 +1037,7 @@ private fun PickerHarnessRow(
         if (isCurrent) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Current harness",
+                contentDescription = stringResource(R.string.model_current_harness),
                 tint = LitterTheme.accent,
                 modifier = Modifier.size(16.dp),
             )
@@ -1069,6 +1113,14 @@ private fun PickerSwitchRow(
 }
 
 // endregion
+
+internal fun sessionPermissionChoice(preset: AppThreadPermissionPreset?): SessionPermissionChoice? =
+    when (preset) {
+        AppThreadPermissionPreset.READ_ONLY -> SessionPermissionChoice.READ_ONLY
+        AppThreadPermissionPreset.SUPERVISED -> SessionPermissionChoice.AUTO
+        AppThreadPermissionPreset.FULL_ACCESS -> SessionPermissionChoice.FULL_ACCESS
+        AppThreadPermissionPreset.CUSTOM, AppThreadPermissionPreset.UNKNOWN, null -> null
+    }
 
 internal fun effortLabel(value: ReasoningEffort): String =
     uniffi.codex_mobile_client.reasoningEffortWireValue(value)

@@ -79,6 +79,8 @@ import com.litter.android.ui.LitterTheme
 import com.litter.android.ui.scaled
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
+import com.litter.android.ui.conversation.HeaderOverrides
+import uniffi.codex_mobile_client.AppModeKind
 import uniffi.codex_mobile_client.AppProject
 import uniffi.codex_mobile_client.AuthStatusRequest
 import uniffi.codex_mobile_client.ReasoningEffort
@@ -223,6 +225,9 @@ fun HomeComposerBar(
                             serverIsLocal = serverIsLocal,
                         ),
                     )
+                    if (HeaderOverrides.pendingPlanMode) {
+                        appModel.store.setThreadCollaborationMode(threadKey, AppModeKind.PLAN)
+                    }
                     com.litter.android.ui.RecentDirectoryStore(context)
                         .record(currentProject.serverId, currentProject.cwd)
                     val payload = AppComposerPayload(

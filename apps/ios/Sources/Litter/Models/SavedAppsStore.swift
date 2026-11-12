@@ -8,7 +8,7 @@ extension SavedApp: Identifiable {}
 
 /// Lightweight shared navigation signal that various surfaces emit and
 /// the root navigation observes. `pendingOpenAppId` opens a saved-app
-/// detail; `pendingConversationThreadId` pops back and pushes the origin
+/// detail; `pendingConversationThread` pops back and pushes the origin
 /// conversation (used by the "View Conversation" button on the detail view).
 @MainActor
 @Observable
@@ -16,7 +16,7 @@ final class SavedAppsNavigation {
     static let shared = SavedAppsNavigation()
 
     private(set) var pendingOpenAppId: String?
-    private(set) var pendingConversationThreadId: String?
+    private(set) var pendingConversationThread: ThreadKey?
 
     private init() {}
 
@@ -30,13 +30,13 @@ final class SavedAppsNavigation {
         return id
     }
 
-    func requestConversation(threadId: String) {
-        pendingConversationThreadId = threadId
+    func requestConversation(key: ThreadKey) {
+        pendingConversationThread = key
     }
 
-    func consumeConversationRequest() -> String? {
-        let id = pendingConversationThreadId
-        pendingConversationThreadId = nil
+    func consumeConversationRequest() -> ThreadKey? {
+        let id = pendingConversationThread
+        pendingConversationThread = nil
         return id
     }
 }
@@ -80,16 +80,13 @@ final class SavedAppsStore {
         apps.first(where: { $0.id == id })
     }
 
-    /// Slug → SavedApp resolution within the given origin thread. If `threadId`
-    /// is nil, falls back to any app matching the slug (for legacy widgets
-    /// surfaced without a known origin).
-    func app(slug: String, threadId: String?) -> SavedApp? {
-        if let threadId {
-            if let match = apps.first(where: { $0.appId == slug && $0.originThreadId == threadId }) {
-                return match
-            }
-        }
-        return apps.first(where: { $0.appId == slug })
+    /// Resolve the chip within the originating server and thread. Older
+    /// records without server provenance remain readable as a fallback.
+    func app(slug: String, threadId: String?, serverId: String?) -> SavedApp? {
+        guard let threadId else { return nil }
+        let matches = apps.filter { $0.appId == slug && $0.originThreadId == threadId }
+        return matches.first { $0.originServerId == serverId }
+            ?? matches.first { $0.originServerId == nil }
     }
 
     func getWithPayload(id: String) -> SavedAppWithPayload? {
@@ -185,14 +182,8 @@ final class SavedAppsStore {
         }
     }
 
-    /// Ask the shared Rust client to regenerate this saved app's HTML using
-    /// the active server. Rust internally inherits the origin thread's
-    /// model / reasoning settings when that thread is still known to the
-    /// store. When those settings are missing, Rust falls back to
-    /// gpt-5.3-codex-spark, low reasoning, and fast service tier. It also
-    /// forces full-access permissions for the edit. Returns the refreshed
-    /// `SavedApp` metadata on success; throws
-    /// `UpdateError.rustError` on failure.
+    /// Send the HTML to a connected Codex host and save the returned HTML
+    /// locally. Rust preserves the app's persisted state and metadata.
     func requestUpdate(id: String, serverId: String, prompt: String) async throws -> SavedApp {
         let result = await AppModel.shared.client.updateSavedApp(
             serverId: serverId,

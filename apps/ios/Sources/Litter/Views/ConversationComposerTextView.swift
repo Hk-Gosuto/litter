@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum SkillMentionTokens {
     static let namePattern = "[A-Za-z0-9_-]+"
@@ -130,6 +131,7 @@ struct ConversationComposerTextView: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.onPasteImage = onPasteImage
         textView.onHardwareSubmit = onHardwareSubmit
+        textView.installComposerImageDrop()
         textView.accessibilityIdentifier = "conversation.composerTextView"
         textView.text = text
         context.coordinator.textReconciler = ComposerTextReconciler(initialText: text)
@@ -430,9 +432,73 @@ struct ComposerTextReconciler {
     }
 }
 
-final class PasteAwareComposerUITextView: UITextView {
+final class PasteAwareComposerUITextView: UITextView, UIDropInteractionDelegate {
     var onPasteImage: ((UIImage) -> Void)?
     var onHardwareSubmit: (() -> Void)?
+    private var imageDropInstalled = false
+
+    private static let imageTypeIdentifiers = [
+        UTType.png.identifier,
+        UTType.jpeg.identifier,
+        UTType.heic.identifier,
+        UTType.gif.identifier,
+        UTType.image.identifier,
+    ]
+
+    /// Screenshot drags offer `public.png` / `public.image`, which the text
+    /// view's built-in text drop and the composer's `Data` destination both
+    /// miss. This interaction accepts the image and routes it through the
+    /// same attachment path as paste.
+    func installComposerImageDrop() {
+        guard !imageDropInstalled else { return }
+        imageDropInstalled = true
+        addInteraction(UIDropInteraction(delegate: self))
+    }
+
+    func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+        session.canLoadObjects(ofClass: UIImage.self)
+            || session.hasItemsConforming(toTypeIdentifiers: Self.imageTypeIdentifiers)
+    }
+
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+        UIDropProposal(operation: dropInteraction(interaction, canHandle: session) ? .copy : .cancel)
+    }
+
+    func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+        for item in session.items {
+            receiveDroppedImage(from: item.itemProvider)
+        }
+    }
+
+    func receiveDroppedImage(from provider: NSItemProvider) {
+        if provider.canLoadObject(ofClass: UIImage.self) {
+            provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                DispatchQueue.main.async {
+                    if let image = object as? UIImage {
+                        self?.onPasteImage?(image)
+                    } else {
+                        // Some screenshot providers advertise UIImage but
+                        // only supply encoded image data successfully.
+                        self?.receiveDroppedImageData(from: provider)
+                    }
+                }
+            }
+        } else {
+            receiveDroppedImageData(from: provider)
+        }
+    }
+
+    private func receiveDroppedImageData(from provider: NSItemProvider) {
+        guard let type = Self.imageTypeIdentifiers.first(where: provider.hasItemConformingToTypeIdentifier) else {
+            return
+        }
+        provider.loadDataRepresentation(forTypeIdentifier: type) { [weak self] data, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                self?.onPasteImage?(image)
+            }
+        }
+    }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)), UIPasteboard.general.hasImages {
@@ -461,6 +527,39 @@ final class PasteAwareComposerUITextView: UITextView {
     @objc private func handleHardwareSubmit(_ sender: UIKeyCommand) {
         onHardwareSubmit?()
     }
+}
+
+struct ComposerDroppedImage: Transferable {
+    let image: UIImage
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .png) { data in
+            try decode(data)
+        }
+        DataRepresentation(importedContentType: .jpeg) { data in
+            try decode(data)
+        }
+        DataRepresentation(importedContentType: .heic) { data in
+            try decode(data)
+        }
+        DataRepresentation(importedContentType: .gif) { data in
+            try decode(data)
+        }
+        DataRepresentation(importedContentType: .image) { data in
+            try decode(data)
+        }
+    }
+
+    private static func decode(_ data: Data) throws -> Self {
+        guard let image = UIImage(data: data) else {
+            throw ComposerImageDropError.undecodable
+        }
+        return Self(image: image)
+    }
+}
+
+private enum ComposerImageDropError: Error {
+    case undecodable
 }
 
 func composerInsertionText(_ insertion: String, in text: NSString, replacing range: NSRange) -> String {

@@ -63,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.sigkitten.litter.android.R
+import com.litter.android.state.SavedAppsDirectory
 import com.litter.android.state.SavedAppsStore
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
@@ -331,15 +332,7 @@ private fun resolveServerId(
     appModel: com.litter.android.state.AppModel,
     app: SavedApp,
 ): String? {
-    val snapshot = appModel.snapshot.value ?: return null
-    val servers = snapshot.servers
-    val origin = app.originThreadId?.let { threadId ->
-        snapshot.sessionSummaries.firstOrNull { it.key.threadId == threadId }?.key?.serverId
-    }
-    if (origin != null && servers.any { it.serverId == origin }) return origin
-    return snapshot.activeThread?.serverId
-        ?: servers.firstOrNull { it.isLocal }?.serverId
-        ?: servers.firstOrNull()?.serverId
+    return appModel.client.savedAppServerId(SavedAppsDirectory.path(appModel.appContext), app.id)
 }
 
 /**
@@ -353,7 +346,9 @@ private fun resolveOriginThreadKey(
 ): uniffi.codex_mobile_client.ThreadKey? {
     val threadId = app.originThreadId ?: return null
     val snapshot = appModel.snapshot.value ?: return null
-    return snapshot.sessionSummaries.firstOrNull { it.key.threadId == threadId }?.key
+    return snapshot.sessionSummaries.filter {
+        it.key.threadId == threadId && (app.originServerId == null || it.key.serverId == app.originServerId)
+    }.singleOrNull()?.key
 }
 
 @Composable
@@ -457,6 +452,7 @@ private fun AppModeWebView(
     // different saved app or leaves and re-enters the view. Deliberately NOT
     // rememberSaveable — ephemeral thread ids must not survive process death.
     val cachedStructuredThreadId = remember(appId) { mutableStateOf<String?>(null) }
+    val cachedStructuredServerId = remember(appId) { mutableStateOf<String?>(null) }
     val webViewRef = remember(appId) { mutableStateOf<WebView?>(null) }
 
     val savedBridge = remember(appId) {
@@ -469,12 +465,12 @@ private fun AppModeWebView(
                     rejectStructuredResponse(
                         webViewRef.value,
                         requestId,
-                        "No connected server available",
+                        context.getString(R.string.apps_no_connected_server),
                     )
                     return@SavedAppBridge
                 }
                 scope.launch {
-                    val cached = cachedStructuredThreadId.value
+                    val cached = cachedStructuredThreadId.value.takeIf { cachedStructuredServerId.value == serverId }
                     val result = try {
                         appModel.client.structuredResponse(
                             serverId = serverId,
@@ -493,6 +489,7 @@ private fun AppModeWebView(
                     when (result) {
                         is uniffi.codex_mobile_client.StructuredResponseResult.Success -> {
                             cachedStructuredThreadId.value = result.threadId
+                            cachedStructuredServerId.value = serverId
                             resolveStructuredResponse(
                                 webViewRef.value,
                                 requestId,

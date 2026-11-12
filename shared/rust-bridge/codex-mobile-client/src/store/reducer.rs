@@ -51,6 +51,9 @@ const USER_INPUT_NOTE_PREFIX: &str = "user_note: ";
 const USER_INPUT_OTHER_OPTION_LABEL: &str = "None of the above";
 const LOCAL_USER_MESSAGE_ITEM_PREFIX: &str = "local-user-message:";
 
+#[path = "async_questions.rs"]
+mod async_questions;
+
 /// Bytes of the serialized item head that are fed to the hasher verbatim.
 const FINGERPRINT_HEAD_BYTES: usize = 4096;
 /// Bytes of the serialized item tail that are fed to the hasher verbatim.
@@ -450,6 +453,9 @@ impl AppStoreReducer {
             snapshot
                 .pending_user_inputs
                 .retain(|request| request.server_id != server_id);
+            snapshot
+                .resolved_async_questions
+                .retain(|key, _| key.server_id != server_id);
             snapshot
                 .pending_user_input_seeds
                 .retain(|key, _| key.server_id != server_id);
@@ -910,6 +916,7 @@ impl AppStoreReducer {
             self.merge_thread_snapshot_locked(&mut snapshot, thread);
         }
         self.emit_thread_upsert(&key);
+        self.reconcile_async_questions(&key);
         true
     }
 
@@ -1121,18 +1128,28 @@ impl AppStoreReducer {
         }
     }
 
-    pub(crate) fn remove_local_overlay_item(&self, key: &ThreadKey, item_id: &str) {
-        if self
-            .mutate_thread_with_result(key, |thread| {
-                let before = thread.local_overlay_items.len();
-                thread.local_overlay_items.retain(|item| item.id != item_id);
-                (before != thread.local_overlay_items.len()).then_some(())
-            })
-            .flatten()
-            .is_some()
-        {
+    /// Roll back a failed send only if no server event has confirmed it.
+    /// Returns true when the overlay was bound to a turn or replaced by its
+    /// server echo. A lost RPC response must not erase an accepted message.
+    pub(crate) fn rollback_unconfirmed_local_user_message_overlay(
+        &self,
+        key: &ThreadKey,
+        item_id: &str,
+    ) -> bool {
+        let result = self.mutate_thread_with_result(key, |thread| {
+            let Some(item) = thread.local_overlay_items.get_by_id(item_id) else {
+                return (true, false);
+            };
+            if item.source_turn_id.is_some() {
+                return (true, false);
+            }
+            thread.local_overlay_items.retain(|item| item.id != item_id);
+            (false, true)
+        });
+        if result.is_some_and(|(_, removed)| removed) {
             self.emit_thread_upsert(key);
         }
+        result.is_some_and(|(confirmed, _)| confirmed)
     }
 
     pub fn set_thread_collaboration_mode(&self, key: &ThreadKey, mode: AppModeKind) {
@@ -1236,6 +1253,7 @@ impl AppStoreReducer {
         {
             let mut snapshot = self.write_snapshot();
             snapshot.threads.remove(key);
+            snapshot.resolved_async_questions.remove(key);
             if snapshot.active_thread.as_ref() == Some(key) {
                 snapshot.active_thread = None;
             }
@@ -1379,6 +1397,40 @@ impl AppStoreReducer {
             snapshot.pending_approvals.clone()
         };
         self.emit(AppStoreUpdateRecord::PendingApprovalsChanged { approvals });
+    }
+
+    /// Session replacement discards its event reader, so invalidate the old
+    /// connection's blocking requests directly. Async questions are thread-owned.
+    pub(crate) fn invalidate_connection_requests(&self, server_id: &str) {
+        let (approvals, requests) = {
+            let mut snapshot = self.write_snapshot();
+            let approvals_before = snapshot.pending_approvals.len();
+            let requests_before = snapshot.pending_user_inputs.len();
+            snapshot
+                .pending_approvals
+                .retain(|a| a.server_id != server_id);
+            snapshot
+                .pending_approval_seeds
+                .retain(|key, _| key.server_id != server_id);
+            snapshot
+                .pending_user_inputs
+                .retain(|r| r.server_id != server_id || r.is_async);
+            snapshot
+                .pending_user_input_seeds
+                .retain(|key, _| key.server_id != server_id);
+            (
+                (snapshot.pending_approvals.len() != approvals_before)
+                    .then(|| snapshot.pending_approvals.clone()),
+                (snapshot.pending_user_inputs.len() != requests_before)
+                    .then(|| snapshot.pending_user_inputs.clone()),
+            )
+        };
+        if let Some(approvals) = approvals {
+            self.emit(AppStoreUpdateRecord::PendingApprovalsChanged { approvals });
+        }
+        if let Some(requests) = requests {
+            self.emit(AppStoreUpdateRecord::PendingUserInputsChanged { requests });
+        }
     }
 
     pub(crate) fn pending_approval_seed(
@@ -2788,6 +2840,7 @@ impl AppStoreReducer {
     }
 
     fn apply_item_update(&self, key: &ThreadKey, item: HydratedConversationItem) {
+        self.apply_async_question_item(key, &item, true);
         let result = self.mutate_thread_with_result(key, |thread| {
             let existing = thread.items.get_by_id(&item.id).cloned();
             let item = merge_reasoning_item_with_existing(existing.as_ref(), item);
@@ -3205,6 +3258,7 @@ fn append_assistant_delta(thread: &mut ThreadSnapshot, item_id: &str, delta: &st
         thread.items.push(HydratedConversationItem {
             id: item_id.to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: String::new(),
                 agent_nickname: None,
                 agent_role: None,
@@ -3485,27 +3539,19 @@ const USER_INPUT_RESPONSE_ITEM_PREFIX: &str = "user-input-response:";
 fn local_user_message_overlay_item(
     inputs: &[upstream::UserInput],
 ) -> Option<HydratedConversationItem> {
-    let (text, image_data_uris) = crate::conversation::render_user_input(inputs);
-    if text.is_empty() && image_data_uris.is_empty() {
-        return None;
-    }
-
-    Some(HydratedConversationItem {
-        id: format!(
-            "{LOCAL_USER_MESSAGE_ITEM_PREFIX}{}",
-            crate::next_request_id()
-        ),
-        content: HydratedConversationItemContent::User(
-            crate::conversation_uniffi::HydratedUserMessageData {
-                text,
-                image_data_uris,
-            },
-        ),
-        source_turn_id: None,
-        source_turn_index: None,
-        timestamp: None,
-        is_from_user_turn_boundary: true,
-    })
+    crate::conversation::hydrate_thread_item(
+        &upstream::ThreadItem::UserMessage {
+            id: format!(
+                "{LOCAL_USER_MESSAGE_ITEM_PREFIX}{}",
+                crate::next_request_id()
+            ),
+            client_id: None,
+            content: inputs.to_vec(),
+        },
+        None,
+        None,
+        &Default::default(),
+    )
 }
 
 fn preserve_local_overlay_items(source: &ThreadSnapshot, target: &mut ThreadSnapshot) {
@@ -3648,6 +3694,16 @@ fn preserve_thread_runtime_state(source: &ThreadSnapshot, target: &mut ThreadSna
     if target.pending_plan_implementation_turn_id.is_none() {
         target.pending_plan_implementation_turn_id =
             source.pending_plan_implementation_turn_id.clone();
+    }
+    // `thread/read` and `thread/list` omit approval and sandbox. A missing
+    // value means the response did not report a policy, so keep the one
+    // learned from resume or an earlier turn. An explicit incoming policy
+    // still replaces it.
+    if target.effective_approval_policy.is_none() {
+        target.effective_approval_policy = source.effective_approval_policy.clone();
+    }
+    if target.effective_sandbox_policy.is_none() {
+        target.effective_sandbox_policy = source.effective_sandbox_policy.clone();
     }
 }
 
@@ -3798,16 +3854,50 @@ fn is_duplicate_overlay_item(
     }
 }
 
+/// Same composer send, not merely the same text.
+///
+/// Hydration walks every historical user item. Matching on text alone drops
+/// a new "ok" / "continue" overlay when an older turn used that text, while
+/// assistant deltas for the new turn keep streaming.
+fn turns_identify_same_send(
+    local_turn_id: Option<&str>,
+    existing_turn_id: Option<&str>,
+    active_turn_id: Option<&str>,
+) -> bool {
+    match (local_turn_id, existing_turn_id) {
+        (Some(local_turn), Some(existing_turn)) => local_turn == existing_turn,
+        // An unbound overlay is the in-flight send. Only the active turn's
+        // echo may replace it.
+        (None, Some(existing_turn)) => active_turn_id == Some(existing_turn),
+        // Live item events often omit the turn id. They belong to this send
+        // only while that turn is the active one.
+        (Some(local_turn), None) => active_turn_id == Some(local_turn),
+        (None, None) => true,
+    }
+}
+
 fn is_superseded_overlay_item(
     local: &HydratedConversationItem,
     existing: &HydratedConversationItem,
-    _active_turn_id: Option<&str>,
+    active_turn_id: Option<&str>,
 ) -> bool {
     if is_duplicate_overlay_item(local, existing) {
         return true;
     }
 
     match (&local.content, &existing.content) {
+        (
+            HydratedConversationItemContent::UserInputResponse(local_data),
+            HydratedConversationItemContent::UserInputResponse(existing_data),
+        ) => {
+            local.id.starts_with(LOCAL_USER_MESSAGE_ITEM_PREFIX)
+                && local_data == existing_data
+                && turns_identify_same_send(
+                    local.source_turn_id.as_deref(),
+                    existing.source_turn_id.as_deref(),
+                    active_turn_id,
+                )
+        }
         (
             HydratedConversationItemContent::User(local_data),
             HydratedConversationItemContent::User(existing_data),
@@ -3816,6 +3906,11 @@ fn is_superseded_overlay_item(
                 && local.is_from_user_turn_boundary
                 && existing.is_from_user_turn_boundary
                 && local_data == existing_data
+                && turns_identify_same_send(
+                    local.source_turn_id.as_deref(),
+                    existing.source_turn_id.as_deref(),
+                    active_turn_id,
+                )
         }
         _ => false,
     }
@@ -3970,6 +4065,7 @@ mod tests {
         HydratedConversationItem {
             id: id.to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: text.to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -4087,6 +4183,7 @@ mod tests {
             let item = thread.items.get_mut_by_id("a-1").expect("item a-1");
             item.content =
                 HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                    async_questions: None,
                     text: "edited".to_string(),
                     agent_nickname: None,
                     agent_role: None,
@@ -4607,7 +4704,8 @@ mod tests {
         // A live thread shadows its cached row instead of duplicating it.
         let kept = make_thread_info("kept");
         reducer.upsert_thread_list_page("srv", std::slice::from_ref(&kept));
-        let summaries = crate::store::boundary::session_summaries_from_snapshot(&reducer.snapshot());
+        let summaries =
+            crate::store::boundary::session_summaries_from_snapshot(&reducer.snapshot());
         assert_eq!(
             summaries
                 .iter()
@@ -5061,6 +5159,7 @@ mod tests {
         thread.items.push(HydratedConversationItem {
             id: "call-1".to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: "wrong".to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -5211,6 +5310,7 @@ mod tests {
         reducer
             .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
         reducer.replace_pending_user_inputs(vec![PendingUserInputRequest {
+            is_async: false,
             id: "req-1".to_string(),
             server_id: key.server_id.clone(),
             thread_id: key.thread_id.clone(),
@@ -5259,6 +5359,7 @@ mod tests {
     fn replacing_identical_pending_user_inputs_is_silent() {
         let reducer = AppStoreReducer::new();
         let request = PendingUserInputRequest {
+            is_async: false,
             id: "req-1".to_string(),
             server_id: "srv".to_string(),
             thread_id: "thread".to_string(),
@@ -5331,6 +5432,7 @@ mod tests {
         reducer
             .upsert_thread_snapshot(ThreadSnapshot::from_info("srv", make_thread_info("thread")));
         reducer.replace_pending_user_inputs(vec![PendingUserInputRequest {
+            is_async: false,
             id: "req-1".to_string(),
             server_id: key.server_id.clone(),
             thread_id: key.thread_id.clone(),
@@ -5600,6 +5702,12 @@ mod tests {
                 }],
             )
             .expect("overlay id");
+        // The unbound overlay is the in-flight send. It is superseded only
+        // once that send's turn is the active one.
+        reducer.apply_ui_event(&UiEvent::TurnStarted {
+            key: key.clone(),
+            turn_id: "turn-1".to_string(),
+        });
 
         reducer.apply_item_update(
             &key,
@@ -5915,6 +6023,7 @@ mod tests {
         replay.items.push(item(
             "final",
             HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: "![image](/tmp/image.png)".to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -6012,6 +6121,8 @@ mod tests {
             .expect("overlay staged");
 
         let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        incoming.active_turn_id = Some("turn-1".to_string());
+        incoming.info.status = ThreadSummaryStatus::Active;
         incoming
             .items
             .push(crate::conversation_uniffi::HydratedConversationItem {
@@ -6033,6 +6144,145 @@ mod tests {
         assert!(thread.local_overlay_items.is_empty());
         assert_eq!(thread.items.len(), 1);
         assert_eq!(thread.items[0].id, "server-user-item");
+    }
+
+    #[test]
+    fn older_identical_user_text_does_not_drop_overlay_for_a_different_active_turn() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        let mut existing = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        existing.items.push(HydratedConversationItem {
+            id: "old-user".to_string(),
+            content: HydratedConversationItemContent::User(HydratedUserMessageData {
+                text: "continue".to_string(),
+                image_data_uris: Vec::new(),
+            }),
+            source_turn_id: Some("turn-1".to_string()),
+            source_turn_index: None,
+            timestamp: None,
+            is_from_user_turn_boundary: true,
+        });
+        reducer.upsert_thread_snapshot(existing);
+
+        reducer
+            .stage_local_user_message_overlay(
+                &key,
+                &[upstream::UserInput::Text {
+                    text: "continue".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .expect("overlay");
+        reducer.apply_ui_event(&UiEvent::TurnStarted {
+            key: key.clone(),
+            turn_id: "turn-2".to_string(),
+        });
+
+        let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        incoming.active_turn_id = Some("turn-2".to_string());
+        incoming.info.status = ThreadSummaryStatus::Active;
+        incoming.items.push(HydratedConversationItem {
+            id: "old-user".to_string(),
+            content: HydratedConversationItemContent::User(HydratedUserMessageData {
+                text: "continue".to_string(),
+                image_data_uris: Vec::new(),
+            }),
+            source_turn_id: Some("turn-1".to_string()),
+            source_turn_index: None,
+            timestamp: None,
+            is_from_user_turn_boundary: true,
+        });
+        incoming.items.push(HydratedConversationItem {
+            id: "assistant-2".to_string(),
+            content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
+                text: "working".to_string(),
+                agent_nickname: None,
+                agent_role: None,
+                phase: None,
+            }),
+            source_turn_id: Some("turn-2".to_string()),
+            source_turn_index: None,
+            timestamp: None,
+            is_from_user_turn_boundary: false,
+        });
+        reducer.upsert_thread_snapshot(incoming);
+
+        let snapshot = reducer.snapshot();
+        let thread = snapshot.threads.get(&key).expect("thread");
+        assert_eq!(
+            thread.local_overlay_items.len(),
+            1,
+            "older identical user text must not hide the in-flight send"
+        );
+        assert!(thread.items.iter().any(|item| item.id == "assistant-2"));
+        drop(snapshot);
+
+        reducer.apply_item_update(
+            &key,
+            HydratedConversationItem {
+                id: "server-user-2".to_string(),
+                content: HydratedConversationItemContent::User(HydratedUserMessageData {
+                    text: "continue".to_string(),
+                    image_data_uris: Vec::new(),
+                }),
+                source_turn_id: Some("turn-2".to_string()),
+                source_turn_index: None,
+                timestamp: None,
+                is_from_user_turn_boundary: true,
+            },
+        );
+        let snapshot = reducer.snapshot();
+        let thread = snapshot.threads.get(&key).expect("thread");
+        assert!(thread.local_overlay_items.is_empty());
+        assert!(thread.items.iter().any(|item| item.id == "server-user-2"));
+    }
+
+    #[test]
+    fn upsert_keeps_effective_permissions_when_incoming_snapshot_omits_them() {
+        let reducer = AppStoreReducer::new();
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread".to_string(),
+        };
+        let mut existing = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        existing.effective_approval_policy = Some(crate::types::AppAskForApproval::Never);
+        existing.effective_sandbox_policy = Some(crate::types::AppSandboxPolicy::DangerFullAccess);
+        reducer.upsert_thread_snapshot(existing);
+
+        let mut incoming = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        incoming.model = Some("gpt-5".to_string());
+        reducer.upsert_thread_snapshot(incoming);
+
+        let snapshot = reducer.snapshot();
+        let thread = snapshot.threads.get(&key).expect("thread");
+        assert_eq!(
+            thread.effective_approval_policy,
+            Some(crate::types::AppAskForApproval::Never)
+        );
+        assert_eq!(
+            thread.effective_sandbox_policy,
+            Some(crate::types::AppSandboxPolicy::DangerFullAccess)
+        );
+        assert_eq!(thread.model.as_deref(), Some("gpt-5"));
+        drop(snapshot);
+
+        let mut replaced = ThreadSnapshot::from_info("srv", make_thread_info("thread"));
+        replaced.effective_approval_policy = Some(crate::types::AppAskForApproval::OnRequest);
+        reducer.upsert_thread_snapshot(replaced);
+        let snapshot = reducer.snapshot();
+        let thread = snapshot.threads.get(&key).expect("thread");
+        assert_eq!(
+            thread.effective_approval_policy,
+            Some(crate::types::AppAskForApproval::OnRequest)
+        );
+        assert_eq!(
+            thread.effective_sandbox_policy,
+            Some(crate::types::AppSandboxPolicy::DangerFullAccess)
+        );
     }
 
     #[test]
@@ -6249,6 +6499,7 @@ mod tests {
             .push(crate::conversation_uniffi::HydratedConversationItem {
                 id: "assistant-1".to_string(),
                 content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                    async_questions: None,
                     text: "response".to_string(),
                     agent_nickname: None,
                     agent_role: None,
@@ -6434,6 +6685,7 @@ mod tests {
             HydratedConversationItem {
                 id: "assistant-1".to_string(),
                 content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                    async_questions: None,
                     text: "old".to_string(),
                     agent_nickname: None,
                     agent_role: None,
@@ -6466,6 +6718,7 @@ mod tests {
             HydratedConversationItem {
                 id: "assistant-1".to_string(),
                 content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                    async_questions: None,
                     text: "new".to_string(),
                     agent_nickname: None,
                     agent_role: None,
@@ -6504,6 +6757,7 @@ mod tests {
         existing.items = vec![HydratedConversationItem {
             id: "assistant-old".to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: "old".to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -6521,6 +6775,7 @@ mod tests {
         incoming.items = vec![HydratedConversationItem {
             id: "assistant-new".to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: "new".to_string(),
                 agent_nickname: None,
                 agent_role: None,

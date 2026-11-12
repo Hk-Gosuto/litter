@@ -41,8 +41,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -50,9 +52,13 @@ import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PrivacyTip
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -70,6 +76,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -111,13 +118,20 @@ import com.litter.android.ui.LocalAppModel
 import com.litter.android.ui.BerkeleyMono
 import com.litter.android.ui.LitterTextStyle
 import com.litter.android.ui.LitterTheme
+import com.litter.android.ui.common.SessionPermissionChoice
 import com.litter.android.ui.common.hasFixedFullAccess
 import com.litter.android.ui.common.matchesModelSelection
 import com.litter.android.ui.common.modelPickerDisplayName
+import com.litter.android.ui.common.sessionPermissionChoice
+import com.litter.android.ui.common.supportsThreadPermissionOverrides
 import com.litter.android.ui.scaled
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
+import uniffi.codex_mobile_client.AppAskForApproval
+import uniffi.codex_mobile_client.AppSandboxPolicy
+import uniffi.codex_mobile_client.AppThreadPermissionPreset
 import uniffi.codex_mobile_client.ThreadKey
+import uniffi.codex_mobile_client.threadPermissionPreset
 import uniffi.codex_mobile_client.AppInterruptTurnRequest
 import uniffi.codex_mobile_client.AppQueuedFollowUpKind
 import uniffi.codex_mobile_client.AppQueuedFollowUpPreview
@@ -195,6 +209,16 @@ fun ComposerBar(
                 ?.firstOrNull { it.key == threadKey }
                 ?.agentRuntimeKind
                 ?.hasFixedFullAccess == true
+        }
+    }
+    val permissionMenuState by remember(threadKey) {
+        derivedStateOf {
+            val thread = appSnapshot?.threads?.firstOrNull { it.key == threadKey }
+            ComposerPermissionMenuState(
+                approval = thread?.effectiveApprovalPolicy,
+                sandbox = thread?.effectiveSandboxPolicy,
+                supported = thread?.agentRuntimeKind?.supportsThreadPermissionOverrides ?: true,
+            )
         }
     }
     val context = LocalContext.current
@@ -307,9 +331,14 @@ fun ComposerBar(
     }
 
     // Pending user input answers
-    var userInputAnswers by remember { mutableStateOf(mapOf<String, String>()) }
+    val userInputDrafts by appModel.userInputDrafts.collectAsState()
+    val userInputAnswers = pendingUserInput?.let { userInputDrafts[it.id] }.orEmpty()
     var pendingUserInputSubmitError by remember(pendingUserInput?.id) { mutableStateOf<String?>(null) }
     var isSubmittingPendingUserInput by remember(pendingUserInput?.id) { mutableStateOf(false) }
+    val canSubmitPendingUserInput = pendingUserInput?.questions?.all { question ->
+        !userInputAnswers[question.id].orEmpty().isBlank() ||
+            (pendingUserInput?.isAsync == true && question.options.isNotEmpty())
+    } == true
 
     suspend fun handleGoalCommand(args: String?) {
         val raw = args?.trim().orEmpty()
@@ -766,7 +795,10 @@ fun ComposerBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(R.string.conversation_input_required),
+                        text = stringResource(
+                            if (pendingUserInput.isAsync) R.string.conversation_question
+                            else R.string.conversation_input_required,
+                        ),
                         color = LitterTheme.textPrimary,
                         fontSize = LitterTextStyle.caption.scaled,
                         fontWeight = FontWeight.SemiBold,
@@ -799,7 +831,8 @@ fun ComposerBar(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             for (option in question.options) {
-                                val selected = userInputAnswers[question.id] == option.label
+                                val selected = (userInputAnswers[question.id]
+                                    ?: question.options.firstOrNull()?.label.takeIf { pendingUserInput.isAsync }) == option.label
                                 Text(
                                     text = option.label,
                                     color = if (selected) Color.Black else LitterTheme.textPrimary,
@@ -810,18 +843,19 @@ fun ComposerBar(
                                             if (selected) LitterTheme.accent else LitterTheme.surface,
                                             RoundedCornerShape(12.dp),
                                         )
-                                        .clickable { userInputAnswers = userInputAnswers + (question.id to option.label) }
+                                        .clickable { appModel.setUserInputAnswer(pendingUserInput.id, question.id, option.label) }
                                         .padding(horizontal = 10.dp, vertical = 4.dp),
                                 )
                             }
                         }
-                    } else {
-                        var answer by remember { mutableStateOf("") }
+                    }
+                    if (question.isOtherAllowed || question.options.isEmpty()) {
+                        val answer = userInputAnswers[question.id].orEmpty()
+                            .takeUnless { text -> question.options.any { it.label == text } }.orEmpty()
                         BasicTextField(
                             value = answer,
                             onValueChange = {
-                                answer = it
-                                userInputAnswers = userInputAnswers + (question.id to it)
+                                appModel.setUserInputAnswer(pendingUserInput.id, question.id, it)
                             },
                             textStyle = TextStyle(color = LitterTheme.textPrimary, fontSize = LitterTextStyle.footnote.scaled),
                             cursorBrush = SolidColor(LitterTheme.accent),
@@ -839,17 +873,39 @@ fun ComposerBar(
                         fontSize = LitterTextStyle.caption.scaled,
                     )
                 }
+                if (pendingUserInput.isAsync) {
+                    Text(
+                        text = stringResource(R.string.conversation_skip_question),
+                        color = LitterTheme.textSecondary,
+                        fontSize = LitterTextStyle.caption.scaled,
+                        modifier = Modifier.clickable(enabled = !isSubmittingPendingUserInput) {
+                            scope.launch {
+                                isSubmittingPendingUserInput = true
+                                try {
+                                    appModel.store.respondToUserInput(pendingUserInput.id, emptyList())
+                                    appModel.clearUserInputDraft(pendingUserInput.id)
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Exception) {
+                                    pendingUserInputSubmitError = responseSubmissionErrorMessage(error)
+                                } finally {
+                                    isSubmittingPendingUserInput = false
+                                }
+                            }
+                        }.padding(vertical = 6.dp),
+                    )
+                }
                 Text(
                     text = stringResource(R.string.common_submit),
-                    color = if (isSubmittingPendingUserInput) LitterTheme.textMuted else Color.Black,
+                    color = if (isSubmittingPendingUserInput || !canSubmitPendingUserInput) LitterTheme.textMuted else Color.Black,
                     fontSize = LitterTextStyle.code.scaled,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .background(
-                            if (isSubmittingPendingUserInput) LitterTheme.surface else LitterTheme.accent,
+                            if (isSubmittingPendingUserInput || !canSubmitPendingUserInput) LitterTheme.surface else LitterTheme.accent,
                             RoundedCornerShape(8.dp),
                         )
-                        .clickable(enabled = !isSubmittingPendingUserInput) {
+                        .clickable(enabled = !isSubmittingPendingUserInput && canSubmitPendingUserInput) {
                             scope.launch {
                                 isSubmittingPendingUserInput = true
                                 pendingUserInputSubmitError = null
@@ -857,11 +913,12 @@ fun ComposerBar(
                                     val answers = pendingUserInput.questions.map { q ->
                                         PendingUserInputAnswer(
                                             questionId = q.id,
-                                            answers = listOfNotNull(userInputAnswers[q.id]),
+                                            answers = listOfNotNull(userInputAnswers[q.id]
+                                                ?: q.options.firstOrNull()?.label.takeIf { pendingUserInput.isAsync }),
                                         )
                                     }
                                     appModel.store.respondToUserInput(pendingUserInput.id, answers)
-                                    userInputAnswers = emptyMap()
+                                    appModel.clearUserInputDraft(pendingUserInput.id)
                                 } catch (error: CancellationException) {
                                     throw error
                                 } catch (error: Exception) {
@@ -1038,26 +1095,15 @@ fun ComposerBar(
                     Spacer(Modifier.width(6.dp))
                 }
 
-                Text(
-                    text = buildString {
-                        append(composerModelLabel)
-                        if (composerReasoningLabel.isNotBlank() && composerReasoningLabel != "default") {
-                            append("  ")
-                            append(composerReasoningLabel)
-                        }
-                        append("  ⌄")
-                    },
-                    color = LitterTheme.textPrimary,
-                    fontSize = LitterTextStyle.caption.scaled,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .widthIn(max = 176.dp)
-                        .clickable { onToggleModelSelector?.invoke() }
-                        .background(LitterTheme.surface.copy(alpha = 0.78f), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                )
+                if (!isRecording && !isTranscribing && permissionMenuState.supported) {
+                    ComposerPermissionMenu(
+                        threadKey = threadKey,
+                        effectiveApprovalPolicy = permissionMenuState.approval,
+                        effectiveSandboxPolicy = permissionMenuState.sandbox,
+                        onOpenCollaborationMode = onOpenCollaborationModePicker,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
 
                 if (showCollaborationModeChip) {
                     Spacer(Modifier.width(6.dp))
@@ -1068,6 +1114,39 @@ fun ComposerBar(
                 }
 
                 Spacer(Modifier.weight(1f))
+                Row(
+                    modifier = Modifier
+                        .widthIn(max = 190.dp)
+                        .clickable { onToggleModelSelector?.invoke() }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = buildString {
+                            append(composerModelLabel)
+                            if (composerReasoningLabel.isNotBlank() && composerReasoningLabel != "default") {
+                                append(" ")
+                                append(composerReasoningLabel)
+                            }
+                        },
+                        color = LitterTheme.textPrimary,
+                        fontSize = LitterTextStyle.footnote.scaled,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = LitterTheme.textPrimary,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                val composerCircle = Modifier
+                    .size(40.dp)
+                    .background(LitterTheme.surface.copy(alpha = 0.78f), CircleShape)
                 when {
                     isRecording -> IconButton(
                         onClick = {
@@ -1111,10 +1190,10 @@ fun ComposerBar(
                             .background(LitterTheme.accent),
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Send,
+                            Icons.Default.ArrowUpward,
                             contentDescription = stringResource(R.string.common_send),
                             tint = Color.Black,
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
 
@@ -1154,34 +1233,49 @@ fun ComposerBar(
                         val voicePhase = voiceSnapshot?.voiceSession?.phase
                         val voiceInputLevel = voiceSession?.inputLevel ?: 0f
 
-                        if (realtimeAvailable && text.isEmpty() && attachedImage == null && attachedFiles.isEmpty()) {
-                            com.litter.android.ui.voice.InlineVoiceButton(
-                                phase = voicePhase,
-                                inputLevel = voiceInputLevel,
-                                isAvailable = true,
-                                onStart = {
-                                    scope.launch { voiceController.startVoiceOnThread(appModel, threadKey) }
-                                },
-                                onStop = {
-                                    scope.launch { voiceController.stopActiveVoiceSession(appModel) }
-                                },
-                                modifier = Modifier.size(40.dp),
-                            )
-                        } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (realtimeAvailable && text.isEmpty() && attachedImage == null && attachedFiles.isEmpty()) {
+                                com.litter.android.ui.voice.InlineVoiceButton(
+                                    phase = voicePhase,
+                                    inputLevel = voiceInputLevel,
+                                    isAvailable = true,
+                                    onStart = {
+                                        scope.launch { voiceController.startVoiceOnThread(appModel, threadKey) }
+                                    },
+                                    onStop = {
+                                        scope.launch { voiceController.stopActiveVoiceSession(appModel) }
+                                    },
+                                    modifier = Modifier.size(40.dp),
+                                )
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        if (transcriptionManager.hasMicPermission(context)) {
+                                            transcriptionManager.startRecording(context)
+                                        } else {
+                                            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                        }
+                                    },
+                                    modifier = composerCircle,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Mic,
+                                        contentDescription = stringResource(R.string.conversation_voice),
+                                        tint = LitterTheme.textPrimary,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(6.dp))
                             IconButton(
-                                onClick = {
-                                    if (transcriptionManager.hasMicPermission(context)) {
-                                        transcriptionManager.startRecording(context)
-                                    } else {
-                                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                                    }
-                                },
-                                modifier = Modifier.size(40.dp),
+                                onClick = {},
+                                enabled = false,
+                                modifier = composerCircle.alpha(0.4f),
                             ) {
                                 Icon(
-                                    Icons.Default.Mic,
-                                    contentDescription = stringResource(R.string.conversation_voice),
-                                    tint = LitterTheme.textSecondary,
+                                    Icons.Default.ArrowUpward,
+                                    contentDescription = stringResource(R.string.common_send),
+                                    tint = LitterTheme.textMuted,
+                                    modifier = Modifier.size(18.dp),
                                 )
                             }
                         }
@@ -1474,6 +1568,177 @@ private fun queuedFollowUpUiStyle(kind: AppQueuedFollowUpKind): QueuedFollowUpUi
 private fun reasoningEffortFromServerValue(value: String): ReasoningEffort? =
     uniffi.codex_mobile_client.reasoningEffortFromWireValue(value)
 
+
+private data class ComposerPermissionMenuState(
+    val approval: AppAskForApproval?,
+    val sandbox: AppSandboxPolicy?,
+    val supported: Boolean,
+)
+
+/**
+ * Read only is a shield with a lock. Auto and custom are an outline shield.
+ * Full access is an outline shield with an exclamation mark.
+ */
+@Composable
+private fun ComposerPermissionIcon(
+    choice: SessionPermissionChoice?,
+    tint: Color,
+) {
+    when (choice) {
+        SessionPermissionChoice.READ_ONLY -> {
+            Box(modifier = Modifier.size(13.dp), contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Outlined.Shield,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(13.dp),
+                )
+                Icon(
+                    imageVector = Icons.Outlined.Lock,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(7.dp),
+                )
+            }
+        }
+        SessionPermissionChoice.FULL_ACCESS -> {
+            Icon(
+                imageVector = Icons.Outlined.PrivacyTip,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(13.dp),
+            )
+        }
+        SessionPermissionChoice.AUTO, null -> {
+            Icon(
+                imageVector = Icons.Outlined.Shield,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(13.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Shield + current preset on the historical-session composer. Opens the
+ * upstream menu: read only, auto, full access, then collaboration mode.
+ */
+@Composable
+private fun ComposerPermissionMenu(
+    threadKey: ThreadKey,
+    effectiveApprovalPolicy: AppAskForApproval?,
+    effectiveSandboxPolicy: AppSandboxPolicy?,
+    onOpenCollaborationMode: (() -> Unit)?,
+) {
+    val appModel = LocalAppModel.current
+    val scope = rememberCoroutineScope()
+    val launchSnapshot by appModel.launchState.snapshot.collectAsState()
+    var expanded by remember { mutableStateOf(false) }
+    val permissionsLabel = stringResource(R.string.permissions_title)
+    val approval = remember(launchSnapshot, threadKey, effectiveApprovalPolicy) {
+        appModel.launchState.approvalPolicyValue(threadKey) ?: effectiveApprovalPolicy
+    }
+    val sandbox = remember(launchSnapshot, threadKey, effectiveSandboxPolicy) {
+        appModel.launchState.turnSandboxPolicy(threadKey) ?: effectiveSandboxPolicy
+    }
+    val preset = threadPermissionPreset(approval, sandbox)
+    val selectedChoice = sessionPermissionChoice(preset)
+    val labelRes = selectedChoice?.labelRes
+        ?: if (preset == AppThreadPermissionPreset.CUSTOM) {
+            R.string.permissions_custom
+        } else {
+            R.string.permissions_auto
+        }
+    val isFullAccess = selectedChoice == SessionPermissionChoice.FULL_ACCESS
+    val tint = if (isFullAccess) LitterTheme.warning else LitterTheme.textSecondary
+
+    Box {
+        Row(
+            modifier = Modifier
+                .height(34.dp)
+                .semantics { contentDescription = permissionsLabel }
+                .clickable { expanded = true }
+                .padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ComposerPermissionIcon(choice = selectedChoice, tint = tint)
+            Text(
+                text = stringResource(labelRes),
+                color = tint,
+                fontSize = LitterTextStyle.footnote.scaled,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            SessionPermissionChoice.entries.forEach { choice ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = stringResource(choice.labelRes),
+                                color = LitterTheme.textPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = stringResource(choice.detailRes),
+                                color = LitterTheme.textMuted,
+                                fontSize = LitterTextStyle.caption.scaled,
+                            )
+                        }
+                    },
+                    trailingIcon = {
+                        if (choice == selectedChoice) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = LitterTheme.accent,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    },
+                    onClick = {
+                        // Close first. Writing the preset in this frame resizes the
+                        // anchor and restarts the dropdown instead of letting it leave.
+                        expanded = false
+                        scope.launch {
+                            delay(220)
+                            appModel.launchState.updateThreadPermissions(
+                                threadKey,
+                                approvalPolicy = choice.approvalPolicy,
+                                sandboxMode = choice.sandboxMode,
+                            )
+                        }
+                    },
+                )
+            }
+            if (onOpenCollaborationMode != null) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.permissions_collaboration_mode)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.Assignment,
+                            contentDescription = null,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        scope.launch {
+                            delay(220)
+                            onOpenCollaborationMode()
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
 
 @Composable
 internal fun CollaborationModeChip(

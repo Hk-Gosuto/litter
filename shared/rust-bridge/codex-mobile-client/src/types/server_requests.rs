@@ -314,6 +314,9 @@ pub struct PendingUserInputRequest {
     pub questions: Vec<PendingUserInputQuestion>,
     pub requester_agent_nickname: Option<String>,
     pub requester_agent_role: Option<String>,
+    #[serde(default)]
+    #[uniffi(default = false)]
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -965,6 +968,7 @@ pub struct AppRefreshModelsRequest {
 impl From<AppRefreshModelsRequest> for upstream::ModelListParams {
     fn from(value: AppRefreshModelsRequest) -> Self {
         Self {
+            model_provider: None,
             cursor: value.cursor,
             limit: value.limit,
             include_hidden: value.include_hidden,

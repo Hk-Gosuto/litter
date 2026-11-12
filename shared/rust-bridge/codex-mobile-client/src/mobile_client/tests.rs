@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod mobile_client_tests {
     use super::super::*;
+    use crate::conversation_uniffi::HydratedConversationItemContent;
     use crate::session::connection::TestRequestHandler;
     use crate::types::ThreadSummaryStatus;
     use crate::types::{PendingUserInputOption, PendingUserInputQuestion};
@@ -88,6 +89,7 @@ mod mobile_client_tests {
 
     fn make_user_input_request(question: PendingUserInputQuestion) -> PendingUserInputRequest {
         PendingUserInputRequest {
+            is_async: false,
             id: "req-1".to_string(),
             server_id: "srv".to_string(),
             thread_id: "thread".to_string(),
@@ -109,6 +111,29 @@ mod mobile_client_tests {
             is_local: false,
             tls: false,
         }
+    }
+
+    #[tokio::test]
+    async fn local_connect_rejects_without_reusing_or_replacing_remote_session() {
+        let client = MobileClient::new();
+        let config = make_server_config("remote");
+        let session = Arc::new(ServerSession::test_stub_with_handlers(
+            config.clone(),
+            None,
+            None,
+            None,
+        ));
+        client
+            .sessions_write()
+            .insert("remote".into(), Arc::clone(&session));
+        let result = client
+            .connect_local(config, InProcessConfig::default())
+            .await;
+        assert!(result.is_err());
+        assert!(Arc::ptr_eq(
+            &client.get_session("remote").unwrap(),
+            &session
+        ));
     }
 
     fn make_model_info(
@@ -690,8 +715,13 @@ mod mobile_client_tests {
             capabilities: None,
         };
         assert!(!alleycat_controller_inventory_ready(&[]));
-        assert!(!alleycat_controller_inventory_ready(&[agent("codex", true)]));
-        assert!(!alleycat_controller_inventory_ready(&[agent("local-studio", false)]));
+        assert!(!alleycat_controller_inventory_ready(&[agent(
+            "codex", true
+        )]));
+        assert!(!alleycat_controller_inventory_ready(&[agent(
+            "local-studio",
+            false
+        )]));
         assert!(alleycat_controller_inventory_ready(&[
             agent("codex", true),
             agent("local-studio", true)
@@ -2038,9 +2068,11 @@ mod mobile_client_tests {
             .external_resume_thread(server_id, thread_id, None)
             .await
             .expect("initial resume should succeed");
-        client
-            .app_store
-            .set_runtime_turn_pagination(server_id, "codex", TurnPaginationSupport::Unsupported);
+        client.app_store.set_runtime_turn_pagination(
+            server_id,
+            "codex",
+            TurnPaginationSupport::Unsupported,
+        );
         client
             .external_resume_thread(server_id, thread_id, None)
             .await
@@ -2079,9 +2111,11 @@ mod mobile_client_tests {
         client
             .app_store
             .upsert_server(&config, ServerHealthSnapshot::Connected);
-        client
-            .app_store
-            .set_runtime_turn_pagination(server_id, "codex", TurnPaginationSupport::Unsupported);
+        client.app_store.set_runtime_turn_pagination(
+            server_id,
+            "codex",
+            TurnPaginationSupport::Unsupported,
+        );
 
         let requests = Arc::new(StdMutex::new(Vec::<String>::new()));
         let request_handler: TestRequestHandler = {
@@ -2486,6 +2520,105 @@ mod mobile_client_tests {
         );
     }
 
+    #[tokio::test]
+    async fn lost_turn_start_reply_keeps_message_when_turn_started() {
+        assert_lost_turn_start_reply(Some(false)).await;
+    }
+
+    #[tokio::test]
+    async fn lost_turn_start_reply_accepts_completed_send_with_server_echo() {
+        assert_lost_turn_start_reply(Some(true)).await;
+    }
+
+    #[tokio::test]
+    async fn failed_turn_start_without_server_confirmation_rolls_back_message() {
+        assert_lost_turn_start_reply(None).await;
+    }
+
+    async fn assert_lost_turn_start_reply(server_echo: Option<bool>) {
+        let client = MobileClient::new();
+        let config = make_server_config("srv");
+        let key = ThreadKey {
+            server_id: "srv".to_string(),
+            thread_id: "thread-1".to_string(),
+        };
+        client
+            .app_store
+            .upsert_server(&config, ServerHealthSnapshot::Connected);
+        client
+            .app_store
+            .upsert_thread_snapshot(ThreadSnapshot::from_info(
+                "srv",
+                make_thread_info("thread-1"),
+            ));
+
+        let handler: TestRequestHandler = {
+            let store = Arc::clone(&client.app_store);
+            let key = key.clone();
+            Arc::new(move |request| {
+                assert!(matches!(request, upstream::ClientRequest::TurnStart { .. }));
+                if let Some(echo) = server_echo {
+                    store.apply_ui_event(&UiEvent::TurnStarted {
+                        key: key.clone(),
+                        turn_id: "turn-1".to_string(),
+                    });
+                    if echo {
+                        store.apply_ui_event(&UiEvent::ItemStarted {
+                            key: key.clone(),
+                            notification: upstream::ItemStartedNotification {
+                                thread_id: key.thread_id.clone(),
+                                turn_id: "turn-1".to_string(),
+                                item: upstream::ThreadItem::UserMessage {
+                                    id: "server-user".to_string(),
+                                    client_id: None,
+                                    content: vec![upstream::UserInput::Text {
+                                        text: "continue".to_string(),
+                                        text_elements: Vec::new(),
+                                    }],
+                                },
+                                started_at_ms: 1,
+                            },
+                        });
+                        store.apply_ui_event(&UiEvent::TurnCompleted {
+                            key: key.clone(),
+                            turn_id: "turn-1".to_string(),
+                            error: None,
+                        });
+                    }
+                }
+                Err(RpcError::Timeout)
+            })
+        };
+        client.sessions.write().unwrap().insert(
+            "srv".to_string(),
+            Arc::new(ServerSession::test_stub_with_handlers(
+                config,
+                Some(handler),
+                None,
+                None,
+            )),
+        );
+        let result = client
+            .start_turn("srv", interrupt_test_params("thread-1", "continue"))
+            .await;
+        assert_eq!(result.is_ok(), server_echo.is_some());
+        let thread = client.snapshot_thread(&key).unwrap();
+        let user_items = thread
+            .items
+            .iter()
+            .chain(thread.local_overlay_items.iter())
+            .filter(|item| matches!(item.content, HydratedConversationItemContent::User(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(user_items.len(), usize::from(server_echo.is_some()));
+        if server_echo == Some(false) {
+            assert_eq!(user_items[0].source_turn_id.as_deref(), Some("turn-1"));
+        }
+        if server_echo == Some(true) {
+            assert_eq!(user_items[0].id, "server-user");
+            assert!(thread.local_overlay_items.is_empty());
+        }
+    }
+
     fn interrupt_test_params(thread_id: &str, text: &str) -> upstream::TurnStartParams {
         upstream::TurnStartParams {
             disabled_plugin_ids: None,
@@ -2544,7 +2677,10 @@ mod mobile_client_tests {
         let handler: TestRequestHandler = {
             let calls = Arc::clone(&calls);
             Arc::new(move |request| {
-                calls.lock().unwrap().push(request.method_name().to_string());
+                calls
+                    .lock()
+                    .unwrap()
+                    .push(request.method_name().to_string());
                 match request {
                     upstream::ClientRequest::TurnStart { .. } => {
                         serde_json::to_value(upstream::TurnStartResponse {
@@ -2594,7 +2730,11 @@ mod mobile_client_tests {
             .expect("send");
         assert!(calls.lock().unwrap().iter().all(|m| m != "turn/start"));
         assert_eq!(
-            client.snapshot_thread(&key).unwrap().queued_follow_up_drafts.len(),
+            client
+                .snapshot_thread(&key)
+                .unwrap()
+                .queued_follow_up_drafts
+                .len(),
             1
         );
     }
@@ -2638,7 +2778,11 @@ mod mobile_client_tests {
             error: None,
         });
         assert_eq!(
-            client.snapshot_thread(&key).unwrap().active_turn_id.as_deref(),
+            client
+                .snapshot_thread(&key)
+                .unwrap()
+                .active_turn_id
+                .as_deref(),
             Some("turn-2")
         );
     }
@@ -2684,7 +2828,9 @@ mod mobile_client_tests {
                     .expect("request log lock should not be poisoned")
                     .push(format!("{runtime}:thread/turns/list:{:?}", params.limit));
                 let mut turns: Vec<_> = (0..turn_count)
-                    .map(|index| completed_turn_json(&format!("turn-{index}"), &format!("msg {index}")))
+                    .map(|index| {
+                        completed_turn_json(&format!("turn-{index}"), &format!("msg {index}"))
+                    })
                     .collect();
                 turns.reverse();
                 if let Some(limit) = params.limit {
@@ -2699,7 +2845,12 @@ mod mobile_client_tests {
         })
     }
 
-    fn seed_thread_for_runtime(client: &MobileClient, server_id: &str, thread_id: &str, runtime: &str) {
+    fn seed_thread_for_runtime(
+        client: &MobileClient,
+        server_id: &str,
+        thread_id: &str,
+        runtime: &str,
+    ) {
         let key = ThreadKey {
             server_id: server_id.to_string(),
             thread_id: thread_id.to_string(),
@@ -2790,16 +2941,24 @@ mod mobile_client_tests {
             .collect();
         assert_eq!(
             turn_ids,
-            (0..7).map(|index| format!("turn-{index}")).collect::<Vec<_>>(),
+            (0..7)
+                .map(|index| format!("turn-{index}"))
+                .collect::<Vec<_>>(),
             "the whole history must load, oldest first"
         );
         assert!(claude.initial_turns_loaded);
         assert_eq!(claude.older_turns_cursor, None);
         assert_eq!(
-            client.app_store.runtime_turn_pagination(server_id, "claude"),
+            client
+                .app_store
+                .runtime_turn_pagination(server_id, "claude"),
             Some(TurnPaginationSupport::Unsupported)
         );
-        assert!(client.app_store.runtime_supports_turn_pagination(server_id, "codex"));
+        assert!(
+            client
+                .app_store
+                .runtime_supports_turn_pagination(server_id, "codex")
+        );
 
         // Codex on the same host still pages with a cursor.
         let outcome = client
@@ -2891,8 +3050,16 @@ mod mobile_client_tests {
             "pi",
             TurnPaginationSupport::Unsupported,
         );
-        assert!(!client.app_store.runtime_supports_turn_pagination(server_id, "pi"));
-        assert!(client.app_store.runtime_supports_turn_pagination(server_id, "codex"));
+        assert!(
+            !client
+                .app_store
+                .runtime_supports_turn_pagination(server_id, "pi")
+        );
+        assert!(
+            client
+                .app_store
+                .runtime_supports_turn_pagination(server_id, "codex")
+        );
         let snapshot = client.app_store.snapshot();
         let server = snapshot.servers.get(server_id).expect("server");
         assert!(
@@ -2971,7 +3138,12 @@ mod mobile_client_tests {
             crate::conversation_uniffi::HydratedConversationItemContent::Error(data) => {
                 assert_eq!(data.title, "History unavailable");
                 assert!(data.message.contains("working directory no longer exists"));
-                assert!(data.details.as_deref().unwrap_or_default().contains("/private/tmp/gone"));
+                assert!(
+                    data.details
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains("/private/tmp/gone")
+                );
             }
             other => panic!("expected error row, got {other:?}"),
         }

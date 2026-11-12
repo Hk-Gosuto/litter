@@ -136,7 +136,8 @@ private fun FloatingHeaderButton(
     )
 }
 
-/** Shared fast-tier override selected from the model options sheet. */
+/** Shared overrides selected from the model options sheet before a thread exists. */
 object HeaderOverrides {
     var pendingFastMode by mutableStateOf(false)
+    var pendingPlanMode by mutableStateOf(false)
 }

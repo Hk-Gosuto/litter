@@ -25,6 +25,11 @@ struct ConversationComposerContentView: View {
     let contextPercent: Int64?
     let isTurnActive: Bool
     let showModeChip: Bool
+    let showsPermissionMenu: Bool
+    let permissionThreadKey: ThreadKey?
+    let effectiveApprovalPolicy: AppAskForApproval?
+    let effectiveSandboxPolicy: AppSandboxPolicy?
+    let showsCollaborationMode: Bool
     let modelLabel: String?
     let reasoningLabel: String?
     let voiceManager: VoiceTranscriptionManager
@@ -67,6 +72,11 @@ struct ConversationComposerContentView: View {
         contextPercent: Int64?,
         isTurnActive: Bool,
         showModeChip: Bool = true,
+        showsPermissionMenu: Bool = false,
+        permissionThreadKey: ThreadKey? = nil,
+        effectiveApprovalPolicy: AppAskForApproval? = nil,
+        effectiveSandboxPolicy: AppSandboxPolicy? = nil,
+        showsCollaborationMode: Bool = false,
         modelLabel: String? = nil,
         reasoningLabel: String? = nil,
         voiceManager: VoiceTranscriptionManager,
@@ -108,6 +118,11 @@ struct ConversationComposerContentView: View {
         self.contextPercent = contextPercent
         self.isTurnActive = isTurnActive
         self.showModeChip = showModeChip
+        self.showsPermissionMenu = showsPermissionMenu
+        self.permissionThreadKey = permissionThreadKey
+        self.effectiveApprovalPolicy = effectiveApprovalPolicy
+        self.effectiveSandboxPolicy = effectiveSandboxPolicy
+        self.showsCollaborationMode = showsCollaborationMode
         self.modelLabel = modelLabel
         self.reasoningLabel = reasoningLabel
         self.voiceManager = voiceManager
@@ -244,6 +259,11 @@ struct ConversationComposerContentView: View {
                     reasoningLabel: reasoningLabel,
                     collaborationMode: collaborationMode,
                     showModeChip: showModeChip,
+                    showsPermissionMenu: showsPermissionMenu,
+                    permissionThreadKey: permissionThreadKey,
+                    effectiveApprovalPolicy: effectiveApprovalPolicy,
+                    effectiveSandboxPolicy: effectiveSandboxPolicy,
+                    showsCollaborationMode: showsCollaborationMode,
                     onPasteImage: onPasteImage,
                     onOpenModelPicker: onOpenModelPicker,
                     onOpenModePicker: onOpenModePicker,

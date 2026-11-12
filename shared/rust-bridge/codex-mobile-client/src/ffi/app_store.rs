@@ -368,6 +368,7 @@ mod tests {
         let current = hydrated_item(
             "assistant-1",
             HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: "hel".to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -377,6 +378,7 @@ mod tests {
         let next = hydrated_item(
             "assistant-1",
             HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: "hello".to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -980,10 +982,9 @@ fn merge_app_update(
             *requests = next_requests;
             Ok(())
         }
-        (
-            AppStoreUpdateRecord::VoiceSessionChanged,
-            AppStoreUpdateRecord::VoiceSessionChanged,
-        ) => Ok(()),
+        (AppStoreUpdateRecord::VoiceSessionChanged, AppStoreUpdateRecord::VoiceSessionChanged) => {
+            Ok(())
+        }
         (_current, next) => Err(Box::new(next)),
     }
 }

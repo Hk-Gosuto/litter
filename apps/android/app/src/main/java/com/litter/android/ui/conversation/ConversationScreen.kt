@@ -9,8 +9,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -20,7 +18,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,7 +33,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -141,8 +137,6 @@ fun ConversationScreen(
     val items = thread?.hydratedConversationItems ?: emptyList()
     val normalizedActiveTurnId = thread?.activeTurnId?.trim()?.takeIf { it.isNotEmpty() }
     val isThinking = thread?.info?.status?.isActiveStatus == true
-    val minigameOverlay by appModel.minigameOverlay.collectAsState()
-    val isMinigameActive = minigameOverlay !is com.litter.android.state.MinigameOverlayState.Idle
     val collapseTurns = ConversationPrefs.areTurnsCollapsed
     val agentDirectoryVersion = snapshot?.agentDirectoryVersion ?: 0uL
     val transcriptTurns = remember(items, thread?.info?.status, isThinking, collapseTurns) {
@@ -206,7 +200,6 @@ fun ConversationScreen(
     // Reuse already-loaded thread content on re-entry, and only fall back to
     // resume/read flows when the conversation isn't available locally yet.
     LaunchedEffect(threadKey) {
-        appModel.dismissMinigame()
         try {
             val resolvedThreadKey = appModel.hydrateThreadPermissions(threadKey) ?: threadKey
             appModel.activateThread(resolvedThreadKey)
@@ -402,9 +395,15 @@ fun ConversationScreen(
         (if (isWaitingForData || isInitialTurnsLoading) 1 else 0)
     LaunchedEffect(threadKey, bottomAnchorIndex, transcriptTailSignature, followScrollToken, streamingRenderTick) {
         if (shouldFollowTail && displayedTurns.isNotEmpty()) {
-            if (!hasPositionedInitialTail || isThinking) {
+            if (!hasPositionedInitialTail) {
                 listState.scrollToItem(bottomAnchorIndex)
                 hasPositionedInitialTail = true
+            } else if (isThinking) {
+                // Re-snapping an already-visible tail on every thinking tick
+                // fights item-height changes and jumps the thinking label.
+                if (!listState.isNearListBottom(bufferItems = 1)) {
+                    listState.scrollToItem(bottomAnchorIndex)
+                }
             } else {
                 listState.animateScrollToItem(bottomAnchorIndex)
             }
@@ -674,32 +673,7 @@ fun ConversationScreen(
             }
 
             // Bottom area: gradient fade + pinned context + composer + nav bar inset
-            // Hidden while the thinking-minigame overlay is up.
-            if (!isMinigameActive) Column(modifier = Modifier.fillMaxWidth()) {
-                // Floating minigame launcher — visible only while thinking,
-                // gated by the experimental flag.
-                val minigameFeatureOn = com.litter.android.ui.ExperimentalFeatures.isEnabled(
-                    com.litter.android.ui.LitterFeature.THINKING_MINIGAME,
-                )
-                if (minigameFeatureOn) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.Start,
-                    ) {
-                        MinigameLaunchButton(onClick = {
-                            val (lastUser, lastAssistant) = lastUserAndAssistantText(items)
-                            appModel.requestMinigame(
-                                parentThreadId = threadKey.threadId,
-                                serverId = threadKey.serverId,
-                                lastUserMessage = lastUser,
-                                lastAssistantMessage = lastAssistant,
-                            )
-                        })
-                    }
-                }
-
+            Column(modifier = Modifier.fillMaxWidth()) {
                 // Gradient fade from transparent to scrim
                 if (hasWallpaper) {
                     Box(
@@ -852,38 +826,6 @@ fun ConversationScreen(
             )
         }
 
-        // Thinking-indicator minigame overlay: bottom 40% of the screen.
-        // Slides up from the bottom when appearing and slides back out on
-        // dismiss, mirroring iOS ConversationView.swift:148
-        // `.transition(.move(edge: .bottom).combined(with: .opacity))`.
-        AnimatedVisibility(
-            visible = isMinigameActive,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(0.4f)
-                .padding(horizontal = 8.dp, vertical = 8.dp)
-                .navigationBarsPadding(),
-        ) {
-            MinigameOverlay(
-                state = minigameOverlay,
-                onClose = { appModel.dismissMinigame() },
-                onRetry = {
-                    val (lastUser, lastAssistant) = lastUserAndAssistantText(items)
-                    appModel.dismissMinigame()
-                    appModel.requestMinigame(
-                        parentThreadId = threadKey.threadId,
-                        serverId = threadKey.serverId,
-                        lastUserMessage = lastUser,
-                        lastAssistantMessage = lastAssistant,
-                    )
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
         if (showPermissionsSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showPermissionsSheet = false },
@@ -914,11 +856,6 @@ fun ConversationScreen(
                     onRetryModels = {
                         scope.launch {
                             appModel.loadAvailableModelsIfNeeded(threadKey.serverId, force = true)
-                        }
-                    },
-                    onToggleMode = { mode ->
-                        scope.launch {
-                            runCatching { appModel.store.setThreadCollaborationMode(threadKey, mode) }
                         }
                     },
                     fastMode = HeaderOverrides.pendingFastMode,
@@ -1282,7 +1219,6 @@ private fun uniffi.codex_mobile_client.AppThreadSnapshot.composerContextPercent(
         .coerceIn(0, 100)
 }
 
-
 @Composable
 private fun PlanContextBadge(progress: String) {
     Text(
@@ -1606,22 +1542,6 @@ private fun loadedUserItemIndex(
     return null
 }
 
-private fun lastUserAndAssistantText(
-    items: List<uniffi.codex_mobile_client.HydratedConversationItem>,
-): Pair<String?, String?> {
-    var lastUser: String? = null
-    var lastAssistant: String? = null
-    for (item in items.reversed()) {
-        when (val c = item.content) {
-            is HydratedConversationItemContent.User -> if (lastUser == null) lastUser = c.v1.text
-            is HydratedConversationItemContent.Assistant -> if (lastAssistant == null) lastAssistant = c.v1.text
-            else -> {}
-        }
-        if (lastUser != null && lastAssistant != null) break
-    }
-    return lastUser to lastAssistant
-}
-
 /**
  * Shimmering "Thinking..." text shown while the assistant is working.
  */
@@ -1652,25 +1572,4 @@ private fun StreamingCursor() {
         fontWeight = FontWeight.Medium,
         style = TextStyle(brush = shimmerBrush),
     )
-}
-
-@Composable
-private fun MinigameLaunchButton(onClick: () -> Unit) {
-    androidx.compose.material3.Surface(
-        onClick = onClick,
-        shape = androidx.compose.foundation.shape.CircleShape,
-        color = LitterTheme.surface.copy(alpha = 0.9f),
-        border = androidx.compose.foundation.BorderStroke(0.5.dp, LitterTheme.accent.copy(alpha = 0.3f)),
-        shadowElevation = 2.dp,
-        modifier = Modifier.size(36.dp),
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = Icons.Filled.SportsEsports,
-                contentDescription = stringResource(R.string.conversation_play_minigame),
-                tint = LitterTheme.accent,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
 }

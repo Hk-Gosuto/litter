@@ -1133,7 +1133,12 @@ impl ToolLogSeed<'_> {
                     ));
                 }
                 let detail = if parts.is_empty() {
-                    format!("{} {} step{}", prefix, count, if count == 1 { "" } else { "s" })
+                    format!(
+                        "{} {} step{}",
+                        prefix,
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    )
                 } else {
                     format!("{} {}", prefix, parts.join(", "))
                 };
@@ -1717,8 +1722,8 @@ mod tests {
     };
     use crate::store::{AppSnapshot, ThreadSnapshot};
     use crate::types::{
-        AppModeKind, AppPlanImplementationPromptSnapshot,
-        PendingUserInputRequest, ThreadInfo, ThreadKey, ThreadSummaryStatus,
+        AppModeKind, AppPlanImplementationPromptSnapshot, PendingUserInputRequest, ThreadInfo,
+        ThreadKey, ThreadSummaryStatus,
     };
 
     #[test]
@@ -1901,6 +1906,7 @@ mod tests {
         );
 
         snapshot.pending_user_inputs.push(PendingUserInputRequest {
+            is_async: false,
             id: "req-1".to_string(),
             server_id: "srv".to_string(),
             thread_id: "thread-a".to_string(),
@@ -2098,6 +2104,7 @@ mod tests {
                 id: "old-assistant".to_string(),
                 content: crate::conversation_uniffi::HydratedConversationItemContent::Assistant(
                     crate::conversation_uniffi::HydratedAssistantMessageData {
+                        async_questions: None,
                         text: "previous response".to_string(),
                         agent_nickname: None,
                         agent_role: None,
@@ -2115,6 +2122,7 @@ mod tests {
                 id: "assistant-1".to_string(),
                 content: crate::conversation_uniffi::HydratedConversationItemContent::Assistant(
                     crate::conversation_uniffi::HydratedAssistantMessageData {
+                        async_questions: None,
                         text: "new response".to_string(),
                         agent_nickname: None,
                         agent_role: None,

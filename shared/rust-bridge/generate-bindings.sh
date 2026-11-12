@@ -93,6 +93,7 @@ if [[ "$GENERATE_SWIFT" -eq 1 ]]; then
         "$OUT_SWIFT/codex_protocolFFI.h" \
         "$OUT_SWIFT/codex_protocolFFI.modulemap"
     cargo run -p uniffi-bindgen -- generate \
+        --metadata-no-deps \
         --library "$DYLIB_FILE" \
         --language swift \
         --out-dir "$OUT_SWIFT"
@@ -108,6 +109,7 @@ if [[ "$GENERATE_KOTLIN" -eq 1 ]]; then
         "$OUT_KOTLIN/uniffi/codex_app_server_protocol" \
         "$OUT_KOTLIN/uniffi/codex_protocol"
     cargo run -p uniffi-bindgen -- generate \
+        --metadata-no-deps \
         --library "$DYLIB_FILE" \
         --language kotlin \
         --config "$WORKSPACE_DIR/uniffi.toml" \

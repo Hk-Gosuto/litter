@@ -216,6 +216,7 @@ fun ConversationTimelineItem(
         is HydratedConversationItemContent.Widget -> WidgetRow(
             data = content.v1,
             originThreadId = threadId,
+            serverId = serverId,
             onOpenSavedApp = onOpenSavedApp,
             onWidgetPrompt = onWidgetPrompt,
         )
@@ -1337,6 +1338,7 @@ private fun ImageResultSection(
 private fun WidgetRow(
     data: uniffi.codex_mobile_client.HydratedWidgetData,
     originThreadId: String?,
+    serverId: String,
     onOpenSavedApp: ((String) -> Unit)?,
     onWidgetPrompt: ((String) -> Unit)?,
 ) {
@@ -1500,7 +1502,7 @@ private fun WidgetRow(
                 onClick = {
                     scope.launch {
                         val app = try {
-                            SavedAppsStore.appForSlug(context, slug, originThreadId)
+                            SavedAppsStore.appForSlug(context, slug, originThreadId, serverId)
                         } catch (_: Exception) { null }
                         if (app != null) {
                             onOpenSavedApp?.invoke(app.id)

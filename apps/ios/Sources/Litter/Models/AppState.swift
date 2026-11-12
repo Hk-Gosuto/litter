@@ -8,6 +8,10 @@ final class AppState {
     /// edge swipe begins). The leaving screen stops re-binding immediately
     /// instead of rebuilding its transcript during the pop animation.
     var leavingConversationKey: ThreadKey?
+    // UI-only question drafts survive collapsing the prompt and navigating away.
+    var pendingUserInputSelections: [String: [String: String]] = [:]
+    var pendingUserInputNotes: [String: [String: String]] = [:]
+    var pendingUserInputSending: Set<String> = []
     private struct ThreadPermissionOverride {
         var approvalPolicy: String
         var sandboxMode: String
@@ -58,6 +62,7 @@ final class AppState {
     var showSettings = false
     var pendingThreadNavigation: ThreadKey?
     private var dismissedPendingUserInputIds: Set<String> = []
+    private var lastDismissedPendingUserInputId: String?
     private var threadPermissionOverrides: [String: ThreadPermissionOverride] = [:]
     var approvalPolicy: String {
         didSet {
@@ -119,10 +124,24 @@ final class AppState {
 
     func dismissPendingUserInput(id: String) {
         dismissedPendingUserInputIds.insert(id)
+        lastDismissedPendingUserInputId = id
     }
 
     func isPendingUserInputDismissed(id: String) -> Bool {
         dismissedPendingUserInputIds.contains(id)
+    }
+
+    func restorePendingUserInput(id: String) {
+        dismissedPendingUserInputIds.remove(id)
+    }
+
+    func visiblePendingUserInput(in requests: [PendingUserInputRequest]) -> PendingUserInputRequest? {
+        if let open = requests.first(where: { !isPendingUserInputDismissed(id: $0.id) }) { return open }
+        guard !requests.isEmpty else { return nil }
+        // When every prompt is collapsed, keep them reachable in sequence.
+        // Reopening and closing one must not permanently hide its neighbours.
+        guard let previous = requests.firstIndex(where: { $0.id == lastDismissedPendingUserInputId }) else { return requests.first }
+        return requests[(previous + 1) % requests.count]
     }
 
     func approvalPolicy(for threadKey: ThreadKey?) -> String {
@@ -195,7 +214,9 @@ final class AppState {
         let sandboxMode = displayValue(for: rawSandboxPolicy)
 
         if rawApprovalPolicy == nil && rawSandboxPolicy == nil {
-            threadPermissionOverrides.removeValue(forKey: key)
+            // A metadata read omits permissions. Dropping the last concrete
+            // selection snaps the picker back to inherit on every nil
+            // snapshot, including reconnect and historical-session open.
             return
         }
 

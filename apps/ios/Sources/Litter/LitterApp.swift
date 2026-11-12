@@ -84,7 +84,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         DispatchQueue.main.async {
             CloudKVSBridge.shared.start()
         }
-        scheduleKeyboardWarmup()
+        // A hidden first responder can raise the keyboard and shift Home at launch.
         // Start pushing state to the paired Apple Watch, gated behind the
         // experimental feature flag. Flip the `appleWatch` feature in
         // Settings → Experimental Features to enable. No-op when disabled.
@@ -94,35 +94,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             }
         }
         return true
-    }
-
-    // MARK: - Keyboard warmup
-
-    private func scheduleKeyboardWarmup() {
-        let environment = ProcessInfo.processInfo.environment
-        guard !LitterPlatform.isRunningUnitTests,
-              environment["CODEXIOS_UI_TEST_DISABLE_LOCAL_RUNTIME"] != "1" else {
-            return
-        }
-
-        // Load the real system keyboard while the splash window covers it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let window = scene.windows.first else {
-                self.scheduleKeyboardWarmup()
-                return
-            }
-            let field = UITextField(frame: CGRect(x: 0, y: 0, width: 200, height: 44))
-            field.autocorrectionType = .no
-            field.autocapitalizationType = .none
-            field.spellCheckingType = .no
-            window.addSubview(field)
-            field.becomeFirstResponder()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                field.resignFirstResponder()
-                field.removeFromSuperview()
-            }
-        }
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -641,7 +612,6 @@ private struct HomeNavigationView: View {
     @State private var homeInputMode: HomeInputMode = .collapsed
     @State private var hydratingPinnedHomeThreadIds: Set<String> = []
     @State private var pinnedThreadListingRepairTasks: [String: Task<Bool, Never>] = [:]
-    @State private var hasSeededInitialConversationRoute = false
     @State private var pendingWallpaperConfig: WallpaperConfig?
     @State private var pendingWallpaperImage: UIImage?
     let topInset: CGFloat
@@ -909,10 +879,6 @@ private struct HomeNavigationView: View {
             homeDashboardModel.bind(appModel: appModel)
             updateHomeDashboardActivity()
             hydratePinnedThreadsIfNeeded()
-            seedInitialConversationIfNeeded(activeKey: appModel.snapshot?.activeThread)
-        }
-        .onChange(of: homeDashboardModel.activeThread) { _, newKey in
-            seedInitialConversationIfNeeded(activeKey: newKey)
         }
         .onChange(of: navigationPath.count) { _, _ in
             updateHomeDashboardActivity()
@@ -926,12 +892,9 @@ private struct HomeNavigationView: View {
                 replaceTopConversation(with: newKey)
             }
         }
-        .onChange(of: SavedAppsNavigation.shared.pendingConversationThreadId) { _, newThreadId in
-            guard let newThreadId else { return }
+        .onChange(of: SavedAppsNavigation.shared.pendingConversationThread) { _, key in
+            guard let key else { return }
             _ = SavedAppsNavigation.shared.consumeConversationRequest()
-            guard let key = appModel.snapshot?.threads.first(where: { $0.key.threadId == newThreadId })?.key else {
-                return
-            }
             // Pop the saved-app detail off the stack, then push the conversation.
             if case .savedApp = navigationPath.last {
                 navigationPath.removeLast()
@@ -1034,7 +997,7 @@ private struct HomeNavigationView: View {
             }
             Button("Cancel", role: .cancel) { appModel.clearSshHostKeyChange() }
         } message: {
-            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(appModel.sshHostKeyChangeChallenge?.fingerprint ?? "unknown")")
+            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(appModel.sshHostKeyChangeChallenge?.fingerprint ?? AppLanguage.localizedString("Unknown"))")
         }
     }
 
@@ -1254,9 +1217,12 @@ private struct HomeNavigationView: View {
                 serverId: serverId,
                 params: launchConfig().threadStartRequest(
                     cwd: cwd,
-                    dynamicTools: appModel.localGenerativeUiToolSpecs(for: serverId)
+                    dynamicTools: nil
                 )
             )
+            if appState.pendingCollaborationMode == .plan {
+                try await appModel.store.setThreadCollaborationMode(key: key, mode: .plan)
+            }
             startedKey = key
             RecentDirectoryStore.shared.record(path: cwd, for: serverId)
             homeDashboardModel.pinThread(key)
@@ -1269,24 +1235,6 @@ private struct HomeNavigationView: View {
 
         let resolvedKey = appModel.snapshot?.threadSnapshot(for: startedKey)?.key ?? startedKey
         openConversation(resolvedKey)
-    }
-
-    private func seedInitialConversationIfNeeded(activeKey: ThreadKey?) {
-        guard !hasSeededInitialConversationRoute,
-              !isStartingVoice,
-              navigationPath.isEmpty,
-              let activeKey else { return }
-
-        Task { @MainActor in
-            guard !hasSeededInitialConversationRoute,
-                  !isStartingVoice,
-                  navigationPath.isEmpty,
-                  appModel.snapshot?.activeThread == activeKey else {
-                return
-            }
-            hasSeededInitialConversationRoute = true
-            navigationPath = [.conversation(activeKey)]
-        }
     }
 
     private func launchConfig(for threadKey: ThreadKey? = nil) -> AppThreadLaunchConfig {
@@ -1321,7 +1269,6 @@ private struct HomeNavigationView: View {
     }
 
     private func openConversation(_ key: ThreadKey) {
-        hasSeededInitialConversationRoute = true
         appState.showModelSelector = false
         guard navigationPath.last != .conversation(key) else { return }
         // Opened here, closed by `ConversationView` on its first render.
@@ -1330,7 +1277,6 @@ private struct HomeNavigationView: View {
     }
 
     private func openRealtimeVoice(_ key: ThreadKey) {
-        hasSeededInitialConversationRoute = true
         appState.showModelSelector = false
         guard navigationPath.last != .realtimeVoice(key) else { return }
         navigationPath.append(.realtimeVoice(key))
@@ -1352,7 +1298,6 @@ private struct HomeNavigationView: View {
     }
 
     private func replaceTopConversation(with key: ThreadKey) {
-        hasSeededInitialConversationRoute = true
         if case .conversation = navigationPath.last {
             navigationPath.removeLast()
         }
@@ -1425,7 +1370,7 @@ private struct HomeNavigationView: View {
     private var sidebarDashboard: some View {
         HomeDashboardView(
             chrome: .sidebar,
-            recentSessions: homeDashboardModel.recentSessions,
+            recentSessions: homeDashboardModel.displayedSessions,
             allSessions: homeDashboardModel.allSessions,
             pinnedThreadKeys: homeDashboardModel.pinnedKeys,
             connectedServers: homeDashboardModel.connectedServers,
@@ -1472,7 +1417,7 @@ private struct HomeNavigationView: View {
 
     private var homeDashboard: some View {
         HomeDashboardView(
-            recentSessions: homeDashboardModel.recentSessions,
+            recentSessions: homeDashboardModel.displayedSessions,
             allSessions: homeDashboardModel.allSessions,
             pinnedThreadKeys: homeDashboardModel.pinnedKeys,
             connectedServers: homeDashboardModel.connectedServers,
@@ -1517,14 +1462,11 @@ private struct HomeNavigationView: View {
     }
 
     private func handleSelectServer(_ server: HomeDashboardServer) {
-        guard server.canLaunchSessions else {
-            reconnectServer(server)
-            return
-        }
         if homeDashboardModel.selectedServerId == server.id {
             homeDashboardModel.clearScope()
         } else {
             homeDashboardModel.selectedServerId = server.id
+            if !server.canLaunchSessions { reconnectServer(server) }
         }
     }
 
@@ -1573,6 +1515,7 @@ private struct HomeNavigationView: View {
     }
 
     private func hydratePinnedThreadsIfNeeded() {
+        guard let selectedServerId = homeDashboardModel.selectedServerId else { return }
         let connectedServerIds = Set(
             (appModel.snapshot?.servers ?? [])
                 .filter(\.isConnected)
@@ -1580,7 +1523,7 @@ private struct HomeNavigationView: View {
         )
         guard !connectedServerIds.isEmpty else { return }
 
-        for pin in homeDashboardModel.pinnedKeys {
+        for pin in homeDashboardModel.pinnedKeys where pin.serverId == selectedServerId {
             let key = pin.threadKey
             guard connectedServerIds.contains(key.serverId) else { continue }
             let id = homeHydrationId(key)
@@ -1802,6 +1745,7 @@ private struct HomeNavigationView: View {
     }
 
     private func disconnectServer(_ serverId: String) {
+        if homeDashboardModel.selectedServerId == serverId { homeDashboardModel.clearScope() }
         SavedServerStore.remove(serverId: serverId)
         Task { await SshSessionStore.shared.close(serverId: serverId, ssh: appModel.ssh) }
         // Remote transport resources are owned by the Rust `ServerSession` and
@@ -1874,7 +1818,6 @@ private struct HomeNavigationView: View {
         appState.sessionsSelectedServerFilterId = serverId
         appState.sessionsShowOnlyForks = false
         appState.showModelSelector = false
-        hasSeededInitialConversationRoute = true
 
         if let existingIndex = navigationPath.lastIndex(where: { route in
             guard case let .sessions(id, _) = route else { return false }
@@ -1959,14 +1902,7 @@ private struct ConversationDestinationScreen: View {
                     topInset: 12,
                     bottomInset: bottomInset,
                     onOpenConversation: onOpenConversation,
-                    onResumeSessions: onResumeSessions,
-                    minigameOverlay: screenModel.minigameOverlay,
-                    onTypingTap: { screenModel.requestMinigame() },
-                    onMinigameDismiss: { screenModel.dismissMinigame() },
-                    onMinigameRetry: {
-                        screenModel.dismissMinigame()
-                        screenModel.requestMinigame()
-                    }
+                    onResumeSessions: onResumeSessions
                 )
                 .onAppear {
                     isLeaving = false

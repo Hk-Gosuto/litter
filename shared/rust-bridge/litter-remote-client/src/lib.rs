@@ -2,6 +2,8 @@
 //! Apache-2.0; see LICENSE. Embedded app-server startup is deliberately excluded.
 mod path;
 mod remote;
+mod server_request;
+mod websocket_compression;
 use codex_app_server_protocol::{
     ClientNotification, ClientRequest, JSONRPCErrorError, RequestId, Result as JsonRpcResult,
     ServerNotification, ServerRequest,
@@ -12,6 +14,7 @@ pub use remote::{
     JsonRpcWire, RemoteAppServerClient, RemoteAppServerConnectArgs, RemoteAppServerEndpoint,
 };
 use serde::de::DeserializeOwned;
+pub use server_request::AppServerReplyHandle;
 use std::error::Error;
 use std::fmt;
 use std::io::{Error as IoError, Result as IoResult};
@@ -113,6 +116,26 @@ pub enum AppServerClient {
     Remote(RemoteAppServerClient),
 }
 impl AppServerRequestHandle {
+    pub async fn resolve_server_request(
+        &self,
+        request_id: RequestId,
+        result: JsonRpcResult,
+    ) -> IoResult<()> {
+        match self {
+            Self::Remote(handle) => handle.resolve_server_request(request_id, result).await,
+        }
+    }
+
+    pub async fn reject_server_request(
+        &self,
+        request_id: RequestId,
+        error: JSONRPCErrorError,
+    ) -> IoResult<()> {
+        match self {
+            Self::Remote(handle) => handle.reject_server_request(request_id, error).await,
+        }
+    }
+
     pub async fn request(&self, request: ClientRequest) -> IoResult<RequestResult> {
         match self {
             Self::Remote(handle) => handle.request(request).await,

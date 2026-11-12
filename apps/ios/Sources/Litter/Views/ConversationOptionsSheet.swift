@@ -11,6 +11,7 @@ struct ConversationOptionsSheet: View {
     @Binding var selectedModel: String
     @Binding var selectedAgentRuntimeKind: AgentRuntimeKind?
     @Binding var reasoningEffort: String
+    var isReasoningEffortLocked = false
     var threadKey: ThreadKey?
     var collaborationMode: AppModeKind = .default
     var effectiveApprovalPolicy: AppAskForApproval?
@@ -35,6 +36,7 @@ struct ConversationOptionsSheet: View {
             collaborationMode: collaborationMode,
             effectiveApprovalPolicy: effectiveApprovalPolicy,
             effectiveSandboxPolicy: effectiveSandboxPolicy,
+            isReasoningEffortLocked: isReasoningEffortLocked,
             onDismiss: { dismiss() }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

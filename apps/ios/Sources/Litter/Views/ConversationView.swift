@@ -26,10 +26,6 @@ struct ConversationView: View {
     var bottomInset: CGFloat = 0
     var onOpenConversation: ((ThreadKey) -> Void)? = nil
     var onResumeSessions: ((String) -> Void)? = nil
-    var minigameOverlay: MinigameOverlayState = .idle
-    var onTypingTap: (() -> Void)? = nil
-    var onMinigameDismiss: (() -> Void)? = nil
-    var onMinigameRetry: (() -> Void)? = nil
     @AppStorage("workDir") private var workDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? "/"
     @AppStorage("conversationTextSizeStep") private var conversationTextSizeStep = ConversationTextSize.medium.rawValue
     @AppStorage("fastMode") private var fastMode = false
@@ -47,10 +43,6 @@ struct ConversationView: View {
 
     private var agentDirectoryVersion: UInt64 {
         transcript.agentDirectoryVersion
-    }
-
-    private var showsMinigameLaunchButton: Bool {
-        onTypingTap != nil && minigameOverlay == .idle && ExperimentalFeatures.shared.isEnabled(.thinkingMinigame)
     }
 
     private var pendingModelOverride: String? {
@@ -94,7 +86,6 @@ struct ConversationView: View {
             sendScrollToken: localSendScrollToken,
             activeThreadKey: activeThreadKey,
             agentDirectoryVersion: agentDirectoryVersion,
-            hasMinigameLaunchButton: showsMinigameLaunchButton,
             topInset: thread.isSubagent ? topInset + 32 : topInset,
             olderTurnsCursor: thread.olderTurnsCursor,
             initialTurnsLoaded: thread.initialTurnsLoaded || !supportsTurnPagination,
@@ -110,14 +101,6 @@ struct ConversationView: View {
                 await appModel.loadOlderTurns(threadId: key)
             }
         )
-        .overlay(alignment: .bottomLeading) {
-            if showsMinigameLaunchButton, let onTypingTap {
-                MinigameLaunchButton(action: onTypingTap)
-                    .padding(.leading, 12)
-                    .padding(.bottom, 8)
-                    .transition(.scale.combined(with: .opacity))
-            }
-        }
         .activeThreadKey(activeThreadKey)
         // Injected alongside the thread key so `ResolvedChatImageView` can read
         // the cwd from the environment. It previously called
@@ -144,30 +127,18 @@ struct ConversationView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if minigameOverlay == .idle {
-                ComposerDraftBinder(draft: composerDraft) { inputText, attachedImages in
-                    ConversationBottomChrome(
-                        pinnedContextItems: pinnedContextItems,
-                        composer: composer,
-                        composerInputText: inputText,
-                        composerAttachedImages: attachedImages,
-                        onSend: sendMessage,
-                        onFileSearch: searchComposerFiles,
-                        bottomInset: bottomInset,
-                        onOpenConversation: onOpenConversation,
-                        onResumeSessions: onResumeSessions
-                    )
-                }
-            } else {
-                MinigameOverlayView(
-                    state: minigameOverlay,
-                    onClose: { onMinigameDismiss?() },
-                    onRetry: { onMinigameRetry?() }
+            ComposerDraftBinder(draft: composerDraft) { inputText, attachedImages in
+                ConversationBottomChrome(
+                    pinnedContextItems: pinnedContextItems,
+                    composer: composer,
+                    composerInputText: inputText,
+                    composerAttachedImages: attachedImages,
+                    onSend: sendMessage,
+                    onFileSearch: searchComposerFiles,
+                    bottomInset: bottomInset,
+                    onOpenConversation: onOpenConversation,
+                    onResumeSessions: onResumeSessions
                 )
-                .frame(height: UIScreen.main.bounds.height * 0.4)
-                .padding(.horizontal, 8)
-                .padding(.bottom, max(bottomInset, 8))
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .alert("Conversation Action Error", isPresented: Binding(
@@ -589,7 +560,6 @@ struct RateLimitBadgeView: View, Equatable {
     }
 }
 
-
 enum ConversationScrollFollowPolicy {
     static let pauseDistance: CGFloat = 48
 }
@@ -1010,7 +980,6 @@ struct ConversationMessageList: View {
     let sendScrollToken: Int
     let activeThreadKey: ThreadKey
     let agentDirectoryVersion: UInt64
-    let hasMinigameLaunchButton: Bool
     var topInset: CGFloat = 0
     let olderTurnsCursor: String?
     let initialTurnsLoaded: Bool
@@ -1215,10 +1184,11 @@ struct ConversationMessageList: View {
             }
             if footerHeight > 0 {
                 TypingIndicator()
-                    .padding(.leading, hasMinigameLaunchButton ? 56 : 16)
+                    .padding(.leading, 16)
                     .padding(.bottom, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .allowsHitTesting(false)
+                    .transaction { $0.animation = nil }
             }
             if showOlderPageLoader, hasOlderTurns {
                 ConversationLoadingIndicator(label: "Loading earlier messages...")
@@ -1319,7 +1289,6 @@ struct ConversationMessageList: View {
             expandedTurnIDs.insert(turn.id)
         }
     }
-
 
     private func prefetchOlderTurnsIfNeeded(
         visibleTurnIDs: [String],
@@ -1784,8 +1753,10 @@ private struct ConversationInputBar: View {
     @State private var composerSelection = ComposerSelectionBox()
 
     private var pendingUserInputRequest: PendingUserInputRequest? {
-        guard let request = snapshot.pendingUserInputRequest else { return nil }
-        return appState.isPendingUserInputDismissed(id: request.id) ? nil : request
+        let requests = snapshot.pendingUserInputRequests.isEmpty
+            ? snapshot.pendingUserInputRequest.map { [$0] } ?? []
+            : snapshot.pendingUserInputRequests
+        return appState.visiblePendingUserInput(in: requests)
     }
 
     private var hasFixedFullAccess: Bool {
@@ -1912,13 +1883,16 @@ private struct ConversationInputBar: View {
     }
 
     private var composerSurface: some View {
-        VStack(spacing: 0) {
+        // Bind actions to the request this frame displays. Selection can change
+        // before a queued tap runs, especially when another question is closed.
+        let displayedRequest = pendingUserInputRequest
+        return VStack(spacing: 0) {
             ConversationComposerContentView(
                 attachedImages: attachedImages,
                 attachedFiles: attachedFiles,
                 collaborationMode: snapshot.collaborationMode,
                 activePlanProgress: snapshot.activePlanProgress,
-                pendingUserInputRequest: pendingUserInputRequest,
+                pendingUserInputRequest: displayedRequest,
                 hasPendingPlanImplementation: snapshot.pendingPlanImplementationPrompt != nil,
                 activeTaskSummary: snapshot.activeTaskSummary,
                 queuedFollowUps: snapshot.queuedFollowUps,
@@ -1929,6 +1903,11 @@ private struct ConversationInputBar: View {
                 contextPercent: contextPercent(),
                 isTurnActive: isTurnActive,
                 showModeChip: showModeChip,
+                showsPermissionMenu: snapshot.supportsPermissionMenu,
+                permissionThreadKey: snapshot.threadKey,
+                effectiveApprovalPolicy: snapshot.effectiveApprovalPolicy,
+                effectiveSandboxPolicy: snapshot.effectiveSandboxPolicy,
+                showsCollaborationMode: true,
                 modelLabel: composerModelLabel,
                 reasoningLabel: composerReasoningLabel,
                 voiceManager: voiceManager,
@@ -1936,8 +1915,14 @@ private struct ConversationInputBar: View {
                 onClearAttachment: clearAttachment,
                 onRemoveImage: removeAttachedImage,
                 onRemoveFileAttachment: removeFileAttachment,
-                onRespondToPendingUserInput: respondToPendingUserInput,
-                onDismissPendingUserInput: dismissPendingUserInput,
+                onRespondToPendingUserInput: { answers in
+                    guard let displayedRequest else { return }
+                    respondToPendingUserInput(displayedRequest, answers)
+                },
+                onDismissPendingUserInput: {
+                    guard let displayedRequest else { return }
+                    dismissPendingUserInput(displayedRequest)
+                },
                 onImplementPlan: { Task { await implementPlan() } },
                 onDismissPlanImplementation: dismissPlanImplementationPrompt,
                 onSteerQueuedFollowUp: steerQueuedFollowUp,
@@ -1975,6 +1960,14 @@ private struct ConversationInputBar: View {
         }
         .dropDestination(for: Data.self) { items, _ in
             let images = items.compactMap { UIImage(data: $0) }
+            guard !images.isEmpty else { return false }
+            for image in images {
+                appendAttachedImage(image)
+            }
+            return true
+        }
+        .dropDestination(for: ComposerDroppedImage.self) { items, _ in
+            let images = items.map(\.image)
             guard !images.isEmpty else { return false }
             for image in images {
                 appendAttachedImage(image)
@@ -2046,18 +2039,21 @@ private struct ConversationInputBar: View {
         }
     }
 
-    private func respondToPendingUserInput(_ answers: [String: [String]]) {
-        guard let pendingUserInputRequest else { return }
+    private func respondToPendingUserInput(_ pendingUserInputRequest: PendingUserInputRequest, _ answers: [String: [String]]) {
+        guard appState.pendingUserInputSending.insert(pendingUserInputRequest.id).inserted else { return }
         let payload: [PendingUserInputAnswer] = pendingUserInputRequest.questions.compactMap { question in
             guard let selectedAnswers = answers[question.id], !selectedAnswers.isEmpty else { return nil }
             return PendingUserInputAnswer(questionId: question.id, answers: selectedAnswers)
         }
         Task {
+            defer { appState.pendingUserInputSending.remove(pendingUserInputRequest.id) }
             do {
                 try await appModel.store.respondToUserInput(
                     requestId: pendingUserInputRequest.id,
                     answers: payload
                 )
+                appState.pendingUserInputSelections.removeValue(forKey: pendingUserInputRequest.id)
+                appState.pendingUserInputNotes.removeValue(forKey: pendingUserInputRequest.id)
             } catch {
                 slashErrorMessage = error.localizedDescription
             }
@@ -2120,8 +2116,7 @@ private struct ConversationInputBar: View {
         onSend(text, images, files, skillMentions, pluginMentions)
     }
 
-    private func dismissPendingUserInput() {
-        guard let request = snapshot.pendingUserInputRequest else { return }
+    private func dismissPendingUserInput(_ request: PendingUserInputRequest) {
         appState.dismissPendingUserInput(id: request.id)
     }
 
@@ -2239,7 +2234,6 @@ private struct ConversationInputBar: View {
             slashErrorMessage = error.localizedDescription
         }
     }
-
 
     private func clearFileSearchState(incrementGeneration: Bool = true) {
         let hadTask = fileSearchTask != nil
@@ -3402,14 +3396,22 @@ private func index(in text: String, offset: Int) -> String.Index? {
 }
 
 struct PendingUserInputPromptView: View {
+    @Environment(AppState.self) private var appState
     let request: PendingUserInputRequest
     let onSubmit: ([String: [String]]) -> Void
     let onDismiss: () -> Void
 
-    @State private var selectedAnswers: [String: String] = [:]
-    @State private var otherAnswers: [String: String] = [:]
+    private var selectedAnswers: [String: String] {
+        get { appState.pendingUserInputSelections[request.id, default: [:]] }
+        nonmutating set { appState.pendingUserInputSelections[request.id] = newValue }
+    }
+    private var otherAnswers: [String: String] {
+        get { appState.pendingUserInputNotes[request.id, default: [:]] }
+        nonmutating set { appState.pendingUserInputNotes[request.id] = newValue }
+    }
 
     private var promptTitle: String {
+        if request.isAsync { return AppLanguage.localizedString("Question") }
         let firstQuestion = request.questions.first?.question.lowercased() ?? ""
         if firstQuestion.contains("implement") && firstQuestion.contains("plan") {
             return AppLanguage.localizedString("Implement Plan")
@@ -3435,6 +3437,10 @@ struct PendingUserInputPromptView: View {
         request.questions.allSatisfy { !resolvedAnswer(for: $0).isEmpty }
     }
 
+    private var isCollapsed: Bool {
+        appState.isPendingUserInputDismissed(id: request.id)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -3444,102 +3450,120 @@ struct PendingUserInputPromptView: View {
                     .litterFont(.caption, weight: .semibold)
                     .foregroundColor(LitterTheme.textPrimary)
                 Spacer()
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark.circle.fill")
-                        .litterFont(.body)
-                        .foregroundColor(LitterTheme.textMuted)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss input request")
-            }
-
-            if let requesterLabel {
-                Text(requesterLabel)
-                    .litterFont(.caption2)
-                    .foregroundColor(LitterTheme.textMuted)
-            }
-
-            ForEach(request.questions, id: \.id) { question in
-                VStack(alignment: .leading, spacing: 6) {
-                    if let header = question.header, !header.isEmpty {
-                        Text(header.uppercased())
-                            .litterFont(.caption2, weight: .bold)
+                if isCollapsed {
+                    Button("Show") { appState.restorePendingUserInput(id: request.id) }
+                        .litterFont(.caption, weight: .semibold)
+                        .foregroundColor(LitterTheme.accent)
+                        .buttonStyle(.plain)
+                } else {
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .litterFont(.body)
                             .foregroundColor(LitterTheme.textMuted)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss input request")
+                }
+            }
 
-                    Text(question.question)
-                        .litterFont(.caption)
-                        .foregroundColor(LitterTheme.textPrimary)
+            if !isCollapsed {
+                if let requesterLabel {
+                    Text(requesterLabel)
+                        .litterFont(.caption2)
+                        .foregroundColor(LitterTheme.textMuted)
+                }
 
-                    if question.isSecret || (!question.isOtherAllowed && question.options.isEmpty) {
-                        Text("This prompt type is not fully supported in the current iOS client.")
-                            .litterFont(.caption2)
-                            .foregroundColor(LitterTheme.textSecondary)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if !question.options.isEmpty {
-                                // ViewThatFits + VStack fallback so long
-                                // option labels wrap to a new row instead
-                                // of squeezing a short option into a narrow
-                                // column with character-by-character wrapping.
-                                let optionButtons = ForEach(question.options, id: \.label) { option in
-                                    let isSelected =
-                                        selectedAnswers[question.id] == option.label &&
-                                        trimmedOtherAnswer(for: question).isEmpty
-                                    Button {
-                                        selectedAnswers[question.id] = option.label
-                                        otherAnswers[question.id] = ""
-                                    } label: {
-                                        Text(option.label)
-                                            .litterFont(.caption2, weight: .semibold)
-                                            .foregroundColor(isSelected ? Color.black : LitterTheme.textPrimary)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(isSelected ? LitterTheme.accent : LitterTheme.surface.opacity(0.8))
-                                            .clipShape(Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 8) { optionButtons }
-                                    VStack(alignment: .leading, spacing: 8) { optionButtons }
-                                }
-                            }
+                ForEach(request.questions, id: \.id) { question in
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let header = question.header, !header.isEmpty {
+                            Text(header.uppercased())
+                                .litterFont(.caption2, weight: .bold)
+                                .foregroundColor(LitterTheme.textMuted)
+                        }
 
-                            if question.isOtherAllowed {
-                                TextField(
-                                    AppLanguage.localizedString(
-                                        question.options.isEmpty ? "Enter response" : "Other response"
-                                    ),
-                                    text: otherAnswerBinding(for: question)
-                                )
+                        Text(question.question)
+                            .litterFont(.caption)
+                            .foregroundColor(LitterTheme.textPrimary)
+
+                        if question.isSecret || (!question.isOtherAllowed && question.options.isEmpty) {
+                            Text("This prompt type is not fully supported in the current iOS client.")
                                 .litterFont(.caption2)
-                                .foregroundColor(LitterTheme.textPrimary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 8)
-                                .background(LitterTheme.surface.opacity(0.8))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .foregroundColor(LitterTheme.textSecondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if !question.options.isEmpty {
+                                    // ViewThatFits + VStack fallback so long
+                                    // option labels wrap to a new row instead
+                                    // of squeezing a short option into a narrow
+                                    // column with character-by-character wrapping.
+                                    let optionButtons = ForEach(question.options, id: \.label) { option in
+                                        let isSelected =
+                                            selectedAnswer(for: question) == option.label &&
+                                            trimmedOtherAnswer(for: question).isEmpty
+                                        Button {
+                                            selectedAnswers[question.id] = option.label
+                                            otherAnswers[question.id] = ""
+                                        } label: {
+                                            Text(option.label)
+                                                .litterFont(.caption2, weight: .semibold)
+                                                .foregroundColor(isSelected ? Color.black : LitterTheme.textPrimary)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(isSelected ? LitterTheme.accent : LitterTheme.surface.opacity(0.8))
+                                                .clipShape(Capsule())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    ViewThatFits(in: .horizontal) {
+                                        HStack(spacing: 8) { optionButtons }
+                                        VStack(alignment: .leading, spacing: 8) { optionButtons }
+                                    }
+                                }
+
+                                if question.isOtherAllowed {
+                                    TextField(
+                                        AppLanguage.localizedString(
+                                            question.options.isEmpty ? "Enter response" : "Other response"
+                                        ),
+                                        text: otherAnswerBinding(for: question)
+                                    )
+                                    .litterFont(.caption2)
+                                    .foregroundColor(LitterTheme.textPrimary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .background(LitterTheme.surface.opacity(0.8))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if canSubmit {
-                Button("Submit") {
-                    let answers = request.questions.reduce(into: [String: [String]]()) { result, question in
-                        let answer = resolvedAnswer(for: question)
-                        guard !answer.isEmpty else { return }
-                        result[question.id] = [answer]
-                    }
-                    onSubmit(answers)
+                if request.isAsync {
+                    Button("Skip") { onSubmit([:]) }
+                        .litterFont(.caption, weight: .semibold)
+                        .foregroundColor(LitterTheme.textSecondary)
+                        .buttonStyle(.plain)
+                        .disabled(appState.pendingUserInputSending.contains(request.id))
                 }
-                .litterFont(.caption, weight: .semibold)
-                .foregroundColor(Color.black)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(LitterTheme.accent)
-                .clipShape(Capsule())
+
+                if canSubmit {
+                    Button("Submit") {
+                        let answers = request.questions.reduce(into: [String: [String]]()) { result, question in
+                            let answer = resolvedAnswer(for: question)
+                            guard !answer.isEmpty else { return }
+                            result[question.id] = [answer]
+                        }
+                        onSubmit(answers)
+                    }
+                    .disabled(appState.pendingUserInputSending.contains(request.id))
+                    .litterFont(.caption, weight: .semibold)
+                    .foregroundColor(Color.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(LitterTheme.accent)
+                    .clipShape(Capsule())
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -3566,8 +3590,12 @@ struct PendingUserInputPromptView: View {
         if !other.isEmpty {
             return other
         }
-        return selectedAnswers[question.id, default: ""]
+        return selectedAnswer(for: question)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func selectedAnswer(for question: PendingUserInputQuestion) -> String {
+        selectedAnswers[question.id] ?? (request.isAsync ? question.options.first?.label ?? "" : "")
     }
 }
 
@@ -3760,77 +3788,58 @@ private struct QueuedFollowUpPreviewStyle {
     }
 }
 
-private struct ConversationLoadingIndicator: View {
-    let label: String
-    @State private var shimmerOffset: CGFloat = -1
+private struct ShimmeringStatusText: View {
+    let text: LocalizedStringKey
+    let highlight: Color
 
     var body: some View {
-        Text(LocalizedStringKey(label))
-            .litterFont(.body, weight: .medium)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [
-                        LitterTheme.textSecondary.opacity(0.4),
-                        LitterTheme.textSecondary.opacity(0.7),
-                        LitterTheme.textSecondary.opacity(0.4),
-                    ],
-                    startPoint: UnitPoint(x: shimmerOffset - 0.3, y: 0.5),
-                    endPoint: UnitPoint(x: shimmerOffset + 0.3, y: 0.5)
+        // Drive the gradient from a timeline instead of a repeating view
+        // animation. The old `repeatForever` transaction also interpolated
+        // the text's position while the footer, safe area, and collection
+        // layout settled on re-entry, so "Thinking" slid up and down.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let phase = Self.phase(at: context.date)
+            Text(text)
+                .litterFont(.body, weight: .medium)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [
+                            LitterTheme.textSecondary.opacity(0.4),
+                            highlight,
+                            LitterTheme.textSecondary.opacity(0.4),
+                        ],
+                        startPoint: UnitPoint(x: phase - 0.3, y: 0.5),
+                        endPoint: UnitPoint(x: phase + 0.3, y: 0.5)
+                    )
                 )
-            )
-            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false), value: shimmerOffset)
-            .onAppear {
-                shimmerOffset = 2
-            }
+                .fixedSize(horizontal: true, vertical: true)
+        }
+        .transaction { $0.animation = nil }
+    }
+
+    private static func phase(at date: Date) -> CGFloat {
+        let duration = 1.5
+        let progress = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: duration) / duration
+        return -1 + CGFloat(progress) * 3
     }
 }
 
-private struct MinigameLaunchButton: View {
-    let action: () -> Void
+private struct ConversationLoadingIndicator: View {
+    let label: String
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "gamecontroller.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(LitterTheme.accent)
-                .frame(width: 36, height: 36)
-                .background(
-                    Circle()
-                        .fill(LitterTheme.surface.opacity(0.9))
-                        .overlay(
-                            Circle()
-                                .stroke(LitterTheme.accent.opacity(0.3), lineWidth: 0.5)
-                        )
-                )
-                .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Play a minigame while waiting")
+        ShimmeringStatusText(
+            text: LocalizedStringKey(label),
+            highlight: LitterTheme.textSecondary.opacity(0.7)
+        )
     }
 }
 
 struct TypingIndicator: View {
-    @State private var shimmerOffset: CGFloat = -1
-
     var body: some View {
-        Text("Thinking")
-            .litterFont(.body, weight: .medium)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [
-                        LitterTheme.textSecondary.opacity(0.4),
-                        LitterTheme.accent,
-                        LitterTheme.textSecondary.opacity(0.4),
-                    ],
-                    startPoint: UnitPoint(x: shimmerOffset - 0.3, y: 0.5),
-                    endPoint: UnitPoint(x: shimmerOffset + 0.3, y: 0.5)
-                )
-            )
-            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false), value: shimmerOffset)
+        ShimmeringStatusText(text: "Thinking", highlight: LitterTheme.accent)
             .padding(.leading, 12)
-            .onAppear {
-                shimmerOffset = 2
-            }
     }
 }
 

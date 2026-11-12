@@ -59,7 +59,6 @@ jobs:
               - 'apps/ios/scripts/app-store-release.sh'
               - 'apps/ios/scripts/build-ghostty.sh'
               - 'apps/ios/scripts/build-rust.sh'
-              - 'apps/ios/scripts/download-alpine-fs.sh'
               - 'apps/ios/scripts/regenerate-project.sh'
               - 'apps/ios/scripts/release-common.sh'
               - 'apps/ios/scripts/sanitize-ios-frameworks.sh'
@@ -672,7 +671,6 @@ jobs:
           trap 'status=$?; echo "==> sccache stats"; sccache --show-stats || true; if [ -f "$SCCACHE_ERROR_LOG" ]; then echo "==> sccache error log"; tail -200 "$SCCACHE_ERROR_LOG" || true; fi; exit $status' EXIT
           sccache --zero-stats || true
           ./apps/ios/scripts/build-rust.sh --preserve-current --device-only --skip-bindings
-          make alpine-fs
           ./apps/ios/scripts/regenerate-project.sh
           echo "==> sccache stats after iOS release prep"
           sccache --show-stats || true
@@ -681,7 +679,6 @@ jobs:
         run: |
           mkdir -p .ci-prep/ios
           tar -czf .ci-prep/ios/ios-release-prep.tgz -C . \
-            apps/ios/Resources/fs \
             apps/ios/GeneratedRust \
             apps/ios/Sources/Litter/Bridge/UniFFICodexClient.generated.swift
 
@@ -971,7 +968,6 @@ jobs:
           trap 'status=$?; echo "==> sccache stats"; sccache --show-stats || true; if [ -f "$SCCACHE_ERROR_LOG" ]; then echo "==> sccache error log"; tail -200 "$SCCACHE_ERROR_LOG" || true; fi; exit $status' EXIT
           sccache --zero-stats || true
           ./apps/ios/scripts/build-rust.sh --preserve-current --macabi-only --skip-bindings
-          make alpine-fs
           ./apps/ios/scripts/regenerate-project.sh
           echo "==> sccache stats after Mac release prep"
           sccache --show-stats || true
@@ -980,7 +976,6 @@ jobs:
         run: |
           mkdir -p .ci-prep/mac
           tar -czf .ci-prep/mac/mac-release-prep.tgz -C . \
-            apps/ios/Resources/fs \
             apps/ios/GeneratedRust \
             apps/ios/Sources/Litter/Bridge/UniFFICodexClient.generated.swift
 

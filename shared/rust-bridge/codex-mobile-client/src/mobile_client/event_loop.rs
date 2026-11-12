@@ -38,7 +38,6 @@ impl MobileClient {
         let oauth_session = Arc::clone(&session);
         let sessions = Arc::clone(&self.sessions);
         let app_store = Arc::clone(&self.app_store);
-        let widget_waiters = Arc::clone(&self.widget_waiters);
         let saved_apps_directory = Arc::clone(&self.saved_apps_directory);
         Self::spawn_detached(async move {
             if !session_is_current(&sessions, &server_id, &oauth_session) {
@@ -145,14 +144,12 @@ impl MobileClient {
                             let session = Arc::clone(&oauth_session);
                             let sessions = Arc::clone(&sessions);
                             let app_store = Arc::clone(&app_store);
-                            let widget_waiters = Arc::clone(&widget_waiters);
                             let saved_apps_directory = Arc::clone(&saved_apps_directory);
                             MobileClient::spawn_detached(async move {
                                 if let Err(error) = handle_dynamic_tool_call_request(
                                     session,
                                     sessions,
                                     app_store,
-                                    widget_waiters,
                                     saved_apps_directory,
                                     request_id,
                                     params,
@@ -364,9 +361,7 @@ impl MobileClient {
             upstream::ClientRequest::ThreadRead { params, .. } => Some(params.thread_id.as_str()),
             upstream::ClientRequest::ThreadResume { params, .. } => Some(params.thread_id.as_str()),
             upstream::ClientRequest::ThreadFork { params, .. } => Some(params.thread_id.as_str()),
-            upstream::ClientRequest::ThreadRevert { params, .. } => {
-                Some(params.thread_id.as_str())
-            }
+            upstream::ClientRequest::ThreadRevert { params, .. } => Some(params.thread_id.as_str()),
             upstream::ClientRequest::ThreadUnsubscribe { params, .. } => {
                 Some(params.thread_id.as_str())
             }
@@ -386,7 +381,9 @@ impl MobileClient {
             // and, on a multi-runtime host, the cancel lands on the ChatGPT
             // app-server which doesn't know the OpenCode thread id
             // (`server error -32600: thread not found`).
-            upstream::ClientRequest::TurnInterrupt { params, .. } => Some(params.thread_id.as_str()),
+            upstream::ClientRequest::TurnInterrupt { params, .. } => {
+                Some(params.thread_id.as_str())
+            }
             _ => None,
         };
         thread_id
@@ -1799,7 +1796,9 @@ mod tests {
             script_path: None,
             id: "cmd-1".into(),
             command: "cat crates/krusty-cli/src/main.rs".into(),
-            cwd: AbsolutePathBuf::from_absolute_path("/repo").expect("absolute cwd").into(),
+            cwd: AbsolutePathBuf::from_absolute_path("/repo")
+                .expect("absolute cwd")
+                .into(),
             process_id: None,
             source: CommandExecutionSource::Agent,
             status: CommandExecutionStatus::Completed,
@@ -1807,7 +1806,8 @@ mod tests {
                 command: "cat crates/krusty-cli/src/main.rs".into(),
                 name: "main.rs".into(),
                 path: AbsolutePathBuf::from_absolute_path("/repo/crates/krusty-cli/src/main.rs")
-                    .expect("absolute read path").into(),
+                    .expect("absolute read path")
+                    .into(),
             }],
             aggregated_output: None,
             exit_code: Some(0),
@@ -1831,10 +1831,7 @@ mod tests {
         };
 
         assert_eq!(cwd.as_str(), "/repo");
-        assert_eq!(
-            path.as_str(),
-            "/repo/crates/krusty-cli/src/main.rs"
-        );
+        assert_eq!(path.as_str(), "/repo/crates/krusty-cli/src/main.rs");
     }
 
     /// A v0.125+ server already emits the tagged-enum shape. Normalization

@@ -49,7 +49,7 @@ static APPS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 ///   `state/{id}.json`) and the primary key for all post-promotion
 ///   operations (rename, replace_html, delete, save_state, load_state).
 /// - `app_id`: model-chosen slug (e.g. `"fitness-tracker"`) used as a
-///   composite-key identity *together with* `origin_thread_id`. Reusing
+///   composite-key identity *together with* its server and `origin_thread_id`. Reusing
 ///   the same slug within the same thread updates the existing app;
 ///   picking a fresh slug creates a new one. Slugs are NOT unique across
 ///   threads — `fitness-tracker` in thread A and in thread B are
@@ -58,7 +58,7 @@ static APPS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 pub struct SavedApp {
     pub id: String,
     /// Model-facing identity. Slug (lowercase, hyphen-separated). Unique
-    /// only within a given `origin_thread_id`.
+    /// only within a given `(origin_server_id, origin_thread_id)`.
     #[serde(default)]
     pub app_id: String,
     pub title: String,
@@ -68,6 +68,8 @@ pub struct SavedApp {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub origin_thread_id: Option<String>,
+    #[serde(default)]
+    pub origin_server_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
@@ -336,12 +338,14 @@ fn derive_slug_from_title(raw: &str) -> String {
 fn disambiguate_slug(
     base: &str,
     origin_thread_id: Option<&str>,
+    origin_server_id: Option<&str>,
     apps: &[SavedApp],
     exclude_uuid: Option<&str>,
 ) -> String {
     let conflicts = |candidate: &str| -> bool {
         apps.iter().any(|existing| {
             existing.origin_thread_id.as_deref() == origin_thread_id
+                && existing.origin_server_id.as_deref() == origin_server_id
                 && existing.app_id == candidate
                 && Some(existing.id.as_str()) != exclude_uuid
         })
@@ -382,7 +386,13 @@ fn migrate_missing_slugs(index: &mut SavedAppsSnapshot) {
         // minus the entry being migrated, so clone the thread id out.
         let thread = index.apps[i].origin_thread_id.clone();
         let self_uuid = index.apps[i].id.clone();
-        let slug = disambiguate_slug(&base, thread.as_deref(), &index.apps, Some(&self_uuid));
+        let slug = disambiguate_slug(
+            &base,
+            thread.as_deref(),
+            index.apps[i].origin_server_id.as_deref(),
+            &index.apps,
+            Some(&self_uuid),
+        );
         index.apps[i].app_id = slug;
     }
 }
@@ -459,6 +469,30 @@ pub fn saved_app_upsert(
     height: f64,
     schema_version: u32,
 ) -> Result<SavedApp, SavedAppError> {
+    saved_app_upsert_for_server(
+        directory,
+        None,
+        origin_thread_id,
+        app_id,
+        title,
+        widget_html,
+        width,
+        height,
+        schema_version,
+    )
+}
+
+pub(crate) fn saved_app_upsert_for_server(
+    directory: String,
+    origin_server_id: Option<String>,
+    origin_thread_id: String,
+    app_id: String,
+    title: String,
+    widget_html: String,
+    width: f64,
+    height: f64,
+    schema_version: u32,
+) -> Result<SavedApp, SavedAppError> {
     let result = (|| -> Result<SavedApp, SavedAppError> {
         let _guard = acquire_write_guard();
         let slug = derive_slug_from_title(&app_id);
@@ -472,7 +506,9 @@ pub fn saved_app_upsert(
         migrate_missing_slugs(&mut index);
 
         let existing_idx = index.apps.iter().position(|app| {
-            app.origin_thread_id.as_deref() == Some(origin_thread_id.as_str()) && app.app_id == slug
+            app.origin_server_id == origin_server_id
+                && app.origin_thread_id.as_deref() == Some(origin_thread_id.as_str())
+                && app.app_id == slug
         });
 
         if let Some(i) = existing_idx {
@@ -501,8 +537,13 @@ pub fn saved_app_upsert(
             // this thread — legitimate callers reusing the exact slug
             // are handled by the `existing_idx` branch above, so any
             // collision here means two concurrent sibling slugs.
-            let final_slug =
-                disambiguate_slug(&slug, Some(origin_thread_id.as_str()), &index.apps, None);
+            let final_slug = disambiguate_slug(
+                &slug,
+                Some(origin_thread_id.as_str()),
+                origin_server_id.as_deref(),
+                &index.apps,
+                None,
+            );
             let uuid = Uuid::new_v4().to_string();
             let title_final = if title.trim().is_empty() {
                 // Fall back to something readable from the slug rather
@@ -521,6 +562,7 @@ pub fn saved_app_upsert(
                 created_at_ms: now,
                 updated_at_ms: now,
                 origin_thread_id: Some(origin_thread_id),
+                origin_server_id,
             };
             write_html(&directory, &uuid, &widget_html)?;
             index.apps.push(app.clone());
@@ -586,6 +628,7 @@ pub fn saved_app_promote(
         let slug = disambiguate_slug(
             &derive_slug_from_title(&sanitized_title),
             origin_thread_id.as_deref(),
+            None,
             &index.apps,
             None,
         );
@@ -600,6 +643,7 @@ pub fn saved_app_promote(
             created_at_ms: now,
             updated_at_ms: now,
             origin_thread_id,
+            origin_server_id: None,
         };
 
         write_html(&directory, &id, &widget_html)?;
@@ -802,9 +846,7 @@ pub(crate) fn abbreviated_state_shape(directory: &str, app_id: &str) -> Option<S
                     .unwrap_or_else(|| "[]".into());
                 format!("[{}, ... ({} items)]", first, items.len())
             }
-            serde_json::Value::Object(_) => {
-                "{...}".to_string()
-            }
+            serde_json::Value::Object(_) => "{...}".to_string(),
             serde_json::Value::String(s) => format!("{:?}", truncate(s, 120)),
             other => truncate(&other.to_string(), 120),
         };

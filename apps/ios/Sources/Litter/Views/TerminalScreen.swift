@@ -65,7 +65,7 @@ struct TerminalScreen: View {
                 controller.dismissSshTrustChallenge()
             }
         } message: {
-            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(controller.sshTrustChallenge?.fingerprint ?? "unknown")")
+            Text("The SSH identity for this server changed. This can happen after a server is recreated, but may also indicate a man-in-the-middle attack. New fingerprint: \(controller.sshTrustChallenge?.fingerprint ?? AppLanguage.localizedString("Unknown"))")
         }
         .task {
             attachOutputSink()

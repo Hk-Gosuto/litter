@@ -1105,6 +1105,7 @@ mod tests {
         HydratedConversationItem {
             id: item_id.to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: text.to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -1578,6 +1579,45 @@ mod tests {
             "thread/read response must mark initial_turns_loaded"
         );
         assert!(snapshot.older_turns_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn apply_thread_read_response_keeps_existing_permissions_when_response_omits_them() {
+        let client = MobileClient::new();
+        client.app_store.upsert_server(
+            &ServerConfig {
+                server_id: "srv".to_string(),
+                display_name: "Server".to_string(),
+                host: "localhost".to_string(),
+                port: 8390,
+                websocket_url: None,
+                is_local: true,
+                tls: false,
+            },
+            ServerHealthSnapshot::Connected,
+        );
+        let mut existing = test_thread_snapshot();
+        existing.effective_approval_policy = Some(crate::types::AppAskForApproval::Never);
+        existing.effective_sandbox_policy = Some(crate::types::AppSandboxPolicy::DangerFullAccess);
+        client.app_store.upsert_thread_snapshot(existing);
+
+        let response = upstream::ThreadReadResponse {
+            thread: test_upstream_thread("thread-1"),
+            approval_policy: None,
+            sandbox: None,
+        };
+        let key = client
+            .apply_thread_read_response("srv", &response)
+            .expect("thread/read reconciliation");
+        let snapshot = client.app_store.thread_snapshot(&key).expect("snapshot");
+        assert_eq!(
+            snapshot.effective_approval_policy,
+            Some(crate::types::AppAskForApproval::Never)
+        );
+        assert_eq!(
+            snapshot.effective_sandbox_policy,
+            Some(crate::types::AppSandboxPolicy::DangerFullAccess)
+        );
     }
 
     /// Regression for task #12. A `thread/read` response with embedded

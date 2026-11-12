@@ -348,9 +348,6 @@ jobs:
       - name: Build Rust for iOS simulator
         run: env -u CARGO_INCREMENTAL ./apps/ios/scripts/build-rust.sh --preserve-current --fast-sim --skip-bindings
 
-      - name: Download Alpine rootfs
-        run: make alpine-fs
-
       - name: Generate Xcode project
         run: ./apps/ios/scripts/regenerate-project.sh
 

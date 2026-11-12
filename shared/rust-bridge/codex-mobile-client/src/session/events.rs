@@ -852,6 +852,7 @@ fn pending_user_input_request_from_upstream(
     }
 
     Some(PendingUserInputRequest {
+        is_async: false,
         id: request_id_to_string(request_id),
         server_id: server_id.to_string(),
         thread_id: params.thread_id.clone(),
@@ -875,6 +876,7 @@ fn mcp_elicitation_user_input_request_from_upstream(
     }
 
     let request = PendingUserInputRequest {
+        is_async: false,
         id: request_id_string.clone(),
         server_id: server_id.to_string(),
         thread_id: params.thread_id.clone(),
@@ -1248,6 +1250,7 @@ fn pending_user_input_request_from_raw(
     }
 
     Some(PendingUserInputRequest {
+        is_async: false,
         id: request_id,
         server_id: server_id.to_string(),
         thread_id: params.thread_id,

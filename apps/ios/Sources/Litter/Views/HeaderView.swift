@@ -145,6 +145,12 @@ struct HeaderView: View {
                 Image(systemName: "lock.open.fill")
                     .font(LitterFont.styled(size: 10, weight: .semibold))
                     .foregroundColor(LitterTheme.danger)
+                    .accessibilityLabel(Text("Full access"))
+            } else if headerPermissionPreset == .readOnly {
+                Image(systemName: "eye")
+                    .font(LitterFont.styled(size: 10, weight: .semibold))
+                    .foregroundColor(LitterTheme.textSecondary)
+                    .accessibilityLabel(Text("Read only"))
             }
 
         }
@@ -571,20 +577,6 @@ private func modelProviderName(_ model: ModelInfo) -> String {
         .map { $0.capitalized }.joined(separator: " ")
 }
 
-private func modelNameWithinProvider(_ model: ModelInfo) -> String {
-    var name = modelPickerDisplayName(model)
-    if model.id.contains("/"), let catalog = model.id.split(separator: "/", maxSplits: 1).first {
-        let suffix = " (\(catalog))"
-        if name.lowercased().hasSuffix(suffix.lowercased()) {
-            name.removeLast(suffix.count)
-        }
-    }
-    if let providerId = model.providerId, name.hasPrefix("\(providerId)/") {
-        name = String(name.dropFirst(providerId.count + 1))
-    }
-    return name
-}
-
 private func modelProviderGroups(for models: [ModelInfo]) -> [ModelProviderGroup] {
     Dictionary(grouping: models) {
         let provider = $0.providerId.flatMap { $0.isEmpty ? nil : "provider:\($0)" } ?? "runtime"
@@ -629,35 +621,6 @@ private final class ModelProviderGroupCache {
         cachedModels = models
         cachedFingerprint = fingerprint
         return cachedGroups
-    }
-}
-
-@ViewBuilder
-private func modelCatalogNotice(
-    loaded: Bool,
-    error: String?,
-    hasModels: Bool,
-    horizontalPadding: CGFloat,
-    onRetry: @escaping () -> Void
-) -> some View {
-    let message = error ?? (!loaded ? "Loading models..." : (hasModels ? nil : "No models available"))
-    if let message {
-        VStack(spacing: 8) {
-            Text(message)
-                .litterFont(.caption)
-                .foregroundColor(LitterTheme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-            if error != nil {
-                Button("Retry", action: onRetry)
-                    .litterFont(.caption, weight: .semibold)
-                    .foregroundColor(LitterTheme.accent)
-                    .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, 16)
     }
 }
 
@@ -912,257 +875,6 @@ private struct InAppSafariView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
-struct ModelSelectorSheet: View {
-    let models: [ModelInfo]
-    var catalogLoaded = false
-    var catalogError: String?
-    var onRetryModels: () -> Void = {}
-    @Binding var selectedModel: String
-    @Binding var selectedAgentRuntimeKind: AgentRuntimeKind?
-    @Binding var reasoningEffort: String
-    var isReasoningEffortLocked = false
-    @AppStorage("fastMode") private var fastMode = false
-    @State private var modelSearchQuery = ""
-    @State private var derivationCache = ModelSelectorDerivationCache()
-    @State private var searchIndexCache = ModelSearchIndexCache()
-    @State private var providerGroupCache = ModelProviderGroupCache()
-    @State private var selectedRuntimeFilter: AgentRuntimeKind?
-    @State private var initializedRuntimeFilter = false
-
-    /// Single derivation pass shared by `body` and the event handlers.
-    private var derived: ModelSelectorDerivation {
-        derivationCache.derivation(
-            models: models,
-            selectedRuntimeFilter: selectedRuntimeFilter
-        )
-    }
-
-    private func currentModel(in visibleModels: [ModelInfo]) -> ModelInfo? {
-        visibleModels.first {
-            modelMatchesSelection(
-                $0,
-                selectedModel,
-                runtime: selectedAgentRuntimeKind
-            )
-        }
-    }
-
-    var body: some View {
-        let derived = self.derived
-        let currentModel = self.currentModel(in: derived.visibleModels)
-        let visibleModels = searchIndexCache
-            .searchIndex(for: derived.runtimeScopedModels)
-            .results(matching: modelSearchQuery)
-        let selectedModelIsAmp: Bool = {
-            guard let model = currentModel else { return false }
-            return visibleModeNames(for: model.agentRuntimeKind) != nil
-        }()
-        let effectiveReasoningEfforts = isReasoningEffortLocked ? [] : (currentModel?.supportedReasoningEfforts ?? [])
-
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                modelSearchField
-                runtimeFilterRow(derived)
-
-                modelCatalogNotice(
-                    loaded: catalogLoaded,
-                    error: catalogError,
-                    hasModels: !derived.visibleModels.isEmpty,
-                    horizontalPadding: 20,
-                    onRetry: onRetryModels
-                )
-
-                if !derived.visibleModels.isEmpty && visibleModels.isEmpty {
-                    Text("No matching models")
-                        .litterFont(.caption)
-                        .foregroundColor(LitterTheme.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 24)
-                }
-
-                ForEach(providerGroupCache.groups(for: visibleModels)) { group in
-                    Text(group.name.uppercased())
-                        .litterFont(.caption2, weight: .semibold)
-                        .foregroundColor(LitterTheme.textMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                        .padding(.bottom, 4)
-
-                    ForEach(group.models, id: \.runtimeScopedID) { model in
-                        Button {
-                            selectedModel = model.id
-                            selectedAgentRuntimeKind = model.agentRuntimeKind
-                            let usesModes = visibleModeNames(for: model.agentRuntimeKind) != nil
-                            if isReasoningEffortLocked && usesModes {
-                                reasoningEffort = ""
-                            } else {
-                                reasoningEffort = defaultReasoningEffortSelection(for: model)
-                            }
-                        } label: {
-                            HStack {
-                                ModelRuntimeIcon(kind: model.agentRuntimeKind)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text(modelNameWithinProvider(model))
-                                            .litterFont(.footnote)
-                                            .foregroundColor(LitterTheme.textPrimary)
-                                        if model.isDefault {
-                                            Text("default")
-                                                .litterFont(.caption2, weight: .medium)
-                                                .foregroundColor(LitterTheme.accent)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 1)
-                                                .background(LitterTheme.accent.opacity(0.15))
-                                                .clipShape(Capsule())
-                                        }
-                                    }
-                                    Text(model.description)
-                                        .litterFont(.caption2)
-                                        .foregroundColor(LitterTheme.textSecondary)
-                                }
-                                Spacer()
-                                if modelMatchesSelection(
-                                    model,
-                                    selectedModel,
-                                    runtime: selectedAgentRuntimeKind
-                                ) {
-                                    Image(systemName: "checkmark")
-                                        .litterFont(size: 12, weight: .medium)
-                                        .foregroundColor(LitterTheme.accent)
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                        }
-                        if model.id != group.models.last?.id {
-                            Divider().background(LitterTheme.separator).padding(.leading, 20)
-                        }
-                    }
-                }
-
-                if isReasoningEffortLocked && selectedModelIsAmp {
-                    Text("Reasoning effort is locked after the first message.")
-                        .litterFont(.caption2)
-                        .foregroundColor(LitterTheme.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                } else if !effectiveReasoningEfforts.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(effectiveReasoningEfforts) { effort in
-                                Button {
-                                    reasoningEffort = effort.reasoningEffort.wireValue
-                                } label: {
-                                    Text(effort.reasoningEffort.wireValue)
-                                        .litterFont(.caption2, weight: .medium)
-                                        .foregroundColor(effort.reasoningEffort.wireValue == reasoningEffort ? LitterTheme.textOnAccent : LitterTheme.textPrimary)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(effort.reasoningEffort.wireValue == reasoningEffort ? LitterTheme.accent : LitterTheme.surfaceLight)
-                                        .clipShape(Capsule())
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                    }
-                }
-
-                Divider().background(LitterTheme.separator).padding(.leading, 20)
-
-                HStack(spacing: 6) {
-                    Button {
-                        fastMode.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "bolt.fill")
-                                .litterFont(size: 9, weight: .semibold)
-                            Text("Fast")
-                                .litterFont(.caption2, weight: .medium)
-                        }
-                        .foregroundColor(fastMode ? LitterTheme.textOnAccent : LitterTheme.textPrimary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(fastMode ? LitterTheme.warning : LitterTheme.surfaceLight)
-                        .clipShape(Capsule())
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-
-            }
-        }
-        .padding(.top, 20)
-        .background(.ultraThinMaterial)
-        .onAppear {
-            synchronizeRuntimeFilter()
-        }
-        .onChange(of: models) { _, _ in
-            synchronizeRuntimeFilter()
-        }
-        .onChange(of: selectedAgentRuntimeKind) { _, _ in
-            synchronizeRuntimeFilter()
-        }
-    }
-
-    private var modelSearchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(LitterTheme.textMuted)
-            TextField("Search models", text: $modelSearchQuery)
-                .litterFont(.body)
-                .foregroundStyle(LitterTheme.textPrimary)
-                .tint(LitterTheme.accent)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-            if !modelSearchQuery.isEmpty {
-                Button { modelSearchQuery = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(LitterTheme.textMuted)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 10)
-    }
-
-    @ViewBuilder
-    private func runtimeFilterRow(_ derived: ModelSelectorDerivation) -> some View {
-        if derived.runtimeBuckets.count > 1 {
-            RuntimeFilterRow(
-                buckets: derived.runtimeBuckets,
-                totalCount: derived.visibleModels.count,
-                selectedRuntime: derived.activeRuntimeFilter,
-                onSelect: { selectedRuntimeFilter = $0 }
-            )
-            .padding(.bottom, 10)
-        }
-    }
-
-    private func synchronizeRuntimeFilter() {
-        let derived = self.derived
-        if !initializedRuntimeFilter {
-            let initial = selectedAgentRuntimeKind
-                ?? self.currentModel(in: derived.visibleModels)?.agentRuntimeKind
-            if let initial, derived.runtimeBuckets.contains(where: { $0.kind == initial }) {
-                selectedRuntimeFilter = initial
-            }
-            initializedRuntimeFilter = true
-            return
-        }
-        if let selectedRuntimeFilter,
-           !derived.runtimeBuckets.contains(where: { $0.kind == selectedRuntimeFilter }) {
-            self.selectedRuntimeFilter = nil
-        }
-    }
-}
-
 private struct RuntimeModelBucket: Identifiable {
     let kind: AgentRuntimeKind
     let count: Int
@@ -1280,16 +992,6 @@ private struct ModelSearchIndex {
             }
         }
         return matches
-    }
-}
-
-private struct ModelRuntimeIcon: View {
-    let kind: AgentRuntimeKind
-
-    var body: some View {
-        AgentIconView(kind: kind, size: 20)
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            .accessibilityLabel(kind.displayLabel)
     }
 }
 

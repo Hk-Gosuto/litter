@@ -229,9 +229,8 @@ fun HomeModelChip(
             sheetState = sheetState,
             containerColor = LitterTheme.surface,
         ) {
-            // No thread yet — the panel hides the Plan toggle, and the
-            // Full-access toggle writes to the shared `AppLaunchState`
-            // defaults via `updateThreadPermissions(threadKey = null)`.
+            // No thread yet. Plan mode is a pre-thread choice, same as the
+            // new-session picker on iOS.
             ModelSelectorPanel(
                 thread = null,
                 availableModels = availableModels,
@@ -242,9 +241,11 @@ fun HomeModelChip(
                         scope.launch { appModel.loadAvailableModelsIfNeeded(it, force = true) }
                     }
                 },
-                onToggleMode = null,
                 fastMode = HeaderOverrides.pendingFastMode,
                 onFastModeChange = { HeaderOverrides.pendingFastMode = it },
+                showPlanMode = true,
+                planMode = HeaderOverrides.pendingPlanMode,
+                onPlanModeChange = { HeaderOverrides.pendingPlanMode = it },
             )
         }
     }

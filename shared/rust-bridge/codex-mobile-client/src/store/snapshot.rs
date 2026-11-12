@@ -307,7 +307,9 @@ impl ThreadItems {
     pub fn push(&mut self, item: HydratedConversationItem) {
         self.revision = next_items_revision();
         let len = self.items.len();
-        Arc::make_mut(&mut self.index).entry(item.id.clone()).or_insert(len);
+        Arc::make_mut(&mut self.index)
+            .entry(item.id.clone())
+            .or_insert(len);
         Arc::make_mut(&mut self.items).push(item);
     }
 
@@ -525,6 +527,7 @@ pub struct AppSnapshot {
     pub pending_approvals: Vec<PendingApproval>,
     pub(crate) pending_approval_seeds: HashMap<PendingApprovalKey, PendingApprovalSeed>,
     pub pending_user_inputs: Vec<PendingUserInputRequest>,
+    pub(crate) resolved_async_questions: HashMap<ThreadKey, std::collections::HashSet<String>>,
     pub(crate) pending_user_input_seeds: HashMap<PendingUserInputKey, PendingUserInputSeed>,
     pub voice_session: AppVoiceSessionSnapshot,
     /// Live terminal session snapshots, keyed by session id. Holds the
@@ -585,6 +588,7 @@ mod thread_items_tests {
         HydratedConversationItem {
             id: id.to_string(),
             content: HydratedConversationItemContent::Assistant(HydratedAssistantMessageData {
+                async_questions: None,
                 text: text.to_string(),
                 agent_nickname: None,
                 agent_role: None,
@@ -664,7 +668,10 @@ mod thread_items_tests {
         items.push(item("other", "x"));
         items.push(item("dup", "second"));
         assert_eq!(items.index_of("dup"), Some(0));
-        assert_eq!(items.get_by_id("dup").map(|entry| entry.id.as_str()), Some("dup"));
+        assert_eq!(
+            items.get_by_id("dup").map(|entry| entry.id.as_str()),
+            Some("dup")
+        );
 
         items.retain(|entry| entry.id != "other");
         assert_eq!(items.index_of("dup"), Some(0));
@@ -701,7 +708,10 @@ mod thread_items_tests {
         seen.push(ThreadItems::from(vec![item("a", "1")]).revision());
         seen.push(next_items_revision());
 
-        let unique = seen.iter().copied().collect::<std::collections::HashSet<_>>();
+        let unique = seen
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
         assert_eq!(unique.len(), seen.len(), "revisions repeated: {seen:?}");
     }
 

@@ -9,6 +9,7 @@ PATCH_FILES=(
     "$REPO_DIR/patches/codex/remote-crypto-compat.patch"
     "$REPO_DIR/patches/codex/remote-protocol-compat.patch"
     "$REPO_DIR/patches/codex/absolute-path-cross-platform.patch"
+    "$REPO_DIR/patches/codex/provider-model-list.patch"
 )
 
 patch_already_upstreamed() {

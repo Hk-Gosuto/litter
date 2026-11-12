@@ -22,9 +22,9 @@ codex-mobile-client (Rust)
   ├─ reconnect and SSH
   ├─ hydration and conversation shaping
   ├─ voice handoff state machine
-  └─ terminal, local runtime and platform hooks
+  └─ terminal, remote transports and platform hooks
        │
-       ├─ patched upstream Codex app-server client/core
+       ├─ litter-remote-client + upstream Codex protocol types
        ├─ Alleycat agent bridges
        ├─ codex-slingshot JSON-line/HTTP stream transport
        └─ Ghostty terminal engine
@@ -59,17 +59,16 @@ It must not parse upstream wire strings or maintain a second reducer.
 
 1. Add Server selects an explicit Kittylitter, Local Studio,
    connected-computer, direct URL or SSH path.
-2. A server connection selects the appropriate direct, SSH, Alleycat or local
-   runtime transport.
+2. A server connection selects the appropriate direct, SSH, Alleycat or
+   Slingshot remote transport.
 3. `MobileClient` owns live sessions and routes typed requests/events.
 4. Events are hydrated into mobile conversation items and reduced into
    `AppStore`.
 5. SwiftUI or Compose re-renders from the typed snapshot/update stream.
 
 The Swift nearby-Mac pairing UI (BLE, ultrasonic, NISession and the
-`_litter-pair._tcp.` Bonjour browse) has been removed. The Rust pair protocol
-in `codex-mobile-client/src/pair` and the `_litter-pair._tcp.` entry in the iOS
-Info.plist files remain.
+`_litter-pair._tcp.` Bonjour browse) is restricted to DEBUG builds under
+Settings → Experimental. It is not a shipping connection path.
 
 Neither platform runs a general LAN, Tailscale, Codex Bonjour, SSH Bonjour or
 ARP discovery scan.
@@ -95,18 +94,18 @@ The principal code is:
 - `src/session/` — connection worker, event routing and voice handoff; and
 - `src/parser.rs` — presentation-oriented message structure.
 
-## Local execution
+## Remote-only execution
 
-iOS embeds an Alpine/iSH runtime. Android embeds Alpine under proot. The Codex
-submodule patch redirects process execution through platform hooks because
-normal `fork`/`exec` is not available in the mobile sandboxes. Rust owns argv
-preflight, temporary-path rewriting and bundled-tool resolution; native code
-only supplies platform bootstrap inputs.
+Neither mobile platform starts Codex locally. The Codex process runs on the
+connected computer or remote host, and the mobile client talks to it through
+WebSocket, SSH, Alleycat, or Slingshot. Legacy local bootstrap symbols remain
+as compatibility stubs and return Unsupported; they are not part of any
+startup, reconnect, or session path.
 
 ## Terminal
 
 Ghostty is patched as an embedded terminal engine. Rust owns terminal state,
-SSH/local backends, OSC parsing and render data. Swift and Kotlin own the view
+SSH/Alleycat backends, OSC parsing and render data. Swift and Kotlin own the view
 and native input surface. The exact Zig version comes from Ghostty's
 `build.zig.zon` and is resolved by `tools/scripts/resolve-ghostty-zig.sh`.
 
@@ -155,6 +154,19 @@ length). Neither cache owns conversation state: it is a render-only projection o
 the text the Rust store already accumulated, and both must produce exactly what a
 cold parse of the same text produces.
 
+## Generative UI and saved apps
+
+Rust registers the shared widget tools on new interactive remote Codex threads.
+Widget rendering and saved state remain native/client-owned. Saved app identity
+includes the origin server and thread, while legacy records without a server
+still decode. Rust chooses connected Codex hosts for both platforms; bridge
+runtimes without client tool support are left unchanged.
+
+Updating an app sends its HTML through RPC and receives schema-constrained JSON
+containing the replacement HTML. The phone persists it after successful
+completion without replacing the user state. Remote edits never require access
+to the phone's filesystem. Responses are scoped by server, thread and turn.
+
 ## Generated and vendored code
 
 - `apps/ios/project.yml` is the Xcode project source of truth.
@@ -185,7 +197,7 @@ For shared behavior, the minimum acceptance stack is:
 2. UniFFI binding generation;
 3. iOS simulator or device build;
 4. Android unit tests and APK assembly; and
-5. physical-device verification for audio, networking, local runtimes and
+5. physical-device verification for audio, networking and
    release-only behavior.
 
 ## Maintenance boundaries
